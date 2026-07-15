@@ -1,0 +1,46 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+build/
+.next/
+out/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing
+coverage/
+
+# Prisma
+apps/api/prisma/migrations/**/migration_lock.toml
+
+# Uploads / temp
+uploads/
+tmp/
+
+# Docker volumes (local)
+data/
+
+# go2rtc binary (installed via pnpm --filter @acv2/api go2rtc:install)
+apps/api/bin/

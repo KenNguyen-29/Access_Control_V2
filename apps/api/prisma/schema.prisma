@@ -1,0 +1,430 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ── Enums ──────────────────────────────────────────────────
+
+enum UserRole {
+  ADMIN
+  HR
+  SECURITY
+  TECHNICIAN
+}
+
+enum UserType {
+  EMPLOYEE
+  VISITOR
+  CONTRACTOR
+}
+
+enum DeviceType {
+  AKUVOX
+  CAMERA
+}
+
+enum CredentialType {
+  FACE
+  CARD
+  PIN
+}
+
+enum AccessAction {
+  CHECK_IN
+  CHECK_OUT
+  DENIED
+  UNKNOWN
+  FIRE_EMERGENCY
+}
+
+enum AttendanceStatus {
+  ON_TIME
+  LATE
+  EARLY_LEAVE
+  ABSENT
+  OVERTIME
+}
+
+enum DeviceSyncStatus {
+  SYNCED
+  PENDING
+  FAILED
+  NOT_APPLICABLE
+}
+
+enum PresenceStatus {
+  CHECK_IN
+  INSIDE
+  CHECK_OUT
+  OUTSIDE
+}
+
+enum EmergencySafeStatus {
+  INSIDE
+  SAFE
+  MISSING
+}
+
+// ── Org & Auth ─────────────────────────────────────────────
+
+model Department {
+  id          String   @id @default(cuid())
+  name        String
+  code        String   @unique
+  description String?
+  isDeleted   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  users User[]
+
+  @@map("departments")
+}
+
+model Role {
+  id          String   @id @default(cuid())
+  name        String
+  code        UserRole @unique
+  description String?
+  isDeleted   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  accounts Account[]
+
+  @@map("roles")
+}
+
+model User {
+  id            String    @id @default(cuid())
+  employeeCode  String    @unique
+  fullName      String
+  email         String?
+  phone         String?
+  userType      UserType  @default(EMPLOYEE)
+  departmentId  String?
+  faceImagePath String?
+  isActive      Boolean   @default(true)
+  isDeleted     Boolean   @default(false)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  department              Department?            @relation(fields: [departmentId], references: [id])
+  credentials             Credential[]
+  employeeShifts          EmployeeShift[]
+  userDevicePermissions   UserDevicePermission[]
+  userAccessPermissions   UserAccessPermission[]
+  accessLogs              AccessLog[]
+  attendanceRecords       AttendanceRecord[]
+  presence                UserPresence?
+  emergencyMuster         EmergencyMuster[]      @relation("MusterUser")
+  emergencyMarked         EmergencyMuster[]      @relation("MusterMarkedBy")
+  emergencyEventsCreated  EmergencyEvent[]
+
+  @@map("users")
+}
+
+model Account {
+  id           String   @id @default(cuid())
+  username     String   @unique
+  passwordHash String
+  roleId       String
+  isActive     Boolean  @default(true)
+  isDeleted    Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  role Role @relation(fields: [roleId], references: [id])
+
+  @@map("accounts")
+}
+
+// ── Access Zones ───────────────────────────────────────────
+
+model AccessZone {
+  id           String   @id @default(cuid())
+  name         String
+  parentZoneId String?
+  description  String?
+  isDeleted    Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  parentZone  AccessZone?            @relation("ZoneHierarchy", fields: [parentZoneId], references: [id])
+  childZones  AccessZone[]           @relation("ZoneHierarchy")
+  permissions UserAccessPermission[]
+  devices     Device[]
+  accessLogs  AccessLog[]
+  presence    UserPresence[]
+
+  @@map("access_zones")
+}
+
+// ── Devices ────────────────────────────────────────────────
+
+model Device {
+  id            String           @id @default(cuid())
+  name          String
+  code          String           @unique
+  deviceType    DeviceType
+  ipAddress     String?
+  macAddress    String?
+  location      String?
+  zoneId        String?
+  rtspUrl       String?
+  rtspUsername  String?
+  rtspPassword  String?
+  akuvoxConfig  Json?
+  isOnline      Boolean          @default(false)
+  lastHeartbeat DateTime?
+  syncStatus    DeviceSyncStatus @default(NOT_APPLICABLE)
+  isDeleted     Boolean          @default(false)
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  zone            AccessZone?            @relation(fields: [zoneId], references: [id])
+  akuvoxMappings  DeviceCameraMapping[]  @relation("AkuvoxDevice")
+  cameraMappings  DeviceCameraMapping[]  @relation("CameraDevice")
+  userPermissions UserDevicePermission[]
+  accessLogs      AccessLog[]
+
+  @@map("devices")
+}
+
+model DeviceCameraMapping {
+  id             String   @id @default(cuid())
+  akuvoxDeviceId String
+  cameraDeviceId String
+  priority       Int      @default(0)
+  isDeleted      Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  akuvoxDevice Device @relation("AkuvoxDevice", fields: [akuvoxDeviceId], references: [id])
+  cameraDevice Device @relation("CameraDevice", fields: [cameraDeviceId], references: [id])
+
+  @@unique([akuvoxDeviceId, cameraDeviceId])
+  @@map("device_camera_mappings")
+}
+
+// ── Access Control ─────────────────────────────────────────
+
+model Credential {
+  id         String           @id @default(cuid())
+  userId     String
+  type       CredentialType   @default(FACE)
+  externalId String?
+  cardNumber String?
+  isActive   Boolean          @default(true)
+  syncStatus DeviceSyncStatus @default(PENDING)
+  isDeleted  Boolean          @default(false)
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+
+  user       User        @relation(fields: [userId], references: [id])
+  accessLogs AccessLog[]
+
+  @@map("credentials")
+}
+
+model UserDevicePermission {
+  id        String   @id @default(cuid())
+  userId    String
+  deviceId  String
+  isActive  Boolean  @default(true)
+  isDeleted Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user   User   @relation(fields: [userId], references: [id])
+  device Device @relation(fields: [deviceId], references: [id])
+
+  @@unique([userId, deviceId])
+  @@map("user_device_permissions")
+}
+
+model UserAccessPermission {
+  id        String    @id @default(cuid())
+  userId    String
+  zoneId    String
+  validFrom DateTime?
+  validTo   DateTime?
+  isDeleted Boolean   @default(false)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  user User       @relation(fields: [userId], references: [id])
+  zone AccessZone @relation(fields: [zoneId], references: [id])
+
+  @@unique([userId, zoneId])
+  @@index([userId])
+  @@index([zoneId])
+  @@map("user_access_permissions")
+}
+
+model AccessLog {
+  id             String       @id @default(cuid())
+  userId         String?
+  deviceId       String?
+  zoneId         String?
+  credentialId   String?
+  action         AccessAction @default(UNKNOWN)
+  sourceEventId  String?
+  snapshotPath   String?
+  rawPayload     Json?
+  isValid        Boolean      @default(true)
+  warningMessage String?
+  eventAt        DateTime     @default(now())
+  createdAt      DateTime     @default(now())
+
+  user       User?       @relation(fields: [userId], references: [id])
+  device     Device?     @relation(fields: [deviceId], references: [id])
+  zone       AccessZone? @relation(fields: [zoneId], references: [id])
+  credential Credential? @relation(fields: [credentialId], references: [id])
+
+  @@unique([deviceId, sourceEventId])
+  @@index([eventAt])
+  @@map("access_logs")
+}
+
+model UserPresence {
+  userId        String          @id
+  currentStatus PresenceStatus?
+  currentZoneId String?
+  lastEventTime DateTime?
+  updatedAt     DateTime        @updatedAt
+
+  user User        @relation(fields: [userId], references: [id])
+  zone AccessZone? @relation(fields: [currentZoneId], references: [id])
+
+  @@index([currentStatus])
+  @@map("user_presence")
+}
+
+// ── Emergency ──────────────────────────────────────────────
+
+model EmergencyEvent {
+  id          String    @id @default(cuid())
+  eventType   String    @default("FIRE_EMERGENCY")
+  startTime   DateTime?
+  endTime     DateTime?
+  description String?
+  createdById String?
+  createdAt   DateTime  @default(now())
+
+  createdBy User?             @relation(fields: [createdById], references: [id])
+  muster    EmergencyMuster[]
+
+  @@map("emergency_events")
+}
+
+model EmergencyMuster {
+  id         String              @id @default(cuid())
+  eventId    String
+  userId     String
+  safeStatus EmergencySafeStatus @default(INSIDE)
+  markedById String?
+  markedTime DateTime?
+  remarks    String?
+  createdAt  DateTime            @default(now())
+
+  event    EmergencyEvent @relation(fields: [eventId], references: [id])
+  user     User           @relation("MusterUser", fields: [userId], references: [id])
+  markedBy User?          @relation("MusterMarkedBy", fields: [markedById], references: [id])
+
+  @@index([eventId])
+  @@map("emergency_muster")
+}
+
+// ── Shifts ─────────────────────────────────────────────────
+
+model WorkShift {
+  id                 String   @id @default(cuid())
+  name               String
+  code               String   @unique
+  startTime          String
+  endTime            String
+  breakMinutes       Int      @default(0)
+  gracePeriodMinutes Int      @default(15)
+  salaryCoefficient  Float    @default(1)
+  isOvernight        Boolean  @default(false)
+  isDefault          Boolean  @default(false)
+  isDeleted          Boolean  @default(false)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  employeeShifts    EmployeeShift[]
+  attendanceRecords AttendanceRecord[]
+
+  @@map("work_shifts")
+}
+
+model EmployeeShift {
+  id          String    @id @default(cuid())
+  userId      String
+  workShiftId String
+  startDate   DateTime  @db.Date
+  endDate     DateTime? @db.Date
+  isDeleted   Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  user      User      @relation(fields: [userId], references: [id])
+  workShift WorkShift @relation(fields: [workShiftId], references: [id])
+
+  @@index([userId, startDate])
+  @@map("employee_shifts")
+}
+
+// ── Attendance ─────────────────────────────────────────────
+
+model AttendanceRecord {
+  id                String           @id @default(cuid())
+  userId            String
+  workShiftId       String?
+  date              DateTime         @db.Date
+  checkInAt         DateTime?
+  checkOutAt        DateTime?
+  status            AttendanceStatus @default(ON_TIME)
+  lateMinutes       Int              @default(0)
+  earlyLeaveMinutes Int              @default(0)
+  otMinutes         Int              @default(0)
+  note              String?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  user      User       @relation(fields: [userId], references: [id])
+  workShift WorkShift? @relation(fields: [workShiftId], references: [id])
+
+  @@unique([userId, date])
+  @@map("attendance_records")
+}
+
+// ── System ─────────────────────────────────────────────────
+
+model SystemSetting {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("system_settings")
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  action    String
+  entity    String
+  entityId  String?
+  actorId   String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@map("audit_logs")
+}

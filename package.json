@@ -1,0 +1,22 @@
+{
+  "name": "access-control-v2",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm --parallel -r dev",
+    "dev:api": "pnpm --filter @acv2/api dev",
+    "dev:web": "pnpm --filter @acv2/web dev",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down",
+    "docker:prod": "docker compose -f docker-compose.prod.yml up -d --build",
+    "docker:prod:down": "docker compose -f docker-compose.prod.yml down",
+    "db:migrate": "pnpm --filter @acv2/api prisma:migrate",
+    "db:seed": "pnpm --filter @acv2/api prisma:seed",
+    "db:generate": "pnpm --filter @acv2/api prisma:generate"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

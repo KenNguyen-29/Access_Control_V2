@@ -1,0 +1,103 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer utilities {
+  .active-soft {
+    @apply transition-all active:scale-95 duration-200;
+  }
+  .active-icon-soft {
+    @apply transition-all active:scale-90 duration-200;
+  }
+}
+
+@layer base {
+  :root {
+    --ac-primary: 156 80% 33%;
+    --ac-secondary: 84 30% 62%;
+    --ac-tertiary: 0 0% 0%;
+    --ac-text: 0 0% 0%;
+    --ac-neutral: 30 7% 97%;
+    --ac-surface: 0 0% 100%;
+    --ac-border: 20 9% 90%;
+    --ac-tab-indicator: 84 32% 52%;
+    --tab-indicator: var(--ac-tab-indicator);
+
+    --background: var(--ac-neutral);
+    --foreground: var(--ac-text);
+    --card: var(--ac-surface);
+    --card-foreground: var(--ac-text);
+    --popover: var(--ac-surface);
+    --popover-foreground: var(--ac-text);
+    --primary: var(--ac-primary);
+    --primary-foreground: var(--ac-text);
+    --secondary: var(--ac-secondary);
+    --secondary-foreground: var(--ac-text);
+    --tertiary: var(--ac-tertiary);
+    --tertiary-foreground: var(--ac-text);
+    --muted: var(--ac-neutral);
+    --muted-foreground: 0 0% 40%;
+    --accent: var(--ac-secondary);
+    --accent-foreground: var(--ac-text);
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --border: var(--ac-border);
+    --input: var(--ac-border);
+    --ring: var(--ac-primary);
+    --radius: 6px;
+    --nav-bg: var(--ac-primary);
+    --nav-foreground: 0 0% 100%;
+    --nav-accent: var(--ac-secondary);
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased selection:bg-secondary/20;
+    font-family: "Be Vietnam Pro", system-ui, sans-serif;
+    font-size: 1rem;
+    font-weight: 400;
+    color: #000000;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-family: Roboto, system-ui, sans-serif;
+    color: #000000;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-primary/25 rounded-sm hover:bg-primary/40 transition-colors;
+  }
+}
+
+@layer components {
+  .btn-primary-design {
+    @apply inline-flex items-center justify-center gap-2 rounded-sm px-5 py-3 text-sm font-semibold bg-secondary text-foreground hover:bg-secondary/80 transition-colors disabled:opacity-50;
+  }
+
+  .btn-secondary-design {
+    @apply inline-flex items-center justify-center gap-2 rounded-sm px-5 py-3 text-sm font-semibold text-foreground bg-transparent border border-tertiary/20 hover:bg-tertiary/5 transition-colors disabled:opacity-50;
+  }
+
+  .input-design {
+    @apply w-full rounded-sm border border-border bg-surface px-3.5 py-2.5 text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/25 focus-visible:border-primary;
+  }
+
+  .card-design {
+    @apply bg-surface text-foreground rounded-sm border border-border p-5;
+  }
+}

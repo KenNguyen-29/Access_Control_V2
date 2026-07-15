@@ -1,0 +1,50 @@
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { paginatedResponse, successResponse } from '../../common/utils/response.util';
+import { UsersService } from './users.service';
+import { CreateUserDto } from './dto/create-user.dto';
+import { UpdateUserDto } from './dto/update-user.dto';
+import { UsersIdsQueryDto, UsersQueryDto } from './dto/users-query.dto';
+
+@ApiTags('users')
+@ApiBearerAuth()
+@Controller('users')
+export class UsersController {
+  constructor(private readonly usersService: UsersService) {}
+
+  @Get()
+  async findAll(@Query() query: UsersQueryDto) {
+    const result = await this.usersService.findAll(query);
+    return paginatedResponse(result.items, result.total, result.page, result.pageSize);
+  }
+
+  @Get('ids')
+  async findIds(@Query() query: UsersIdsQueryDto) {
+    const result = await this.usersService.findIds(query);
+    return successResponse(result);
+  }
+
+  @Get(':id')
+  async findOne(@Param('id') id: string) {
+    const user = await this.usersService.findOne(id);
+    return successResponse(user);
+  }
+
+  @Post()
+  async create(@Body() dto: CreateUserDto) {
+    const user = await this.usersService.create(dto);
+    return successResponse(user, 'User created');
+  }
+
+  @Patch(':id')
+  async update(@Param('id') id: string, @Body() dto: UpdateUserDto) {
+    const user = await this.usersService.update(id, dto);
+    return successResponse(user, 'User updated');
+  }
+
+  @Delete(':id')
+  async remove(@Param('id') id: string) {
+    await this.usersService.remove(id);
+    return successResponse(null, 'User deleted');
+  }
+}

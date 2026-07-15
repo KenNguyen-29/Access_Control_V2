@@ -1,0 +1,111 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: acv2-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-acv2}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-acv2secret}
+      POSTGRES_DB: ${POSTGRES_DB:-access_control_v2}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - acv2-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-acv2} -d ${POSTGRES_DB:-access_control_v2}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: acv2-redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    networks:
+      - acv2-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    container_name: acv2-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-acv2minio}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-acv2minio123}
+    volumes:
+      - minio_data:/data
+    networks:
+      - acv2-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: acv2-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-acv2}:${POSTGRES_PASSWORD:-acv2secret}@postgres:5432/${POSTGRES_DB:-access_control_v2}?schema=public
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      MINIO_ENDPOINT: minio
+      MINIO_PORT: 9000
+      MINIO_USE_SSL: "false"
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-acv2minio}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-acv2minio123}
+      MINIO_BUCKET: ${MINIO_BUCKET:-acv2-assets}
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production-use-long-random-string}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
+      GO2RTC_BASE_URL: ${GO2RTC_BASE_URL:-http://127.0.0.1:1984}
+      GO2RTC_ENABLED: ${GO2RTC_ENABLED:-true}
+      API_PORT: 8080
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3000}
+      AKUVOX_MOCK_MODE: ${AKUVOX_MOCK_MODE:-true}
+    ports:
+      - "8080:8080"
+    networks:
+      - acv2-net
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8080/api}
+        NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-http://localhost:8080}
+    container_name: acv2-web
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "3000:3000"
+    networks:
+      - acv2-net
+
+networks:
+  acv2-net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:

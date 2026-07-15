@@ -1,0 +1,70 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: acv2-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: acv2
+      POSTGRES_PASSWORD: acv2secret
+      POSTGRES_DB: access_control_v2
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - acv2-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U acv2 -d access_control_v2"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: acv2-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - acv2-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    container_name: acv2-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: acv2minio
+      MINIO_ROOT_PASSWORD: acv2minio123
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    networks:
+      - acv2-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+# Camera live view uses go2rtc running on the host (not Docker) so WebRTC ICE
+# candidates are reachable by the browser. Run once: pnpm --filter @acv2/api go2rtc:install
+
+networks:
+  acv2-net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
