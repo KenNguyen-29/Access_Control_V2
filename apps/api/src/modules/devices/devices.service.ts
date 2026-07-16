@@ -14,6 +14,8 @@ type AkuvoxConfig = {
   protocol?: 'http' | 'https';
   relay?: number;
   authMode?: 'basic';
+  apiVersion?: 'modern' | 'legacy';
+  scheduleRelay?: string;
 };
 
 @Injectable()
@@ -103,6 +105,7 @@ export class DevicesService {
     const [items, total] = await Promise.all([
       this.prisma.device.findMany({
         where,
+        include: { zone: { select: { id: true, name: true } } },
         skip: (page - 1) * pageSize,
         take: pageSize,
         orderBy: { name: 'asc' },
@@ -110,7 +113,18 @@ export class DevicesService {
       this.prisma.device.count({ where }),
     ]);
 
-    return { items: items.map((d) => this.sanitize(d)), total, page, pageSize };
+    return {
+      items: items.map((d) => {
+        const sanitized = this.sanitize(d);
+        return {
+          ...sanitized,
+          zone: d.zone ? { id: d.zone.id, name: d.zone.name } : null,
+        };
+      }),
+      total,
+      page,
+      pageSize,
+    };
   }
 
   async findOne(id: string) {
@@ -219,6 +233,25 @@ export class DevicesService {
     });
   }
 
+  private buildAkuvoxUrl(device: Device, path: string) {
+    const cfg =
+      device.akuvoxConfig && typeof device.akuvoxConfig === 'object' && !Array.isArray(device.akuvoxConfig)
+        ? (device.akuvoxConfig as AkuvoxConfig)
+        : {};
+    const protocol = cfg.protocol || 'http';
+    return `${protocol}://${device.ipAddress}${path.startsWith('/') ? path : `/${path}`}`;
+  }
+
+  private buildAkuvoxAuthHeader(device: Device) {
+    const cfg =
+      device.akuvoxConfig && typeof device.akuvoxConfig === 'object' && !Array.isArray(device.akuvoxConfig)
+        ? (device.akuvoxConfig as AkuvoxConfig)
+        : {};
+    const username = cfg.username || this.config.get<string>('AKUVOX_DEFAULT_USERNAME', 'admin');
+    const password = cfg.password || this.config.get<string>('AKUVOX_DEFAULT_PASSWORD', 'Admin123');
+    return `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`;
+  }
+
   async testConnection(id: string) {
     const device = await this.prisma.device.findFirst({
       where: { id, isDeleted: false },
@@ -231,12 +264,34 @@ export class DevicesService {
     const startedAt = Date.now();
 
     let online: boolean;
+    let detail: string | null = null;
     if (mockMode) {
       // Simulate a short probe; treat presence of a target as reachable.
       await new Promise((r) => setTimeout(r, 400));
       online = Boolean(target);
     } else if (!target) {
       online = false;
+      detail = 'Thiết bị chưa có địa chỉ kết nối';
+    } else if (device.deviceType === DeviceType.AKUVOX) {
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        const res = await fetch(this.buildAkuvoxUrl(device, '/api/user/get?page=1'), {
+          method: 'GET',
+          signal: controller.signal,
+          headers: {
+            Authorization: this.buildAkuvoxAuthHeader(device),
+            Accept: 'application/json',
+          },
+        });
+        clearTimeout(timer);
+        const text = await res.text();
+        online = res.ok;
+        detail = online ? 'HTTP API OK' : text || `HTTP ${res.status}`;
+      } catch (err) {
+        online = false;
+        detail = err instanceof Error ? err.message : 'HTTP API unreachable';
+      }
     } else {
       online = await this.probeTcp(target.host, target.port, timeoutMs);
     }
@@ -255,6 +310,7 @@ export class DevicesService {
       latencyMs: Date.now() - startedAt,
       checkedAt: checkedAt.toISOString(),
       mock: mockMode,
+      detail,
     };
   }
 }

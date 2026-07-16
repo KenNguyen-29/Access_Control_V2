@@ -3,9 +3,10 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { UserType } from '@prisma/client';
 
 export class CreateUserDto {
-  @ApiProperty()
+  @ApiPropertyOptional({ description: 'Để trống để hệ thống tự sinh dạng NV-0001' })
+  @IsOptional()
   @IsString()
-  employeeCode!: string;
+  employeeCode?: string;
 
   @ApiProperty()
   @IsString()

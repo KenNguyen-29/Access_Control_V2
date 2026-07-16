@@ -32,6 +32,7 @@ import {
   deleteDevice,
   deleteDeviceMapping,
   getDeviceMappings,
+  getAccessZones,
   getDevices,
   openDeviceDoor,
   syncDeviceCredentials,
@@ -48,6 +49,7 @@ const EMPTY_FORM = {
   deviceType: 'AKUVOX' as 'AKUVOX' | 'CAMERA',
   ipAddress: '',
   location: '',
+  zoneId: '',
   rtspUrl: DEFAULT_RTSP_TEMPLATE,
   username: '',
   password: '',
@@ -78,9 +80,18 @@ export default function DevicesPage() {
     queryKey: queryKeys.deviceMappings(),
     queryFn: () => getDeviceMappings(),
   });
+  const zonesQuery = useQuery({
+    queryKey: ['accessZones'],
+    queryFn: () => getAccessZones(),
+  });
 
   const items = useMemo(() => devicesQuery.data?.items ?? [], [devicesQuery.data]);
   const mappings = mappingsQuery.data ?? [];
+  const zones = zonesQuery.data ?? [];
+  const zoneNameById = useMemo(
+    () => new Map(zones.map((z) => [z.id, z.name])),
+    [zones],
+  );
   const loading = devicesQuery.isLoading || mappingsQuery.isLoading;
   const queryError = devicesQuery.error ?? mappingsQuery.error;
   const displayError =
@@ -136,6 +147,7 @@ export default function DevicesPage() {
       deviceType: device.deviceType,
       ipAddress: device.ipAddress || '',
       location: device.location || '',
+      zoneId: device.zoneId || '',
       rtspUrl: device.rtspUrl || DEFAULT_RTSP_TEMPLATE,
       username:
         (device.deviceType === 'CAMERA' ? device.rtspUsername : device.akuvoxUsername) || '',
@@ -182,6 +194,23 @@ export default function DevicesPage() {
   const saveMutation = useMutation({
     mutationFn: async () => {
       const isAkuvox = form.deviceType === 'AKUVOX';
+      if (isAkuvox && !form.zoneId.trim()) {
+        throw new ApiError('Akuvox cần chọn khu vực', 400);
+      }
+      const duplicateZone = isAkuvox
+        ? items.find(
+            (d) =>
+              d.deviceType === 'AKUVOX' &&
+              d.zoneId === form.zoneId &&
+              d.id !== editing?.id,
+          )
+        : null;
+      if (duplicateZone) {
+        throw new ApiError(
+          `Khu vực "${zoneNameById.get(form.zoneId) ?? form.zoneId}" đã có Akuvox (${duplicateZone.name})`,
+          409,
+        );
+      }
       const username = form.username.trim();
       const password = form.password.trim();
       const payload = {
@@ -190,6 +219,7 @@ export default function DevicesPage() {
         deviceType: form.deviceType,
         ipAddress: form.ipAddress.trim() || undefined,
         location: form.location.trim() || undefined,
+        zoneId: isAkuvox ? form.zoneId : form.zoneId.trim() || undefined,
         rtspUrl: form.rtspUrl.trim() || undefined,
         // Credentials mapped by device type; password omitted when blank to keep existing
         ...(isAkuvox
@@ -376,13 +406,14 @@ export default function DevicesPage() {
           emptyDescription="Thêm thiết bị Akuvox hoặc camera để bắt đầu."
         >
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[880px] table-fixed border-collapse text-sm">
+            <table className="w-full min-w-[980px] table-fixed border-collapse text-sm">
               <colgroup>
-                <col className="w-[24%]" />
-                <col className="w-[12%]" />
-                <col className="w-[12%]" />
-                <col className="w-[22%]" />
-                <col className="w-[12%]" />
+                <col className="w-[20%]" />
+                <col className="w-[10%]" />
+                <col className="w-[10%]" />
+                <col className="w-[14%]" />
+                <col className="w-[18%]" />
+                <col className="w-[10%]" />
                 <col className="w-[18%]" />
               </colgroup>
               <thead>
@@ -390,6 +421,7 @@ export default function DevicesPage() {
                   <th className="p-3 text-left font-semibold">Tên thiết bị</th>
                   <th className="p-3 text-left font-semibold">Mã</th>
                   <th className="p-3 text-left font-semibold">Loại</th>
+                  <th className="p-3 text-left font-semibold">Khu vực</th>
                   <th className="p-3 text-left font-semibold">IP / Vị trí</th>
                   <th className="p-3 text-left font-semibold">Đồng bộ</th>
                   <th className="p-3 text-right font-semibold">Thao tác</th>
@@ -407,6 +439,9 @@ export default function DevicesPage() {
                     <td className="truncate p-3 font-mono text-xs text-muted-foreground">{d.code}</td>
                     <td className="p-3">
                       <DeviceTypeBadge type={d.deviceType} />
+                    </td>
+                    <td className="truncate p-3 text-xs text-muted-foreground">
+                      {d.zone?.name ?? (d.zoneId ? zoneNameById.get(d.zoneId) : null) ?? '—'}
                     </td>
                     <td className="truncate p-3 text-xs text-muted-foreground">
                       <span className="font-mono">{d.ipAddress || '—'}</span>
@@ -558,6 +593,29 @@ export default function DevicesPage() {
               <option value="CAMERA">CAMERA</option>
             </Select>
           </div>
+          <div>
+            <label className="mb-1 block text-xs text-muted-foreground">
+              Khu vực {form.deviceType === 'AKUVOX' && <span className="text-destructive">*</span>}
+            </label>
+            <Select
+              value={form.zoneId}
+              onChange={(e) => setForm({ ...form, zoneId: e.target.value })}
+            >
+              <option value="">
+                {form.deviceType === 'AKUVOX' ? '— Chọn khu vực —' : '— Không gắn khu vực —'}
+              </option>
+              {zones.map((z) => (
+                <option key={z.id} value={z.id}>
+                  {z.name}
+                </option>
+              ))}
+            </Select>
+            {form.deviceType === 'AKUVOX' && form.zoneId && (
+              <p className="mt-1 text-xs text-muted-foreground">
+                Mỗi khu vực nên có một Akuvox — FaceID sẽ đồng bộ theo khu vực.
+              </p>
+            )}
+          </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="mb-1 block text-xs text-muted-foreground">Địa chỉ IP</label>
@@ -627,7 +685,12 @@ export default function DevicesPage() {
             <Button
               variant="accent"
               size="sm"
-              disabled={saving || !form.name || !form.code}
+              disabled={
+                saving ||
+                !form.name ||
+                !form.code ||
+                (form.deviceType === 'AKUVOX' && !form.zoneId)
+              }
               onClick={() => onSave()}
             >
               {saving ? 'Đang lưu...' : 'Lưu'}

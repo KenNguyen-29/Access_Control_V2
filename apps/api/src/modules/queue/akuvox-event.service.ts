@@ -47,14 +47,25 @@ export class AkuvoxEventService {
     const { payload } = data;
 
     const deviceCode = payload.deviceCode ?? payload.deviceId;
-    const device = deviceCode
+    const deviceIp =
+      typeof payload.deviceIp === 'string' && payload.deviceIp.trim()
+        ? payload.deviceIp.trim()
+        : undefined;
+
+    let device = deviceCode
       ? await this.prisma.device.findFirst({
           where: { code: String(deviceCode), isDeleted: false },
         })
       : null;
 
+    if (!device && deviceIp) {
+      device = await this.prisma.device.findFirst({
+        where: { ipAddress: deviceIp, isDeleted: false },
+      });
+    }
+
     if (!device) {
-      this.logger.warn(`Device not found for code: ${deviceCode}`);
+      this.logger.warn(`Device not found for code=${deviceCode ?? '—'} ip=${deviceIp ?? '—'}`);
       return { skipped: true, reason: 'device_not_found' };
     }
 

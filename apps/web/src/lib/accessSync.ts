@@ -12,6 +12,7 @@ export interface AccessSyncReport {
   synced: number;
   total: number;
   failed: AccessSyncFailedEntry[];
+  mock?: boolean;
 }
 
 /**
@@ -26,11 +27,21 @@ export async function syncUserToZoneDevices(
     const result = await syncUserCredentials(userId, zoneId);
     const synced = result.synced ?? 0;
     const total = result.devices ?? synced;
+    const failed =
+      result.results
+        ?.filter((entry) => !entry.ok)
+        .map((entry) => ({
+          deviceId: entry.deviceId,
+          deviceName: entry.zoneName || entry.deviceName,
+          success: false as const,
+          error: entry.error,
+        })) ?? [];
     return {
-      success: true,
+      success: failed.length === 0 && !result.mock,
       synced,
       total,
-      failed: [],
+      failed,
+      mock: result.mock,
     };
   } catch (e) {
     const message = e instanceof Error ? e.message : 'Đồng bộ thất bại';
@@ -66,5 +77,6 @@ export function mergeSyncReports(reports: AccessSyncReport[]): AccessSyncReport 
     total,
     synced,
     failed,
+    mock: reports.some((report) => report.mock),
   };
 }

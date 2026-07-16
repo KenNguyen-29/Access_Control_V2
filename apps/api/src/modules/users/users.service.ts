@@ -1,15 +1,23 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
+import { AkuvoxService } from '../devices/akuvox.service';
+import { PermissionsService } from '../permissions/permissions.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { ProvisionUserDto } from './dto/provision-user.dto';
 import { UsersIdsQueryDto, UsersQueryDto } from './dto/users-query.dto';
 
 @Injectable()
 export class UsersService {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly config: ConfigService,
     private readonly storage: StorageService,
+    private readonly permissions: PermissionsService,
+    private readonly akuvox: AkuvoxService,
   ) {}
 
   private buildWhere(query: { search?: string; departmentId?: string }) {
@@ -82,12 +90,61 @@ export class UsersService {
     return this.withFaceUrl(user);
   }
 
-  async create(dto: CreateUserDto) {
-    const user = await this.prisma.user.create({
-      data: dto,
-      include: { department: true },
+  private async nextEmployeeCode() {
+    const prefix = (this.config.get<string>('EMPLOYEE_CODE_PREFIX', 'NV') || 'NV').trim();
+    const codePrefix = `${prefix}-`;
+    const last = await this.prisma.user.findFirst({
+      where: {
+        employeeCode: {
+          startsWith: codePrefix,
+        },
+      },
+      select: { employeeCode: true },
+      orderBy: { employeeCode: 'desc' },
     });
-    return this.withFaceUrl(user);
+    const current = last?.employeeCode ?? '';
+    const match = current.match(new RegExp(`^${prefix}-(\\d+)$`));
+    const next = Number(match?.[1] ?? '0') + 1;
+    return `${prefix}-${String(next).padStart(4, '0')}`;
+  }
+
+  async create(dto: CreateUserDto) {
+    const trimmedCode = dto.employeeCode?.trim();
+    const baseData = {
+      ...dto,
+      employeeCode: trimmedCode || undefined,
+    };
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      try {
+        const user = await this.prisma.user.create({
+          data: {
+            ...baseData,
+            employeeCode: baseData.employeeCode || (await this.nextEmployeeCode()),
+          },
+          include: { department: true },
+        });
+        return this.withFaceUrl(user);
+      } catch (err) {
+        if (
+          err instanceof Prisma.PrismaClientKnownRequestError &&
+          err.code === 'P2002'
+        ) {
+          const fields = Array.isArray(err.meta?.target)
+            ? err.meta?.target.join(', ')
+            : String(err.meta?.target ?? '');
+          if (fields.includes('employeeCode')) {
+            if (baseData.employeeCode) {
+              throw new ConflictException('Mã nhân viên đã tồn tại');
+            }
+            continue;
+          }
+        }
+        throw err;
+      }
+    }
+
+    throw new ConflictException('Không thể tự sinh mã nhân viên, vui lòng thử lại');
   }
 
   async update(id: string, dto: UpdateUserDto) {
@@ -106,5 +163,84 @@ export class UsersService {
       where: { id },
       data: { isDeleted: true },
     });
+  }
+
+  /** Assign access zones and optionally push FaceID to each zone's Akuvox. */
+  async provision(userId: string, dto: ProvisionUserDto) {
+    await this.findOne(userId);
+    const zoneIds = [...new Set(dto.zoneIds.filter(Boolean))];
+    if (zoneIds.length === 0) {
+      throw new BadRequestException('Cần ít nhất một khu vực');
+    }
+
+    const zones = await this.prisma.accessZone.findMany({
+      where: { id: { in: zoneIds }, isDeleted: false },
+      select: { id: true, name: true },
+    });
+    if (zones.length !== zoneIds.length) {
+      throw new BadRequestException('Một hoặc nhiều khu vực không tồn tại');
+    }
+
+    for (const zoneId of zoneIds) {
+      await this.permissions.assign({ userId, zoneId });
+    }
+
+    const autoSync = dto.autoSync !== false;
+    const syncByZone: Array<{
+      zoneId: string;
+      zoneName: string;
+      synced: number;
+      devices: number;
+      results: Array<{
+        deviceId: string;
+        deviceName: string;
+        zoneId: string | null;
+        zoneName?: string;
+        ok: boolean;
+        error?: string;
+      }>;
+      mock?: boolean;
+    }> = [];
+
+    if (autoSync) {
+      for (const zone of zones) {
+        try {
+          const result = await this.akuvox.syncUserCredentials(userId, zone.id);
+          syncByZone.push({
+            zoneId: zone.id,
+            zoneName: zone.name,
+            synced: result.synced,
+            devices: result.devices,
+            results: result.results ?? [],
+            mock: result.mock,
+          });
+        } catch (err) {
+          syncByZone.push({
+            zoneId: zone.id,
+            zoneName: zone.name,
+            synced: 0,
+            devices: 0,
+            results: [
+              {
+                deviceId: zone.id,
+                deviceName: zone.name,
+                zoneId: zone.id,
+                zoneName: zone.name,
+                ok: false,
+                error: err instanceof Error ? err.message : 'Đồng bộ thất bại',
+              },
+            ],
+          });
+        }
+      }
+    }
+
+    return {
+      userId,
+      zoneIds,
+      autoSync,
+      syncByZone,
+      synced: syncByZone.reduce((n, z) => n + z.synced, 0),
+    };
   }
 }

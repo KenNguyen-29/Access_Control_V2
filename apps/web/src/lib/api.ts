@@ -116,6 +116,7 @@ export type Device = {
   ipAddress?: string | null;
   location?: string | null;
   zoneId?: string | null;
+  zone?: { id: string; name: string } | null;
   rtspUrl?: string | null;
   syncStatus?: string;
   isOnline?: boolean;
@@ -134,6 +135,7 @@ export type DeviceConnectionResult = {
   latencyMs: number;
   checkedAt: string;
   mock: boolean;
+  detail?: string | null;
 };
 
 export type WorkShift = {
@@ -219,8 +221,40 @@ export async function getUserIds(params?: { search?: string; departmentId?: stri
   return apiRequest<{ ids: string[]; total: number }>(`/users/ids${qs ? `?${qs}` : ''}`);
 }
 
-export async function createUser(data: Partial<User> & { employeeCode: string; fullName: string }) {
+export async function createUser(data: Partial<User> & { employeeCode?: string; fullName: string }) {
   return apiRequest<User>('/users', { method: 'POST', body: JSON.stringify(data) });
+}
+
+export type UserProvisionResult = {
+  userId: string;
+  zoneIds: string[];
+  autoSync: boolean;
+  synced: number;
+  syncByZone: Array<{
+    zoneId: string;
+    zoneName: string;
+    synced: number;
+    devices: number;
+    results: Array<{
+      deviceId: string;
+      deviceName: string;
+      zoneId: string | null;
+      zoneName?: string;
+      ok: boolean;
+      error?: string;
+    }>;
+    mock?: boolean;
+  }>;
+};
+
+export async function provisionUser(
+  userId: string,
+  data: { zoneIds: string[]; autoSync?: boolean },
+) {
+  return apiRequest<UserProvisionResult>(`/users/${userId}/provision`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
 }
 
 export async function updateUser(id: string, data: Partial<User>) {
@@ -703,10 +737,22 @@ export async function revokeCredential(id: string) {
 }
 
 export async function syncUserCredentials(userId: string, zoneId?: string) {
-  return apiRequest<{ synced: number; devices: number; mock?: boolean }>(
-    `/devices/users/${userId}/sync`,
-    { method: 'POST', body: JSON.stringify({ zoneId }) },
-  );
+  return apiRequest<{
+    synced: number;
+    devices: number;
+    mock?: boolean;
+    results?: Array<{
+      deviceId: string;
+      deviceName: string;
+      zoneId: string | null;
+      zoneName?: string;
+      ok: boolean;
+      error?: string;
+    }>;
+  }>(`/devices/users/${userId}/sync`, {
+    method: 'POST',
+    body: JSON.stringify({ zoneId }),
+  });
 }
 
 export async function createDepartment(data: {

@@ -32,7 +32,7 @@ const VIEW_TITLE: Record<AccessControlView, string> = {
 };
 
 export default function AccessControlPage() {
-  const [view, setView] = useState<AccessControlView>('byPerson');
+  const [view, setView] = useState<AccessControlView>('accessGroup');
 
   const renderContent = () => {
     if (view === 'search') return <AccessSearchPanel />;

@@ -4,6 +4,7 @@ import { paginatedResponse, successResponse } from '../../common/utils/response.
 import { UsersService } from './users.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { ProvisionUserDto } from './dto/provision-user.dto';
 import { UsersIdsQueryDto, UsersQueryDto } from './dto/users-query.dto';
 
 @ApiTags('users')
@@ -34,6 +35,12 @@ export class UsersController {
   async create(@Body() dto: CreateUserDto) {
     const user = await this.usersService.create(dto);
     return successResponse(user, 'User created');
+  }
+
+  @Post(':id/provision')
+  async provision(@Param('id') id: string, @Body() dto: ProvisionUserDto) {
+    const result = await this.usersService.provision(id, dto);
+    return successResponse(result, 'Đã cấp quyền khu vực');
   }
 
   @Patch(':id')

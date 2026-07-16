@@ -10,6 +10,8 @@ type AkuvoxConfig = {
   protocol?: 'http' | 'https';
   relay?: number;
   authMode?: 'basic';
+  apiVersion?: 'modern' | 'legacy';
+  scheduleRelay?: string;
 };
 
 @Injectable()
@@ -65,6 +67,157 @@ export class AkuvoxService {
     const password = cfg.password || this.defaultPassword;
     const token = Buffer.from(`${username}:${password}`).toString('base64');
     return `Basic ${token}`;
+  }
+
+  private parseRetcode(data: unknown): number | null {
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
+    const retcode = (data as { retcode?: unknown }).retcode;
+    if (typeof retcode === 'number') return retcode;
+    if (typeof retcode === 'string' && retcode.trim() !== '') {
+      const parsed = Number(retcode);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+    return null;
+  }
+
+  private parseMessage(data: unknown): string | undefined {
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return undefined;
+    const message = (data as { message?: unknown }).message;
+    return typeof message === 'string' ? message : undefined;
+  }
+
+  private isSuccessfulResponse(result: {
+    ok: boolean;
+    status: number;
+    data: unknown;
+  }) {
+    if (!result.ok) return false;
+    const retcode = this.parseRetcode(result.data);
+    const message = this.parseMessage(result.data)?.trim().toUpperCase();
+    if (retcode === null) return true;
+    if (message === 'OK') return true;
+    return retcode >= 0 && retcode <= 2;
+  }
+
+  private buildErrorMessage(result: {
+    ok: boolean;
+    status: number;
+    data: unknown;
+  }) {
+    const message = this.parseMessage(result.data);
+    const retcode = this.parseRetcode(result.data);
+    if (message && retcode !== null) return `${message} (retcode ${retcode})`;
+    if (message) return message;
+    if (retcode !== null) return `retcode ${retcode}`;
+    return `HTTP ${result.status}`;
+  }
+
+  private buildLegacyPayload(user: { employeeCode: string; fullName: string; faceImagePath?: string | null }) {
+    return {
+      UserID: user.employeeCode,
+      Name: user.fullName,
+      PrivateKey: user.employeeCode,
+      FaceURL: user.faceImagePath ? this.storage.getFileUrl(user.faceImagePath) : undefined,
+    };
+  }
+
+  private buildModernUserItem(
+    device: Device,
+    user: { employeeCode: string; fullName: string; faceImagePath?: string | null },
+    cred?: { cardNumber?: string | null },
+    existingId?: string,
+  ) {
+    const cfg = this.parseConfig(device);
+    const relay = cfg.relay ?? 1;
+    const scheduleRelay = cfg.scheduleRelay?.trim() || `1001-${relay}`;
+    return {
+      ...(existingId ? { ID: existingId } : {}),
+      UserID: user.employeeCode,
+      Name: user.fullName,
+      CardCode: cred?.cardNumber || '',
+      FaceUrl: user.faceImagePath ? this.storage.getFileUrl(user.faceImagePath) : '',
+      PrivatePIN: '',
+      WebRelay: '0',
+      Building: '',
+      LiftFloorNum: '',
+      Room: '',
+      ScheduleRelay: scheduleRelay,
+    };
+  }
+
+  private async findModernUserId(device: Device, employeeCode: string) {
+    const lookup = await this.request(
+      device,
+      `/api/user/get?NameOrPerID=${encodeURIComponent(employeeCode)}`,
+      { method: 'GET' },
+    );
+    if (!this.isSuccessfulResponse(lookup)) return null;
+    const data =
+      lookup.data && typeof lookup.data === 'object' && !Array.isArray(lookup.data)
+        ? (lookup.data as { data?: { item?: Array<Record<string, unknown>> } })
+        : null;
+    const items = Array.isArray(data?.data?.item) ? data?.data?.item : [];
+    const existing = items.find((item) => {
+      const userId = typeof item.UserID === 'string' ? item.UserID : String(item.UserID ?? '');
+      return userId === employeeCode;
+    });
+    if (!existing) return null;
+    const id = existing.ID;
+    if (typeof id === 'string' && id.trim()) return id;
+    if (typeof id === 'number') return String(id);
+    return null;
+  }
+
+  private async syncUserToDevice(
+    device: Device,
+    user: { employeeCode: string; fullName: string; faceImagePath?: string | null },
+    cred?: { cardNumber?: string | null },
+  ) {
+    const cfg = this.parseConfig(device);
+    const modernEndpoint = '/api/user/add';
+    const modernPayload = async () => {
+      const existingId = await this.findModernUserId(device, user.employeeCode);
+      const path = existingId ? '/api/user/set' : modernEndpoint;
+      return {
+        path,
+        body: JSON.stringify({
+          target: 'user',
+          action: existingId ? 'set' : 'add',
+          data: {
+            item: [this.buildModernUserItem(device, user, cred, existingId ?? undefined)],
+          },
+        }),
+      };
+    };
+
+    const tryModern = async () => {
+      const req = await modernPayload();
+      const result = await this.request(device, req.path, {
+        method: 'POST',
+        body: req.body,
+      });
+      return result;
+    };
+
+    const tryLegacy = async () =>
+      this.request(device, '/fcgi/do?action=AddUser', {
+        method: 'POST',
+        body: JSON.stringify(this.buildLegacyPayload(user)),
+      });
+
+    const preferLegacy = cfg.apiVersion === 'legacy';
+    let result = preferLegacy ? await tryLegacy() : await tryModern();
+    if (
+      !this.isSuccessfulResponse(result) &&
+      !preferLegacy &&
+      (result.status === 404 || result.status === 400 || result.status === 405)
+    ) {
+      this.logger.warn(
+        `Akuvox modern API failed for device=${device.code}, retrying legacy endpoint`,
+      );
+      result = await tryLegacy();
+    }
+    return result;
   }
 
   private async request(
@@ -147,22 +300,8 @@ export class AkuvoxService {
       let synced = 0;
       for (const cred of credentials) {
         if (!cred.user || cred.user.isDeleted) continue;
-        const payload = {
-          UserID: cred.user.employeeCode,
-          Name: cred.user.fullName,
-          Card: cred.cardNumber || undefined,
-          PrivateKey: cred.externalId || undefined,
-          FaceURL: cred.user.faceImagePath
-            ? this.storage.getFileUrl(cred.user.faceImagePath)
-            : undefined,
-        };
-
-        const result = await this.request(device, '/fcgi/do?action=AddUser', {
-          method: 'POST',
-          body: JSON.stringify(payload),
-        });
-
-        if (result.ok) {
+        const result = await this.syncUserToDevice(device, cred.user, cred);
+        if (this.isSuccessfulResponse(result)) {
           synced += 1;
           await this.prisma.credential.update({
             where: { id: cred.id },
@@ -170,7 +309,7 @@ export class AkuvoxService {
           });
         } else {
           this.logger.warn(
-            `Credential sync failed user=${cred.user.employeeCode} status=${result.status}`,
+            `Credential sync failed user=${cred.user.employeeCode} device=${device.code} error=${this.buildErrorMessage(result)}`,
           );
         }
       }
@@ -194,21 +333,48 @@ export class AkuvoxService {
     }
   }
 
-  /** Sync one user's active credentials to Akuvox devices (optionally limited to a zone). */
+  /** Sync one user's active credentials to Akuvox in zones they are permitted to access. */
   async syncUserCredentials(userId: string, zoneId?: string) {
     const user = await this.prisma.user.findFirst({
       where: { id: userId, isDeleted: false },
       include: { credentials: { where: { isDeleted: false, isActive: true } } },
     });
     if (!user) throw new NotFoundException('User not found');
+    if (user.credentials.length === 0 && !user.faceImagePath) {
+      throw new BadRequestException('Nhân viên chưa có credential để đồng bộ');
+    }
+
+    const permissions = await this.prisma.userAccessPermission.findMany({
+      where: { userId, isDeleted: false },
+      include: { zone: { select: { id: true, name: true } } },
+    });
+
+    let targetZoneIds: string[];
+    if (zoneId) {
+      if (!permissions.some((p) => p.zoneId === zoneId)) {
+        throw new BadRequestException('Nhân viên chưa được cấp quyền khu vực này');
+      }
+      targetZoneIds = [zoneId];
+    } else {
+      targetZoneIds = permissions.map((p) => p.zoneId);
+    }
+
+    if (targetZoneIds.length === 0) {
+      throw new BadRequestException('Nhân viên chưa được gán khu vực nào');
+    }
 
     const devices = await this.prisma.device.findMany({
       where: {
         deviceType: DeviceType.AKUVOX,
         isDeleted: false,
-        ...(zoneId ? { zoneId } : {}),
+        zoneId: { in: targetZoneIds },
       },
+      include: { zone: { select: { id: true, name: true } } },
     });
+
+    const zoneNameById = new Map(
+      permissions.map((p) => [p.zoneId, p.zone?.name ?? p.zoneId]),
+    );
 
     if (this.mockMode) {
       for (const cred of user.credentials) {
@@ -217,46 +383,73 @@ export class AkuvoxService {
           data: { syncStatus: DeviceSyncStatus.SYNCED },
         });
       }
+      const results = devices.map((d) => ({
+        deviceId: d.id,
+        deviceName: d.name,
+        zoneId: d.zoneId,
+        zoneName: d.zoneId ? zoneNameById.get(d.zoneId) : undefined,
+        ok: true,
+      }));
       return {
-        synced: user.credentials.length * Math.max(devices.length, 1),
+        synced: Math.max(user.credentials.length, user.faceImagePath ? 1 : 0) * Math.max(devices.length, 1),
         devices: devices.length,
+        results,
         mock: true,
       };
     }
 
     let synced = 0;
-    const results: Array<{ deviceId: string; ok: boolean; error?: string }> = [];
+    const results: Array<{
+      deviceId: string;
+      deviceName: string;
+      zoneId: string | null;
+      zoneName?: string;
+      ok: boolean;
+      error?: string;
+    }> = [];
 
     for (const device of devices) {
+      const zoneName = device.zoneId ? zoneNameById.get(device.zoneId) : undefined;
       try {
-        for (const cred of user.credentials) {
-          const payload = {
-            UserID: user.employeeCode,
-            Name: user.fullName,
-            Card: cred.cardNumber || undefined,
-            PrivateKey: cred.externalId || undefined,
-            FaceURL: user.faceImagePath
-              ? this.storage.getFileUrl(user.faceImagePath)
-              : undefined,
-          };
-          const result = await this.request(device, '/fcgi/do?action=AddUser', {
-            method: 'POST',
-            body: JSON.stringify(payload),
-          });
-          if (result.ok) {
+        let deviceOk = true;
+        const syncEntries = user.credentials.length > 0 ? user.credentials : [null];
+        for (const cred of syncEntries) {
+          const result = await this.syncUserToDevice(device, user, cred ?? undefined);
+          if (this.isSuccessfulResponse(result)) {
             synced += 1;
-            await this.prisma.credential.update({
-              where: { id: cred.id },
-              data: { syncStatus: DeviceSyncStatus.SYNCED },
-            });
+            if (cred) {
+              await this.prisma.credential.update({
+                where: { id: cred.id },
+                data: { syncStatus: DeviceSyncStatus.SYNCED },
+              });
+            }
           } else {
-            results.push({ deviceId: device.id, ok: false, error: `HTTP ${result.status}` });
+            deviceOk = false;
+            results.push({
+              deviceId: device.id,
+              deviceName: device.name,
+              zoneId: device.zoneId,
+              zoneName,
+              ok: false,
+              error: this.buildErrorMessage(result),
+            });
           }
         }
-        results.push({ deviceId: device.id, ok: true });
+        if (deviceOk) {
+          results.push({
+            deviceId: device.id,
+            deviceName: device.name,
+            zoneId: device.zoneId,
+            zoneName,
+            ok: true,
+          });
+        }
       } catch (err) {
         results.push({
           deviceId: device.id,
+          deviceName: device.name,
+          zoneId: device.zoneId,
+          zoneName,
           ok: false,
           error: err instanceof Error ? err.message : 'Unknown error',
         });

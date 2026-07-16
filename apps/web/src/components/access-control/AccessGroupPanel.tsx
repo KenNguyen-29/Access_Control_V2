@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { QueryBoundary } from '@/components/ui/query-states';
 import { AddAccessGroupPanel } from '@/components/access-control/AddAccessGroupPanel';
+import { AddZoneEmployeeDialog } from '@/components/access-control/AddZoneEmployeeDialog';
 import { AccessSyncReportPanel } from '@/components/access-control/AccessSyncReport';
 import { useAccessControl } from '@/hooks/useAccessControl';
 import type { AccessGroup } from '@/lib/accessControl';
@@ -36,6 +37,7 @@ export function AccessGroupPanel() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [activeGroup, setActiveGroup] = useState<AccessGroup | null>(null);
   const [addOpen, setAddOpen] = useState(false);
+  const [addEmployeeOpen, setAddEmployeeOpen] = useState(false);
   const [editGroup, setEditGroup] = useState<AccessGroup | null>(null);
   const [personFilter, setPersonFilter] = useState('');
   const [pointFilter, setPointFilter] = useState('');
@@ -216,16 +218,26 @@ export function AccessGroupPanel() {
                         Lịch khu vực: {activeGroup.scheduleTemplate}
                       </p>
                     </div>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => {
-                        setEditGroup(activeGroup);
-                        setAddOpen(true);
-                      }}
-                    >
-                      Sửa
-                    </Button>
+                    <div className="flex gap-2">
+                      <Button
+                        size="sm"
+                        variant="accent"
+                        onClick={() => setAddEmployeeOpen(true)}
+                      >
+                        <Plus className="mr-1 h-3.5 w-3.5" />
+                        Thêm nhân viên
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          setEditGroup(activeGroup);
+                          setAddOpen(true);
+                        }}
+                      >
+                        Sửa
+                      </Button>
+                    </div>
                   </div>
                   <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-2">
                     <div className="flex min-h-0 flex-col border-r border-border">
@@ -295,6 +307,20 @@ export function AccessGroupPanel() {
           scheduleTemplates={scheduleTemplates}
           saving={busy}
         />
+
+        {activeGroup && (
+          <AddZoneEmployeeDialog
+            open={addEmployeeOpen}
+            zoneId={activeGroup.id}
+            zoneName={activeGroup.name}
+            onClose={() => setAddEmployeeOpen(false)}
+            onSuccess={(message) => {
+              setNotice(message);
+              void refetch();
+            }}
+            onError={(message) => setActionError(message)}
+          />
+        )}
       </div>
     </QueryBoundary>
   );

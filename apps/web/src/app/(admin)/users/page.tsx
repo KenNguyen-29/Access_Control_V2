@@ -17,8 +17,10 @@ import {
   createUser,
   deleteUser,
   enrollFace,
+  getAccessZones,
   getDepartments,
   getUsers,
+  provisionUser,
   updateUser,
   type Department,
   type User,
@@ -31,6 +33,8 @@ const EMPTY_FORM = {
   email: '',
   phone: '',
   departmentId: '',
+  zoneIds: [] as string[],
+  autoSyncFace: true,
   faceImageFile: null as File | null,
   facePreviewUrl: '',
 };
@@ -80,6 +84,44 @@ function revokePreviewUrl(url: string) {
 
 const PAGE_SIZE = 10;
 
+function summarizeProvisionResult(
+  provision: NonNullable<Awaited<ReturnType<typeof provisionUser>>>,
+  fallbackCode: string,
+) {
+  const mocked = provision.syncByZone.filter((zone) => zone.mock);
+  const successfulZones = provision.syncByZone.filter(
+    (zone) => !zone.mock && zone.results.some((result) => result.ok),
+  );
+  const failures = provision.syncByZone.flatMap((zone) =>
+    zone.results
+      .filter((result) => !result.ok)
+      .map((result) => `${zone.zoneName}: ${result.error || result.deviceName}`),
+  );
+
+  if (mocked.length > 0) {
+    return {
+      notice: `Đã lưu nhân viên ${fallbackCode} · Hệ thống đang ở mock mode nên chưa gửi thật lên thiết bị`,
+      error: failures.length > 0 ? failures.join(' | ') : null,
+    };
+  }
+  if (provision.autoSync && successfulZones.length > 0) {
+    return {
+      notice: `Đã lưu nhân viên ${fallbackCode} · Đã đẩy FaceID lên ${successfulZones.map((zone) => zone.zoneName).join(', ')}`,
+      error: failures.length > 0 ? failures.join(' | ') : null,
+    };
+  }
+  if (provision.autoSync) {
+    return {
+      notice: `Đã lưu nhân viên ${fallbackCode}`,
+      error: failures.join(' | ') || 'Chưa đồng bộ được thiết bị, kiểm tra HTTP API và FaceURL',
+    };
+  }
+  return {
+    notice: `Đã lưu nhân viên ${fallbackCode} và gán khu vực`,
+    error: failures.length > 0 ? failures.join(' | ') : null,
+  };
+}
+
 export default function UsersPage() {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState('');
@@ -87,6 +129,7 @@ export default function UsersPage() {
   const [deptFilter, setDeptFilter] = useState('all');
   const [page, setPage] = useState(1);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<User | null>(null);
   const [form, setForm] = useState(EMPTY_FORM);
@@ -108,14 +151,19 @@ export default function UsersPage() {
     queryKey: queryKeys.departments(),
     queryFn: () => getDepartments(),
   });
+  const zonesQuery = useQuery({
+    queryKey: ['accessZones'],
+    queryFn: () => getAccessZones(),
+  });
 
   const items = usersQuery.data?.items ?? [];
   const total = usersQuery.data?.total ?? 0;
   const totalPages = usersQuery.data?.totalPages ?? 1;
   const currentPage = Math.min(page, totalPages);
   const departments: Department[] = departmentsQuery.data ?? [];
-  const loading = usersQuery.isLoading || departmentsQuery.isLoading;
-  const queryError = usersQuery.error ?? departmentsQuery.error;
+  const zones = zonesQuery.data ?? [];
+  const loading = usersQuery.isLoading || departmentsQuery.isLoading || zonesQuery.isLoading;
+  const queryError = usersQuery.error ?? departmentsQuery.error ?? zonesQuery.error;
   const displayError =
     error ??
     (queryError instanceof ApiError
@@ -144,7 +192,8 @@ export default function UsersPage() {
 
   function openCreate() {
     setEditing(null);
-    setForm(EMPTY_FORM);
+    setForm({ ...EMPTY_FORM, autoSyncFace: true });
+    setNotice(null);
     setOpen(true);
   }
 
@@ -156,6 +205,8 @@ export default function UsersPage() {
       email: user.email || '',
       phone: user.phone || '',
       departmentId: user.departmentId || '',
+      zoneIds: [],
+      autoSyncFace: false,
       faceImageFile: null,
       facePreviewUrl: user.faceImageUrl || '',
     });
@@ -169,10 +220,15 @@ export default function UsersPage() {
       const jpegFile = await compressImageFile(file);
       setForm((prev) => {
         revokePreviewUrl(prev.facePreviewUrl);
-        return {
+        const next = {
           ...prev,
           faceImageFile: jpegFile,
           facePreviewUrl: URL.createObjectURL(jpegFile),
+        };
+        return {
+          ...next,
+          autoSyncFace:
+            next.zoneIds.length > 0 ? true : prev.autoSyncFace,
         };
       });
     } catch {
@@ -184,7 +240,7 @@ export default function UsersPage() {
   function clearFaceImage() {
     setForm((prev) => {
       revokePreviewUrl(prev.facePreviewUrl);
-      return { ...prev, faceImageFile: null, facePreviewUrl: '' };
+      return { ...prev, faceImageFile: null, facePreviewUrl: '', autoSyncFace: false };
     });
   }
 
@@ -192,29 +248,62 @@ export default function UsersPage() {
     return () => revokePreviewUrl(form.facePreviewUrl);
   }, [form.facePreviewUrl]);
 
+  function toggleZone(zoneId: string) {
+    setForm((prev) => {
+      const zoneIds = prev.zoneIds.includes(zoneId)
+        ? prev.zoneIds.filter((id) => id !== zoneId)
+        : [...prev.zoneIds, zoneId];
+      const hasFace = Boolean(prev.faceImageFile || prev.facePreviewUrl);
+      return {
+        ...prev,
+        zoneIds,
+        autoSyncFace: hasFace && zoneIds.length > 0 ? prev.autoSyncFace : false,
+      };
+    });
+  }
+
   const saveMutation = useMutation({
     mutationFn: async () => {
+      const hasNewFace = Boolean(form.faceImageFile);
+      const isCreate = !editing;
+      if (isCreate && hasNewFace && form.autoSyncFace && form.zoneIds.length === 0) {
+        throw new ApiError('Chọn ít nhất một khu vực để đồng bộ FaceID', 400);
+      }
       const payload = {
-        employeeCode: form.employeeCode.trim(),
         fullName: form.fullName.trim(),
         email: form.email.trim() || undefined,
         phone: form.phone.trim() || undefined,
         departmentId: form.departmentId || undefined,
       };
       const saved = editing
-        ? await updateUser(editing.id, payload)
+        ? await updateUser(editing.id, { ...payload, employeeCode: form.employeeCode.trim() })
         : await createUser(payload);
 
-      // Upload face as JPG file to MinIO after the user exists
       if (form.faceImageFile) {
         await enrollFace(saved.id, form.faceImageFile);
       }
-      return saved;
+
+      if (isCreate && form.zoneIds.length > 0) {
+        const provision = await provisionUser(saved.id, {
+          zoneIds: form.zoneIds,
+          autoSync: form.autoSyncFace && (hasNewFace || Boolean(form.facePreviewUrl)),
+        });
+        return { saved, provision, isCreate };
+      }
+      return { saved, provision: null, isCreate };
     },
-    onSuccess: () => {
+    onSuccess: ({ saved, provision, isCreate }) => {
       setError(null);
       setOpen(false);
       void queryClient.invalidateQueries({ queryKey: ['users'] });
+      void queryClient.invalidateQueries({ queryKey: ['permissions'] });
+      if (isCreate && provision) {
+        const summary = summarizeProvisionResult(provision, saved.employeeCode);
+        setNotice(summary.notice);
+        setError(summary.error);
+      } else {
+        setNotice(`Đã lưu nhân viên ${saved.employeeCode}`);
+      }
     },
     onError: (e) => setError(e instanceof ApiError ? e.message : 'Lưu thất bại'),
   });
@@ -257,6 +346,11 @@ export default function UsersPage() {
         </>
       }
     >
+      {notice && (
+        <p className="mb-4 rounded-sm border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+          {notice}
+        </p>
+      )}
       <DesignCard title="Tìm kiếm & bộ lọc">
         <div className="grid grid-cols-1 items-end gap-4 sm:grid-cols-2 lg:grid-cols-[1fr_200px_auto]">
           <div>
@@ -461,15 +555,21 @@ export default function UsersPage() {
               />
             </div>
           </div>
-          <div>
-            <label className="mb-1 block text-xs text-muted-foreground">Mã nhân viên</label>
-            <Input
-              placeholder="VD: NV001"
-              className="input-design h-10"
-              value={form.employeeCode}
-              onChange={(e) => setForm({ ...form, employeeCode: e.target.value })}
-            />
-          </div>
+          {editing ? (
+            <div>
+              <label className="mb-1 block text-xs text-muted-foreground">Mã nhân viên</label>
+              <Input
+                className="input-design h-10"
+                value={form.employeeCode}
+                readOnly
+                disabled
+              />
+            </div>
+          ) : (
+            <div className="rounded-sm border border-dashed border-border bg-muted/20 px-3 py-2 text-sm text-muted-foreground">
+              Mã nhân viên sẽ được tự sinh sau khi lưu theo dạng <span className="font-mono">NV-0001</span>.
+            </div>
+          )}
           <div>
             <label className="mb-1 block text-xs text-muted-foreground">Họ tên</label>
             <Input
@@ -513,6 +613,47 @@ export default function UsersPage() {
               ))}
             </Select>
           </div>
+          {!editing && (
+            <>
+              <div>
+                <label className="mb-1 block text-xs text-muted-foreground">
+                  Khu vực ra vào
+                  {(form.faceImageFile || form.facePreviewUrl) && (
+                    <span className="text-destructive"> *</span>
+                  )}
+                </label>
+                <div className="max-h-36 space-y-1 overflow-y-auto rounded-sm border border-border p-2">
+                  {zones.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">Chưa có khu vực — tạo trong Kiểm soát truy cập</p>
+                  ) : (
+                    zones.map((z) => (
+                      <label key={z.id} className="flex cursor-pointer items-center gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          className="h-3.5 w-3.5 accent-primary"
+                          checked={form.zoneIds.includes(z.id)}
+                          onChange={() => toggleZone(z.id)}
+                        />
+                        <span>{z.name}</span>
+                      </label>
+                    ))
+                  )}
+                </div>
+              </div>
+              <label className="flex cursor-pointer items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  className="h-3.5 w-3.5 accent-primary"
+                  checked={form.autoSyncFace}
+                  disabled={
+                    form.zoneIds.length === 0 || !(form.faceImageFile || form.facePreviewUrl)
+                  }
+                  onChange={(e) => setForm({ ...form, autoSyncFace: e.target.checked })}
+                />
+                <span>Đồng bộ FaceID lên thiết bị ngay</span>
+              </label>
+            </>
+          )}
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="outline" size="sm" onClick={() => setOpen(false)}>
               Hủy
@@ -520,7 +661,7 @@ export default function UsersPage() {
             <Button
               variant="accent"
               size="sm"
-              disabled={saving || !form.employeeCode || !form.fullName}
+              disabled={saving || !form.fullName}
               onClick={() => onSave()}
             >
               {saving ? 'Đang lưu...' : 'Lưu'}
