@@ -4,7 +4,7 @@ import { AccessAction, AkuvoxWebhookJobData } from '@acv2/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import { EventsGateway } from '../events/events.gateway';
-import { AttendanceService } from '../attendance/attendance.service';
+import { AttendanceService, PunchResult } from '../attendance/attendance.service';
 
 @Injectable()
 export class AkuvoxEventService {
@@ -41,6 +41,18 @@ export class AkuvoxEventService {
         lastEventTime: eventAt,
       },
     });
+  }
+
+  private toPrismaAction(punch: PunchResult): PrismaAccessAction {
+    if (punch.outcome === 'CHECK_OUT') return PrismaAccessAction.CHECK_OUT;
+    if (punch.outcome === 'CHECK_IN') return PrismaAccessAction.CHECK_IN;
+    return PrismaAccessAction.UNKNOWN;
+  }
+
+  private toSocketAction(action: PrismaAccessAction): AccessAction {
+    if (action === PrismaAccessAction.CHECK_OUT) return AccessAction.CHECK_OUT;
+    if (action === PrismaAccessAction.CHECK_IN) return AccessAction.CHECK_IN;
+    return AccessAction.UNKNOWN;
   }
 
   async handle(data: AkuvoxWebhookJobData) {
@@ -96,22 +108,22 @@ export class AkuvoxEventService {
 
     let action: PrismaAccessAction = PrismaAccessAction.CHECK_IN;
     let attendanceId: string | undefined;
+    let punchWarning: string | undefined;
 
     if (user) {
-      const existing = await this.prisma.attendanceRecord.findUnique({
-        where: {
-          userId_date: {
-            userId: user.id,
-            date: new Date(Date.UTC(eventAt.getFullYear(), eventAt.getMonth(), eventAt.getDate())),
-          },
-        },
-      });
-      action = existing?.checkInAt ? PrismaAccessAction.CHECK_OUT : PrismaAccessAction.CHECK_IN;
+      const punch = await this.attendance.processPunch(user.id, eventAt);
+      attendanceId = punch.record?.id;
+      punchWarning = punch.message;
+      action = this.toPrismaAction(punch);
 
-      const attendance = await this.attendance.processPunch(user.id, eventAt);
-      attendanceId = attendance.id;
-      await this.upsertPresence(user.id, action, device.zoneId, eventAt);
+      if (punch.outcome === 'CHECK_IN' || punch.outcome === 'CHECK_OUT') {
+        await this.upsertPresence(user.id, action, device.zoneId, eventAt);
+      }
     }
+
+    const warningMessage = user
+      ? punchWarning
+      : 'Unknown person';
 
     const accessLog = await this.prisma.accessLog.upsert({
       where: {
@@ -129,7 +141,7 @@ export class AkuvoxEventService {
         snapshotPath,
         rawPayload: payload as object,
         isValid: !!user,
-        warningMessage: user ? undefined : 'Unknown person',
+        warningMessage,
         eventAt,
       },
       update: {},
@@ -143,7 +155,7 @@ export class AkuvoxEventService {
       departmentName: user?.department?.name,
       deviceId: device.id,
       deviceName: device.name,
-      action: action === PrismaAccessAction.CHECK_OUT ? AccessAction.CHECK_OUT : AccessAction.CHECK_IN,
+      action: this.toSocketAction(action),
       timestamp: eventAt.toISOString(),
       snapshotUrl: snapshotPath
         ? await this.storage.getSignedUrl(snapshotPath).catch(() => undefined)
@@ -152,7 +164,7 @@ export class AkuvoxEventService {
         ? await this.storage.getAssetUrl(user.faceImagePath).catch(() => undefined)
         : undefined,
       isValid: !!user,
-      warningMessage: user ? undefined : 'Unknown person',
+      warningMessage,
     };
 
     this.eventsGateway.emitCheckinEvent(checkinEvent);

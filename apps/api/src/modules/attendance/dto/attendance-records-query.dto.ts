@@ -1,5 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsDateString, IsOptional, IsString } from 'class-validator';
+import { AttendanceStatus } from '@prisma/client';
+import { IsDateString, IsEnum, IsOptional, IsString } from 'class-validator';
 import { PaginationDto } from '../../../common/dto/pagination.dto';
 
 export class AttendanceRecordsQueryDto extends PaginationDto {
@@ -17,4 +18,14 @@ export class AttendanceRecordsQueryDto extends PaginationDto {
   @IsOptional()
   @IsDateString()
   to?: string;
+
+  @ApiPropertyOptional({ description: 'Filter by user department' })
+  @IsOptional()
+  @IsString()
+  departmentId?: string;
+
+  @ApiPropertyOptional({ enum: AttendanceStatus })
+  @IsOptional()
+  @IsEnum(AttendanceStatus)
+  status?: AttendanceStatus;
 }

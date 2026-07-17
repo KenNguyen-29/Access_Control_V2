@@ -23,6 +23,7 @@ import {
   type Device,
 } from '@/lib/api';
 import EventPopup from './components/EventPopup';
+import CheckinToast from './components/CheckinToast';
 import MiniAccessLog from './components/MiniAccessLog';
 import AttendanceBoard from './components/AttendanceBoard';
 import type { EmergencyOverlayPerson } from './components/EmergencyOverlay';
@@ -250,6 +251,8 @@ export default function DashboardPage() {
           )}
         </button>
 
+        <CheckinToast event={lastEvent} />
+
         <div className="min-h-0 flex-1 overflow-y-auto">
           <CameraGrid
             cameras={gridCameras}
@@ -342,7 +345,7 @@ export default function DashboardPage() {
             <MiniAccessLog />
           </TabsContent>
 
-          <TabsContent value="attendance" className="mt-0 min-h-0 flex-1 overflow-y-auto p-3">
+          <TabsContent value="attendance" className="mt-0 flex min-h-0 flex-1 flex-col overflow-hidden p-3">
             <AttendanceBoard />
           </TabsContent>
         </Tabs>

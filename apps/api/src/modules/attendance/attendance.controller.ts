@@ -14,6 +14,7 @@ import { Response } from 'express';
 import { paginatedResponse, successResponse } from '../../common/utils/response.util';
 import { formatLocalDate, sendXlsx } from './attendance-excel.util';
 import { AttendanceRecordsQueryDto } from './dto/attendance-records-query.dto';
+import { AccessLogsQueryDto } from './dto/access-logs-query.dto';
 import { AttendanceService } from './attendance.service';
 
 @ApiTags('attendance')
@@ -29,8 +30,8 @@ export class AttendanceController {
   }
 
   @Get('access-logs')
-  async findAccessLogs(@Query('limit') limit?: number) {
-    return successResponse(await this.service.findAccessLogs(limit ? Number(limit) : 20));
+  async findAccessLogs(@Query() query: AccessLogsQueryDto) {
+    return successResponse(await this.service.findAccessLogs(query));
   }
 
   @Get('export')

@@ -84,15 +84,6 @@ function parseDateOnly(s: string) {
   return new Date(y, (m ?? 1) - 1, d ?? 1);
 }
 
-function firstDayOfMonth() {
-  const now = new Date();
-  return formatDateOnly(new Date(now.getFullYear(), now.getMonth(), 1));
-}
-
-function today() {
-  return formatDateOnly(new Date());
-}
-
 function mondayOfWeek(base: Date) {
   const d = new Date(base.getFullYear(), base.getMonth(), base.getDate());
   const day = d.getDay();
@@ -106,6 +97,12 @@ function formatDayLabel(dateStr: string) {
   return `${WEEKDAY_LABELS[d.getDay()]} ${d.getDate()}/${d.getMonth() + 1}`;
 }
 
+function weekEndFromStart(start: string) {
+  const d = parseDateOnly(start);
+  d.setDate(d.getDate() + 6);
+  return formatDateOnly(d);
+}
+
 function errMsg(err: unknown, fallback: string) {
   if (!err) return null;
   return err instanceof ApiError ? err.message : fallback;
@@ -116,13 +113,20 @@ export default function ReportsPage() {
   const importInputRef = useRef<HTMLInputElement>(null);
   const [tab, setTab] = useState('stats');
 
-  // ── Shared filters (input vs applied) ──────────
-  const [from, setFrom] = useState(firstDayOfMonth());
-  const [to, setTo] = useState(today());
-  const [departmentId, setDepartmentId] = useState('');
-  const [applied, setApplied] = useState({ from: firstDayOfMonth(), to: today(), departmentId: '' });
+  const initialWeekStart = formatDateOnly(mondayOfWeek(new Date()));
+  const initialWeekEnd = weekEndFromStart(initialWeekStart);
 
-  const [weekStart, setWeekStart] = useState(() => formatDateOnly(mondayOfWeek(new Date())));
+  // ── Shared filters (input vs applied) ──────────
+  const [from, setFrom] = useState(initialWeekStart);
+  const [to, setTo] = useState(initialWeekEnd);
+  const [departmentId, setDepartmentId] = useState('');
+  const [applied, setApplied] = useState({
+    from: initialWeekStart,
+    to: initialWeekEnd,
+    departmentId: '',
+  });
+
+  const [weekStart, setWeekStart] = useState(initialWeekStart);
   const [recordsPage, setRecordsPage] = useState(1);
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -147,6 +151,8 @@ export default function ReportsPage() {
         departmentId: applied.departmentId || undefined,
       }),
     enabled: tab === 'stats',
+    refetchInterval: tab === 'stats' ? 30_000 : false,
+    refetchIntervalInBackground: true,
   });
   const summary = summaryQuery.data ?? null;
 
@@ -158,6 +164,8 @@ export default function ReportsPage() {
         departmentId: applied.departmentId || undefined,
       }),
     enabled: tab === 'stats',
+    refetchInterval: tab === 'stats' ? 30_000 : false,
+    refetchIntervalInBackground: true,
   });
   const weekly = weeklyQuery.data ?? null;
 
@@ -208,19 +216,31 @@ export default function ReportsPage() {
     void logsQuery.refetch();
   }
 
+  function applyWeekRange(start: string, dept = departmentId) {
+    const end = weekEndFromStart(start);
+    setFrom(start);
+    setTo(end);
+    setApplied({ from: start, to: end, departmentId: dept });
+  }
+
   function onFilter() {
     setRecordsPage(1);
     setApplied({ from, to, departmentId });
+    setWeekStart(formatDateOnly(mondayOfWeek(parseDateOnly(from))));
   }
 
   function shiftWeek(deltaDays: number) {
     const d = parseDateOnly(weekStart);
     d.setDate(d.getDate() + deltaDays);
-    setWeekStart(formatDateOnly(mondayOfWeek(d)));
+    const newStart = formatDateOnly(mondayOfWeek(d));
+    setWeekStart(newStart);
+    applyWeekRange(newStart);
   }
 
   function currentWeek() {
-    setWeekStart(formatDateOnly(mondayOfWeek(new Date())));
+    const newStart = formatDateOnly(mondayOfWeek(new Date()));
+    setWeekStart(newStart);
+    applyWeekRange(newStart);
   }
 
   async function onExport() {
@@ -293,8 +313,14 @@ export default function ReportsPage() {
       { icon: LogOut, label: 'Về sớm', value: s?.earlyLeaveCount ?? 0, tone: 'text-orange-600' },
       {
         icon: TrendingUp,
-        label: 'OT (giờ)',
-        value: ((s?.otMinutes ?? 0) / 60).toFixed(1),
+        label: 'Giờ làm',
+        value: formatMinutes(s?.workedMinutes ?? 0),
+        tone: 'text-sky-600',
+      },
+      {
+        icon: TrendingUp,
+        label: 'OT',
+        value: formatMinutes(s?.otMinutes ?? 0),
         tone: 'text-emerald-600',
       },
     ];
@@ -379,7 +405,7 @@ export default function ReportsPage() {
 
         {/* ═══ TAB: THỐNG KÊ ═══ */}
         <TabsContent value="stats" className="space-y-6">
-          <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-6">
+          <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-7">
             {kpis.map((s) => (
               <div
                 key={s.label}
@@ -400,7 +426,7 @@ export default function ReportsPage() {
 
           <DesignCard
             title={`Bảng tổng hợp công (${summary?.timesheet.length ?? 0})`}
-            description="Tổng hợp công theo từng nhân viên trong khoảng thời gian đã chọn."
+            description="Tổng hợp công theo từng nhân viên trong khoảng thời gian đã chọn (đồng bộ với tuần đang xem). Giờ làm cập nhật liên tục kể cả khi chưa check-out."
           >
             <QueryBoundary
               isLoading={statsLoading}
@@ -494,6 +520,7 @@ export default function ReportsPage() {
                       <th className="p-2 font-semibold">Ca</th>
                       <th className="p-2 font-semibold">Giờ vào</th>
                       <th className="p-2 font-semibold">Giờ ra</th>
+                      <th className="p-2 text-right font-semibold">Giờ làm</th>
                       <th className="p-2 text-right font-semibold">Đi muộn</th>
                       <th className="p-2 text-right font-semibold">Đi sớm</th>
                       <th className="p-2 text-right font-semibold">OT</th>
@@ -542,6 +569,12 @@ export default function ReportsPage() {
                           </td>
                           <td className="p-2 font-mono text-xs">{formatTime(r.checkInAt)}</td>
                           <td className="p-2 font-mono text-xs">{formatTime(r.checkOutAt)}</td>
+                          <td className="p-2 text-right font-medium">
+                            {r.workedMinutes > 0 ? formatMinutes(r.workedMinutes) : '—'}
+                            {!r.checkOutAt && r.checkInAt && (
+                              <span className="ml-1 text-[10px] text-sky-600">(tạm)</span>
+                            )}
+                          </td>
                           <td className={cn('p-2 text-right', r.lateMinutes > 0 && 'text-orange-600')}>
                             {r.lateMinutes > 0 ? formatMinutes(r.lateMinutes) : '—'}
                           </td>

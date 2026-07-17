@@ -68,30 +68,44 @@ export interface WeeklyTimesheet {
 }
 
 function formatDateOnly(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(d.getUTCDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
 }
 
 function parseDateOnly(value: string, fallback: Date): Date {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
   if (!match) {
-    const f = new Date(fallback);
-    f.setHours(0, 0, 0, 0);
-    return f;
+    const f = fallback;
+    return new Date(Date.UTC(f.getFullYear(), f.getMonth(), f.getDate()));
   }
-  const d = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
-  d.setHours(0, 0, 0, 0);
-  return d;
+  return new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
 }
 
+/** Worked minutes; if still checked in, counts up to now (live partial hours). */
 function computeWorkedMinutes(
+  workDate: Date,
   checkInAt: Date | null,
   checkOutAt: Date | null,
   breakMinutes: number,
+  asOf: Date = new Date(),
 ): number {
-  if (!checkInAt || !checkOutAt) return 0;
+  if (!checkInAt) return 0;
+
+  if (!checkOutAt) {
+    const workDateKey = formatDateOnly(workDate);
+    const todayKey = [
+      asOf.getFullYear(),
+      String(asOf.getMonth() + 1).padStart(2, '0'),
+      String(asOf.getDate()).padStart(2, '0'),
+    ].join('-');
+    if (workDateKey !== todayKey) return 0;
+
+    const liveRaw = (asOf.getTime() - checkInAt.getTime()) / 60000;
+    return liveRaw > 0 ? Math.round(liveRaw) : 0;
+  }
+
   const raw = (checkOutAt.getTime() - checkInAt.getTime()) / 60000 - breakMinutes;
   return raw > 0 ? Math.round(raw) : 0;
 }
@@ -154,12 +168,13 @@ export class StatsService {
     departmentId?: string;
   }): Promise<AttendanceSummary> {
     const now = new Date();
-    const defaultFrom = new Date(now.getFullYear(), now.getMonth(), 1);
+    const defaultFrom = new Date(Date.UTC(now.getFullYear(), now.getMonth(), 1));
     const from = parseDateOnly(params.from ?? '', defaultFrom);
     const toBase = parseDateOnly(params.to ?? '', now);
     const to = new Date(toBase);
-    to.setDate(to.getDate() + 1);
+    to.setUTCDate(to.getUTCDate() + 1);
 
+    const asOf = new Date();
     const records = await this.prisma.attendanceRecord.findMany({
       where: {
         date: { gte: from, lt: to },
@@ -187,9 +202,11 @@ export class StatsService {
 
     for (const r of records) {
       const worked = computeWorkedMinutes(
+        r.date,
         r.checkInAt,
         r.checkOutAt,
         r.workShift?.breakMinutes ?? 0,
+        asOf,
       );
 
       if (r.status !== 'ABSENT') summary.presentCount += 1;
@@ -235,15 +252,15 @@ export class StatsService {
     departmentId?: string;
   }): Promise<WeeklyTimesheet> {
     const now = new Date();
-    // Default to Monday of the current week
     const defaultStart = new Date(now);
     const day = defaultStart.getDay();
-    const diff = (day + 6) % 7; // days since Monday
+    const diff = (day + 6) % 7;
     defaultStart.setDate(defaultStart.getDate() - diff);
     const weekStart = parseDateOnly(params.weekStart ?? '', defaultStart);
     const weekEnd = new Date(weekStart);
-    weekEnd.setDate(weekEnd.getDate() + 7);
+    weekEnd.setUTCDate(weekEnd.getUTCDate() + 7);
 
+    const asOf = new Date();
     const records = await this.prisma.attendanceRecord.findMany({
       where: {
         date: { gte: weekStart, lt: weekEnd },
@@ -261,8 +278,8 @@ export class StatsService {
       fullName: r.user?.fullName ?? r.userId,
       employeeCode: r.user?.employeeCode ?? '',
       departmentName: r.user?.department?.name ?? null,
-      date: r.date.toISOString().slice(0, 10),
-      weekday: r.date.getDay(),
+      date: formatDateOnly(r.date),
+      weekday: r.date.getUTCDay(),
       shiftName: r.workShift?.name ?? null,
       shiftCode: r.workShift?.code ?? null,
       checkInAt: r.checkInAt,
@@ -271,9 +288,11 @@ export class StatsService {
       earlyLeaveMinutes: r.earlyLeaveMinutes,
       otMinutes: r.otMinutes,
       workedMinutes: computeWorkedMinutes(
+        r.date,
         r.checkInAt,
         r.checkOutAt,
         r.workShift?.breakMinutes ?? 0,
+        asOf,
       ),
       salaryCoefficient: r.workShift?.salaryCoefficient ?? 1,
       status: r.status,
@@ -285,9 +304,12 @@ export class StatsService {
       return a.date.localeCompare(b.date);
     });
 
+    const weekEndDisplay = new Date(weekEnd);
+    weekEndDisplay.setUTCDate(weekEndDisplay.getUTCDate() - 1);
+
     return {
       weekStart: formatDateOnly(weekStart),
-      weekEnd: formatDateOnly(new Date(weekEnd.getFullYear(), weekEnd.getMonth(), weekEnd.getDate() - 1)),
+      weekEnd: formatDateOnly(weekEndDisplay),
       rows,
     };
   }

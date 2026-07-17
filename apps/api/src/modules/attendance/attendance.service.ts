@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { AttendanceStatus, WorkShift } from '@prisma/client';
+import { ConfigService } from '@nestjs/config';
+import { AccessAction, AttendanceRecord, AttendanceStatus, WorkShift } from '@prisma/client';
 import * as ExcelJS from 'exceljs';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginationDto } from '../../common/dto/pagination.dto';
@@ -24,11 +25,33 @@ export type AttendanceImportResult = {
   errors: Array<{ row: number; message: string }>;
 };
 
+export type PunchOutcome = 'CHECK_IN' | 'CHECK_OUT' | 'IGNORED';
+export type PunchIgnoreReason = 'COOLDOWN' | 'ALREADY_COMPLETE';
+
+export type PunchResult = {
+  outcome: PunchOutcome;
+  record: AttendanceRecord | null;
+  reason?: PunchIgnoreReason;
+  cooldownMinutes: number;
+  message?: string;
+};
+
 const VALID_STATUSES = new Set<string>(Object.values(AttendanceStatus));
 
 @Injectable()
 export class AttendanceService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly punchCooldownMinutes: number;
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly config: ConfigService,
+  ) {
+    this.punchCooldownMinutes = Number(this.config.get<string>('PUNCH_COOLDOWN_MINUTES', '5'));
+  }
+
+  private punchCooldownMs(): number {
+    return this.punchCooldownMinutes * 60 * 1000;
+  }
 
   private workDateOnly(d: Date): Date {
     return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
@@ -123,24 +146,23 @@ export class AttendanceService {
     return { lateMinutes, earlyLeaveMinutes, otMinutes };
   }
 
-  async processPunch(userId: string, eventTime: Date) {
+  async processPunch(userId: string, eventTime: Date): Promise<PunchResult> {
+    const cooldownMinutes = this.punchCooldownMinutes;
     const shift = await this.resolveShiftForUser(userId, eventTime);
     const workDate = this.workDateOnly(eventTime);
     const existing = await this.prisma.attendanceRecord.findUnique({
       where: { userId_date: { userId, date: workDate } },
     });
 
-    // First punch of the day = check-in; subsequent = check-out (update).
     if (!existing?.checkInAt) {
       let lateMinutes = 0;
       if (shift) {
-        // Late = after shift start (no grace period).
         const startMin = this.timeToMinutes(shift.startTime);
         const eventMin = this.eventToMinutes(eventTime);
         lateMinutes = Math.max(0, eventMin - startMin);
       }
 
-      return this.prisma.attendanceRecord.upsert({
+      const record = await this.prisma.attendanceRecord.upsert({
         where: { userId_date: { userId, date: workDate } },
         create: {
           userId,
@@ -160,6 +182,29 @@ export class AttendanceService {
           status: lateMinutes > 0 ? AttendanceStatus.LATE : AttendanceStatus.ON_TIME,
         },
       });
+
+      return { outcome: 'CHECK_IN', record, cooldownMinutes };
+    }
+
+    if (existing.checkOutAt) {
+      return {
+        outcome: 'IGNORED',
+        record: existing,
+        reason: 'ALREADY_COMPLETE',
+        cooldownMinutes,
+        message: 'Đã chấm công xong hôm nay',
+      };
+    }
+
+    const elapsedMs = eventTime.getTime() - existing.checkInAt.getTime();
+    if (elapsedMs < this.punchCooldownMs()) {
+      return {
+        outcome: 'IGNORED',
+        record: existing,
+        reason: 'COOLDOWN',
+        cooldownMinutes,
+        message: `Quét trong vòng ${cooldownMinutes} phút, chưa tính chấm công`,
+      };
     }
 
     let earlyLeaveMinutes = 0;
@@ -187,7 +232,7 @@ export class AttendanceService {
       checkOutAt: eventTime,
     });
 
-    return this.prisma.attendanceRecord.update({
+    const record = await this.prisma.attendanceRecord.update({
       where: { id: existing.id },
       data: {
         checkOutAt: eventTime,
@@ -197,13 +242,24 @@ export class AttendanceService {
         status,
       },
     });
+
+    return { outcome: 'CHECK_OUT', record, cooldownMinutes };
   }
 
-  async findRecords(query: PaginationDto & { userId?: string; from?: string; to?: string }) {
+  async findRecords(
+    query: PaginationDto & {
+      userId?: string;
+      from?: string;
+      to?: string;
+      departmentId?: string;
+      status?: AttendanceStatus;
+    },
+  ) {
     const page = query.page ?? 1;
     const pageSize = query.pageSize ?? 20;
     const where = {
       ...(query.userId ? { userId: query.userId } : {}),
+      ...(query.status ? { status: query.status } : {}),
       ...(query.from || query.to
         ? {
             date: {
@@ -212,15 +268,21 @@ export class AttendanceService {
             },
           }
         : {}),
+      ...(query.departmentId
+        ? { user: { departmentId: query.departmentId } }
+        : {}),
     };
 
     const [items, total] = await Promise.all([
       this.prisma.attendanceRecord.findMany({
         where,
-        include: { user: true, workShift: true },
+        include: {
+          user: { include: { department: true } },
+          workShift: true,
+        },
         skip: (page - 1) * pageSize,
         take: pageSize,
-        orderBy: { date: 'desc' },
+        orderBy: [{ checkInAt: 'desc' }, { date: 'desc' }],
       }),
       this.prisma.attendanceRecord.count({ where }),
     ]);
@@ -228,8 +290,21 @@ export class AttendanceService {
     return { items, total, page, pageSize };
   }
 
-  findAccessLogs(limit = 20) {
+  findAccessLogs(query: {
+    limit?: number;
+    deviceId?: string;
+    action?: AccessAction;
+    isValid?: boolean;
+    unknownOnly?: boolean;
+  } = {}) {
+    const limit = query.limit ?? 50;
     return this.prisma.accessLog.findMany({
+      where: {
+        ...(query.deviceId ? { deviceId: query.deviceId } : {}),
+        ...(query.action ? { action: query.action } : {}),
+        ...(query.isValid !== undefined ? { isValid: query.isValid } : {}),
+        ...(query.unknownOnly ? { userId: null } : {}),
+      },
       take: limit,
       orderBy: { eventAt: 'desc' },
       include: {

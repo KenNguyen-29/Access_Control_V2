@@ -433,6 +433,8 @@ export async function getAttendanceRecords(params?: {
   userId?: string;
   from?: string;
   to?: string;
+  departmentId?: string;
+  status?: string;
 }) {
   const q = new URLSearchParams();
   if (params?.page) q.set('page', String(params.page));
@@ -440,12 +442,31 @@ export async function getAttendanceRecords(params?: {
   if (params?.userId) q.set('userId', params.userId);
   if (params?.from) q.set('from', params.from);
   if (params?.to) q.set('to', params.to);
+  if (params?.departmentId) q.set('departmentId', params.departmentId);
+  if (params?.status) q.set('status', params.status);
   const qs = q.toString();
   return apiRequest<PaginatedData<AttendanceRecord>>(`/attendance/records${qs ? `?${qs}` : ''}`);
 }
 
-export async function getAccessLogs(limit = 20) {
-  return apiRequest<AccessLog[]>(`/attendance/access-logs?limit=${limit}`);
+export async function getAccessLogs(
+  params?:
+    | number
+    | {
+        limit?: number;
+        deviceId?: string;
+        action?: string;
+        isValid?: boolean;
+        unknownOnly?: boolean;
+      },
+) {
+  const opts = typeof params === 'number' ? { limit: params } : params ?? {};
+  const q = new URLSearchParams();
+  q.set('limit', String(opts.limit ?? 50));
+  if (opts.deviceId) q.set('deviceId', opts.deviceId);
+  if (opts.action) q.set('action', opts.action);
+  if (opts.isValid !== undefined) q.set('isValid', String(opts.isValid));
+  if (opts.unknownOnly) q.set('unknownOnly', 'true');
+  return apiRequest<AccessLog[]>(`/attendance/access-logs?${q.toString()}`);
 }
 
 export async function exportAttendance(params?: { from?: string; to?: string; userId?: string }) {
