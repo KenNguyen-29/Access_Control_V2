@@ -1,10 +1,18 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { AccessAction as PrismaAccessAction, PresenceStatus } from '@prisma/client';
-import { AccessAction, AkuvoxWebhookJobData } from '@acv2/shared';
+import { AccessAction as PrismaAccessAction, DeviceType, PresenceStatus } from '@prisma/client';
+import { AccessAction, AkuvoxWebhookJobData, CheckinEvent } from '@acv2/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import { EventsGateway } from '../events/events.gateway';
+import { RealtimeMetricsService } from '../events/realtime-metrics.service';
 import { AttendanceService, PunchResult } from '../attendance/attendance.service';
+import {
+  AkuvoxDoorLogPayload,
+  buildDoorLogEventTime,
+  buildDoorLogSourceEventId,
+  isDoorLogSuccess,
+  normalizedDoorLogUserId,
+} from '../webhooks/akuvox-door-log.util';
 
 @Injectable()
 export class AkuvoxEventService {
@@ -15,6 +23,7 @@ export class AkuvoxEventService {
     private readonly storage: StorageService,
     private readonly eventsGateway: EventsGateway,
     private readonly attendance: AttendanceService,
+    private readonly metrics: RealtimeMetricsService,
   ) {}
 
   private async upsertPresence(
@@ -52,11 +61,113 @@ export class AkuvoxEventService {
   private toSocketAction(action: PrismaAccessAction): AccessAction {
     if (action === PrismaAccessAction.CHECK_OUT) return AccessAction.CHECK_OUT;
     if (action === PrismaAccessAction.CHECK_IN) return AccessAction.CHECK_IN;
+    if (action === PrismaAccessAction.DENIED) return AccessAction.UNKNOWN;
     return AccessAction.UNKNOWN;
   }
 
+  private async findDevice(params: {
+    deviceCode?: string;
+    deviceIp?: string;
+    clientIp?: string;
+  }) {
+    const deviceCode = params.deviceCode;
+    const deviceIp = params.deviceIp?.trim();
+    const clientIp = params.clientIp?.trim();
+
+    if (deviceCode) {
+      const byCode = await this.prisma.device.findFirst({
+        where: { code: String(deviceCode), isDeleted: false, deviceType: DeviceType.AKUVOX },
+      });
+      if (byCode) return byCode;
+    }
+
+    for (const ip of [deviceIp, clientIp]) {
+      if (!ip) continue;
+      const byIp = await this.prisma.device.findFirst({
+        where: { ipAddress: ip, isDeleted: false, deviceType: DeviceType.AKUVOX },
+      });
+      if (byIp) return byIp;
+    }
+
+    return null;
+  }
+
+  private async findUserByEmployeeCode(employeeCode?: string) {
+    const code = employeeCode?.trim();
+    if (!code) return null;
+    return this.prisma.user.findFirst({
+      where: {
+        employeeCode: { equals: code, mode: 'insensitive' },
+        isDeleted: false,
+      },
+      include: { department: true },
+    });
+  }
+
+  /** Upload snapshot in background, then patch AccessLog + re-emit with snapshotUrl. */
+  private finalizeSnapshotAsync(
+    accessLogId: string,
+    snapshotPath: string,
+    buffer: Buffer,
+    baseEvent: CheckinEvent,
+  ) {
+    void (async () => {
+      try {
+        await this.storage.uploadFile(snapshotPath, buffer, 'image/jpeg');
+        await this.prisma.accessLog.update({
+          where: { id: accessLogId },
+          data: { snapshotPath },
+        });
+        const snapshotUrl = await this.storage.getSignedUrl(snapshotPath).catch(() => undefined);
+        this.eventsGateway.emitCheckinEvent({
+          ...baseEvent,
+          snapshotUrl,
+        });
+      } catch (err) {
+        this.logger.warn(
+          `Async snapshot finalize failed for accessLog=${accessLogId}: ${(err as Error).message}`,
+        );
+      }
+    })();
+  }
+
+  async processDoorLog(dto: AkuvoxDoorLogPayload, clientIp: string) {
+    const employeeCode = normalizedDoorLogUserId(dto);
+    if (!employeeCode) {
+      this.metrics.markProcessed({ skipped: true, reason: 'empty_person_code' });
+      return { ignored: true, reason: 'EMPTY_PERSON_CODE' };
+    }
+
+    const device = await this.findDevice({ clientIp });
+    if (!device) {
+      this.logger.warn(`Device not found for clientIp=${clientIp}`);
+      this.metrics.markProcessed({ skipped: true, reason: 'device_not_found' });
+      return { skipped: true, reason: 'device_not_found' };
+    }
+
+    const eventAt = buildDoorLogEventTime(dto);
+    const sourceEventId = buildDoorLogSourceEventId(dto, clientIp);
+    const user = await this.findUserByEmployeeCode(employeeCode);
+    const denied = !isDoorLogSuccess(dto);
+
+    return this.persistAndEmit({
+      device,
+      user,
+      employeeCode,
+      eventAt,
+      sourceEventId,
+      rawPayload: dto as object,
+      denied,
+      deniedStatus: dto.Status,
+      skipPunch: denied,
+    });
+  }
+
   async handle(data: AkuvoxWebhookJobData) {
-    const { payload } = data;
+    const { payload, sourceIp } = data;
+    this.logger.log(
+      `Processing akuvox event employee=${payload.employeeCode ?? payload.userId ?? '—'} device=${payload.deviceCode ?? payload.deviceIp ?? sourceIp ?? '—'}`,
+    );
 
     const deviceCode = payload.deviceCode ?? payload.deviceId;
     const deviceIp =
@@ -64,53 +175,75 @@ export class AkuvoxEventService {
         ? payload.deviceIp.trim()
         : undefined;
 
-    let device = deviceCode
-      ? await this.prisma.device.findFirst({
-          where: { code: String(deviceCode), isDeleted: false },
-        })
-      : null;
-
-    if (!device && deviceIp) {
-      device = await this.prisma.device.findFirst({
-        where: { ipAddress: deviceIp, isDeleted: false },
-      });
-    }
+    const device = await this.findDevice({
+      deviceCode: deviceCode ? String(deviceCode) : undefined,
+      deviceIp,
+      clientIp: sourceIp,
+    });
 
     if (!device) {
-      this.logger.warn(`Device not found for code=${deviceCode ?? '—'} ip=${deviceIp ?? '—'}`);
+      this.logger.warn(
+        `Device not found for code=${deviceCode ?? '—'} ip=${deviceIp ?? '—'} clientIp=${sourceIp ?? '—'}`,
+      );
+      this.metrics.markProcessed({ skipped: true, reason: 'device_not_found' });
       return { skipped: true, reason: 'device_not_found' };
     }
 
     const employeeCode = payload.employeeCode ?? payload.userId;
-    const user = employeeCode
-      ? await this.prisma.user.findFirst({
-          where: { employeeCode: String(employeeCode), isDeleted: false },
-          include: { department: true },
-        })
-      : null;
+    const user = await this.findUserByEmployeeCode(
+      employeeCode ? String(employeeCode) : undefined,
+    );
 
-    let snapshotPath: string | undefined;
+    let pendingSnapshot: { path: string; buffer: Buffer } | undefined;
     const imageData = payload.captureImage ?? payload.imageBase64;
     if (imageData && typeof imageData === 'string') {
       const base64 = imageData.replace(/^data:image\/\w+;base64,/, '');
       const buffer = Buffer.from(base64, 'base64');
-      snapshotPath = `snapshots/${device.id}/${Date.now()}.jpg`;
-      try {
-        await this.storage.uploadFile(snapshotPath, buffer, 'image/jpeg');
-      } catch (err) {
-        this.logger.warn(`Snapshot upload failed: ${(err as Error).message}`);
-        snapshotPath = undefined;
+      if (buffer.length > 0) {
+        pendingSnapshot = {
+          path: `snapshots/${device.id}/${Date.now()}.jpg`,
+          buffer,
+        };
       }
     }
 
     const sourceEventId = payload.eventId ?? `evt-${Date.now()}`;
     const eventAt = payload.timestamp ? new Date(payload.timestamp) : new Date();
 
+    return this.persistAndEmit({
+      device,
+      user,
+      employeeCode: employeeCode ? String(employeeCode) : undefined,
+      eventAt,
+      sourceEventId,
+      rawPayload: payload as object,
+      pendingSnapshot,
+      skipPunch: false,
+    });
+  }
+
+  private async persistAndEmit(params: {
+    device: { id: string; name: string; zoneId: string | null };
+    user: Awaited<ReturnType<AkuvoxEventService['findUserByEmployeeCode']>>;
+    employeeCode?: string;
+    eventAt: Date;
+    sourceEventId: string;
+    rawPayload: object;
+    pendingSnapshot?: { path: string; buffer: Buffer };
+    denied?: boolean;
+    deniedStatus?: string;
+    skipPunch?: boolean;
+  }) {
+    const { device, user, eventAt, sourceEventId, rawPayload, pendingSnapshot } = params;
+
     let action: PrismaAccessAction = PrismaAccessAction.CHECK_IN;
     let attendanceId: string | undefined;
     let punchWarning: string | undefined;
 
-    if (user) {
+    if (params.denied) {
+      action = PrismaAccessAction.DENIED;
+      punchWarning = params.deniedStatus?.trim() || 'Access denied';
+    } else if (user && !params.skipPunch) {
       const punch = await this.attendance.processPunch(user.id, eventAt);
       attendanceId = punch.record?.id;
       punchWarning = punch.message;
@@ -119,11 +252,15 @@ export class AkuvoxEventService {
       if (punch.outcome === 'CHECK_IN' || punch.outcome === 'CHECK_OUT') {
         await this.upsertPresence(user.id, action, device.zoneId, eventAt);
       }
+    } else if (!user) {
+      action = PrismaAccessAction.UNKNOWN;
     }
 
-    const warningMessage = user
+    const warningMessage = params.denied
       ? punchWarning
-      : 'Unknown person';
+      : user
+        ? punchWarning
+        : 'Unknown person';
 
     const accessLog = await this.prisma.accessLog.upsert({
       where: {
@@ -138,36 +275,57 @@ export class AkuvoxEventService {
         zoneId: device.zoneId,
         action,
         sourceEventId,
-        snapshotPath,
-        rawPayload: payload as object,
-        isValid: !!user,
+        snapshotPath: null,
+        rawPayload,
+        isValid: !!user && !params.denied,
         warningMessage,
         eventAt,
       },
-      update: {},
+      update: {
+        userId: user?.id,
+        zoneId: device.zoneId,
+        action,
+        rawPayload,
+        isValid: !!user && !params.denied,
+        warningMessage,
+        eventAt,
+      },
     });
 
-    const checkinEvent = {
+    const faceImageUrl = user?.faceImagePath
+      ? await this.storage.getAssetUrl(user.faceImagePath).catch(() => undefined)
+      : undefined;
+
+    const checkinEvent: CheckinEvent = {
       id: accessLog.id,
       userId: user?.id,
-      employeeCode: user?.employeeCode,
+      employeeCode: user?.employeeCode ?? params.employeeCode,
       fullName: user?.fullName,
       departmentName: user?.department?.name,
       deviceId: device.id,
       deviceName: device.name,
       action: this.toSocketAction(action),
       timestamp: eventAt.toISOString(),
-      snapshotUrl: snapshotPath
-        ? await this.storage.getSignedUrl(snapshotPath).catch(() => undefined)
-        : undefined,
-      faceImageUrl: user?.faceImagePath
-        ? await this.storage.getAssetUrl(user.faceImagePath).catch(() => undefined)
-        : undefined,
-      isValid: !!user,
+      snapshotUrl: undefined,
+      faceImageUrl,
+      isValid: !!user && !params.denied,
       warningMessage,
     };
 
     this.eventsGateway.emitCheckinEvent(checkinEvent);
+    this.metrics.markProcessed({ accessLogId: accessLog.id });
+    this.logger.log(
+      `Processed akuvox event accessLogId=${accessLog.id} action=${action} attendanceId=${attendanceId ?? '—'}`,
+    );
+
+    if (pendingSnapshot) {
+      this.finalizeSnapshotAsync(
+        accessLog.id,
+        pendingSnapshot.path,
+        pendingSnapshot.buffer,
+        checkinEvent,
+      );
+    }
 
     return { processed: true, accessLogId: accessLog.id, attendanceId };
   }

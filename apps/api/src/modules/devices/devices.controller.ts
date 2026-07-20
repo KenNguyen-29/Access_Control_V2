@@ -8,6 +8,8 @@ import { DeviceWebRtcService } from './device-webrtc.service';
 import { CreateDeviceDto } from './dto/create-device.dto';
 import { UpdateDeviceDto } from './dto/update-device.dto';
 import { WebRtcOfferDto } from './dto/webrtc-offer.dto';
+import { AkuvoxWebhookSecurityService } from '../webhooks/akuvox-webhook-security.service';
+import { WebhooksService } from '../webhooks/webhooks.service';
 
 @ApiTags('devices')
 @ApiBearerAuth()
@@ -17,7 +19,40 @@ export class DevicesController {
     private readonly service: DevicesService,
     private readonly akuvox: AkuvoxService,
     private readonly webrtc: DeviceWebRtcService,
+    private readonly webhookSecurity: AkuvoxWebhookSecurityService,
+    private readonly webhooks: WebhooksService,
   ) {}
+
+  @Get('akuvox/webhook-info')
+  getAkuvoxWebhookInfo() {
+    return successResponse({
+      webhookUrl: this.webhookSecurity.getWebhookUrl(),
+      note: 'Cấu hình URL này trên Akuvox (HTTP push / door log). Thiết bị được map theo IP client.',
+    });
+  }
+
+  @Post('akuvox/test-door-log')
+  async testAkuvoxDoorLog(@Body() body: { userId?: string; deviceIp?: string }) {
+    const userId = body.userId?.trim() || 'NV-0003';
+    const deviceIp = body.deviceIp?.trim() || '192.168.71.186';
+    const now = new Date();
+    const date = now.toISOString().slice(0, 10);
+    const time = now.toTimeString().slice(0, 8);
+
+    const result = await this.webhooks.processDoorLog(
+      {
+        Type: 'Face',
+        Status: 'Success',
+        UserID: userId,
+        Date: date,
+        Time: time,
+        Name: 'Test User',
+      },
+      deviceIp,
+    );
+
+    return successResponse(result, 'Test door_log dispatched');
+  }
 
   @Get()
   async findAll(@Query() query: PaginationDto) {

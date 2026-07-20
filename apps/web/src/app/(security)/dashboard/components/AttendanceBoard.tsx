@@ -1,6 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { CheckinEvent } from '@acv2/shared';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { Avatar } from '@/components/ui/avatar';
 import { EmptyState } from '@/components/ui/query-states';
@@ -21,6 +22,12 @@ function todayLocal(): string {
   return `${y}-${m}-${day}`;
 }
 
+function formatAttendanceDate(dateStr: string): string {
+  const [y, m, d] = dateStr.split('T')[0].split('-').map(Number);
+  if (!y || !m || !d) return dateStr;
+  return `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}`;
+}
+
 const STATUS_OPTIONS = [
   { value: '', label: 'Tất cả trạng thái' },
   { value: 'LATE', label: 'Đi muộn' },
@@ -30,13 +37,23 @@ const STATUS_OPTIONS = [
   { value: 'ABSENT', label: 'Vắng' },
 ];
 
-export default function AttendanceBoard() {
+const POLL_INTERVAL_MS = 30_000;
+const LOAD_DEBOUNCE_MS = 250;
+
+type Props = {
+  /** Latest socket event — refresh board on real check-in/out. */
+  lastEvent?: CheckinEvent | null;
+};
+
+export default function AttendanceBoard({ lastEvent }: Props) {
   const [records, setRecords] = useState<AttendanceRecord[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [loading, setLoading] = useState(true);
   const [date, setDate] = useState(todayLocal);
   const [status, setStatus] = useState('');
   const [departmentId, setDepartmentId] = useState('');
+  const lastHandledEventKey = useRef<string | null>(null);
+  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     getDepartments()
@@ -59,11 +76,30 @@ export default function AttendanceBoard() {
       .finally(() => setLoading(false));
   }, [date, status, departmentId]);
 
+  const loadDebounced = useCallback(() => {
+    if (debounceTimer.current) clearTimeout(debounceTimer.current);
+    debounceTimer.current = setTimeout(() => load(), LOAD_DEBOUNCE_MS);
+  }, [load]);
+
   useEffect(() => {
     load();
-    const t = setInterval(load, 30000);
-    return () => clearInterval(t);
+    const t = setInterval(load, POLL_INTERVAL_MS);
+    return () => {
+      clearInterval(t);
+      if (debounceTimer.current) clearTimeout(debounceTimer.current);
+    };
   }, [load]);
+
+  // Socket-driven refresh: debounced API sync on each distinct check-in/out.
+  useEffect(() => {
+    if (!lastEvent?.id) return;
+    const eventKey = `${lastEvent.id}:${lastEvent.timestamp}`;
+    if (lastHandledEventKey.current === eventKey) return;
+    if (!lastEvent.isValid) return;
+    if (lastEvent.action !== 'CHECK_IN' && lastEvent.action !== 'CHECK_OUT') return;
+    lastHandledEventKey.current = eventKey;
+    loadDebounced();
+  }, [lastEvent, loadDebounced]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2">
@@ -120,6 +156,8 @@ export default function AttendanceBoard() {
                 {r.user?.fullName || r.userId}
               </p>
               <p className="truncate text-xs text-muted-foreground">
+                {formatAttendanceDate(r.date)}
+                {' · '}
                 {r.user?.department?.name || r.user?.employeeCode || '—'}
                 {r.workShift?.name ? ` · ${r.workShift.name}` : ''}
                 {r.checkInAt ? ` · ${new Date(r.checkInAt).toLocaleTimeString('vi-VN')}` : ''}

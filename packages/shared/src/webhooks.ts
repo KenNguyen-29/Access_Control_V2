@@ -4,6 +4,7 @@ export interface AkuvoxWebhookPayload {
   employeeCode?: string;
   deviceId?: string;
   deviceCode?: string;
+  deviceIp?: string;
   timestamp?: string;
   eventType?: string;
   captureImage?: string;

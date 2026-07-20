@@ -17,17 +17,42 @@ import { Input } from '@/components/ui/input';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Popover } from '@/components/ui/popover';
 import {
+  getAccessLogs,
   getDevices,
   getEmergencyDashboard,
   updateMusterStatus,
+  type AccessLog,
   type Device,
 } from '@/lib/api';
+import { AccessAction, type CheckinEvent } from '@acv2/shared';
 import EventPopup from './components/EventPopup';
 import CheckinToast from './components/CheckinToast';
 import MiniAccessLog from './components/MiniAccessLog';
 import AttendanceBoard from './components/AttendanceBoard';
+import RealtimeStatusPanel from './components/RealtimeStatusPanel';
 import type { EmergencyOverlayPerson } from './components/EmergencyOverlay';
 import { DEMO_CAMERAS, type CameraItem } from './components/CameraGrid';
+
+function accessLogToCheckinEvent(log: AccessLog): CheckinEvent {
+  const action =
+    log.action === 'CHECK_OUT'
+      ? AccessAction.CHECK_OUT
+      : log.action === 'CHECK_IN'
+        ? AccessAction.CHECK_IN
+        : AccessAction.UNKNOWN;
+  return {
+    id: log.id,
+    employeeCode: log.user?.employeeCode,
+    fullName: log.user?.fullName,
+    departmentName: log.user?.department?.name,
+    deviceId: log.device.id,
+    deviceName: log.device.name,
+    action,
+    timestamp: log.eventAt,
+    isValid: log.isValid !== false,
+    warningMessage: log.warningMessage ?? undefined,
+  };
+}
 
 // Full-screen FIRE overlay is rarely shown; keep it out of the initial dashboard bundle.
 const EmergencyOverlay = dynamic(() => import('./components/EmergencyOverlay'), { ssr: false });
@@ -55,7 +80,8 @@ const LAYOUTS = [
 ];
 
 export default function DashboardPage() {
-  const { connected, lastEvent, fireEmergency, setFireEmergency } = useSocket();
+  const { connected, lastEvent, setLastEvent, fireEmergency, setFireEmergency, reconnect } =
+    useSocket();
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [cameras, setCameras] = useState<CameraItem[]>(DEMO_CAMERAS);
   const [search, setSearch] = useState('');
@@ -65,6 +91,33 @@ export default function DashboardPage() {
   const [detailCam, setDetailCam] = useState<CameraItem | null>(null);
   const [emergencyOpen, setEmergencyOpen] = useState(false);
   const [emergencyPeople, setEmergencyPeople] = useState<EmergencyOverlayPerson[]>([]);
+
+  // Catch-up: when socket connects, pull recent access logs so we don't miss emits while offline.
+  useEffect(() => {
+    if (!connected) return;
+    let cancelled = false;
+    getAccessLogs({ limit: 20 })
+      .then((logs) => {
+        if (cancelled || !logs.length) return;
+        const newest = logs[0];
+        const ageMs = Date.now() - new Date(newest.eventAt).getTime();
+        // Only surface as live event if it happened in the last 2 minutes.
+        if (ageMs > 120_000) return;
+        setLastEvent((prev) => {
+          if (!prev) return accessLogToCheckinEvent(newest);
+          const prevTs = new Date(prev.timestamp).getTime();
+          const nextTs = new Date(newest.eventAt).getTime();
+          if (nextTs >= prevTs && newest.id !== prev.id) {
+            return accessLogToCheckinEvent(newest);
+          }
+          return prev;
+        });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [connected, setLastEvent]);
 
   const applyEmergencyPeople = useCallback((people: EmergencyOverlayPerson[]) => {
     setEmergencyPeople(people);
@@ -185,14 +238,25 @@ export default function DashboardPage() {
               Danh sách camera
             </span>
           </div>
-          <span
-            className={cn(
-              'rounded-sm px-1.5 py-0.5 text-[9px] font-bold uppercase',
-              connected ? 'bg-primary/15 text-primary' : 'bg-destructive/10 text-destructive',
+          <div className="flex items-center gap-1.5">
+            <span
+              className={cn(
+                'rounded-sm px-1.5 py-0.5 text-[9px] font-bold uppercase',
+                connected ? 'bg-primary/15 text-primary' : 'bg-destructive/10 text-destructive',
+              )}
+            >
+              {connected ? 'Online' : 'Offline'}
+            </span>
+            {!connected && (
+              <button
+                type="button"
+                onClick={reconnect}
+                className="rounded-sm border border-slate-300 bg-white px-1.5 py-0.5 text-[9px] font-bold uppercase text-slate-600 hover:bg-slate-50"
+              >
+                Kết nối lại
+              </button>
             )}
-          >
-            {connected ? 'Online' : 'Offline'}
-          </span>
+          </div>
         </div>
 
         <div className="border-b border-border p-2">
@@ -332,6 +396,7 @@ export default function DashboardPage() {
 
       {/* Right panel */}
       <aside className="flex w-80 shrink-0 flex-col border-l border-border bg-surface lg:w-96">
+        <RealtimeStatusPanel connected={connected} onReconnect={reconnect} />
         <Tabs value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col">
           <div className="shrink-0 border-b border-border p-2">
             <TabsList className="w-full">
@@ -342,11 +407,11 @@ export default function DashboardPage() {
 
           <TabsContent value="events" className="mt-0 flex min-h-0 flex-1 flex-col">
             <EventPopup event={lastEvent} />
-            <MiniAccessLog />
+            <MiniAccessLog lastEvent={lastEvent} />
           </TabsContent>
 
           <TabsContent value="attendance" className="mt-0 flex min-h-0 flex-1 flex-col overflow-hidden p-3">
-            <AttendanceBoard />
+            <AttendanceBoard lastEvent={lastEvent} />
           </TabsContent>
         </Tabs>
       </aside>

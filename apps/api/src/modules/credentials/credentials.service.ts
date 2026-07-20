@@ -1,7 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { CredentialType, DeviceSyncStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
+import { AkuvoxService } from '../devices/akuvox.service';
 import { CreateCredentialDto } from './dto/create-credential.dto';
 
 const FACE_JPEG_MIME = new Set(['image/jpeg', 'image/jpg']);
@@ -9,9 +10,12 @@ const MAX_FACE_BYTES = 10 * 1024 * 1024;
 
 @Injectable()
 export class CredentialsService {
+  private readonly logger = new Logger(CredentialsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
+    private readonly akuvox: AkuvoxService,
   ) {}
 
   findByUser(userId: string) {
@@ -104,6 +108,12 @@ export class CredentialsService {
     });
 
     const photoUrl = this.storage.getFileUrl(key);
+
+    void this.akuvox.syncUserCredentials(user.id).catch((err) => {
+      this.logger.warn(
+        `Auto Akuvox sync after face enroll failed for user=${user.id}: ${(err as Error).message}`,
+      );
+    });
 
     return { credential, faceImagePath: key, photoUrl };
   }

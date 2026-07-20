@@ -6,9 +6,10 @@ import { AkuvoxService } from './akuvox.service';
 import { Go2RtcProcessService } from './go2rtc-process.service';
 import { Go2RtcService } from './go2rtc.service';
 import { DeviceWebRtcService } from './device-webrtc.service';
+import { WebhooksModule } from '../webhooks/webhooks.module';
 
 @Module({
-  imports: [HttpModule.register({ timeout: 15000 })],
+  imports: [HttpModule.register({ timeout: 15000 }), WebhooksModule],
   controllers: [DevicesController],
   providers: [
     DevicesService,

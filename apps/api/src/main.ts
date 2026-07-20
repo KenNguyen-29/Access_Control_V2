@@ -2,9 +2,10 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
-import { json, urlencoded } from 'express';
+import { json, urlencoded, Request } from 'express';
 import { AppModule } from './app.module';
 import { AllExceptionsFilter } from './common/filters/http-exception.filter';
+import { akuvoxDoorLogMiddleware } from './common/middleware/akuvox-door-log.middleware';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -14,7 +15,18 @@ async function bootstrap() {
   const corsOrigin = configService.get<string>('CORS_ORIGIN', 'http://localhost:3000');
   const bodyLimit = configService.get<string>('JSON_BODY_LIMIT', '15mb');
 
-  app.use(json({ limit: bodyLimit }));
+  app.use(akuvoxDoorLogMiddleware);
+  app.use(
+    json({
+      limit: bodyLimit,
+      verify: (req, _res, buf) => {
+        const path = (req as Request).url || '';
+        if (path.includes('door_log')) {
+          (req as Request & { rawBody?: Buffer }).rawBody = buf;
+        }
+      },
+    }),
+  );
   app.use(urlencoded({ extended: true, limit: bodyLimit }));
 
   app.setGlobalPrefix('api');

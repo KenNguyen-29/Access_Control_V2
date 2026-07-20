@@ -83,11 +83,38 @@ export async function getStatsOverview() {
 }
 
 export async function getHealth() {
-  return apiRequest<{
-    status: string;
-    checks: { postgres: boolean; redis: boolean; minio: boolean };
-  }>('/health');
+  return apiRequest<HealthStatus>('/health');
 }
+
+export type HealthStatus = {
+  status: string;
+  checks: {
+    postgres: boolean;
+    redis: boolean | 'skipped';
+    minio: boolean;
+  };
+  queue?: {
+    name: string;
+    mode?: 'sync';
+    waiting: number;
+    active: number;
+    completed: number;
+    failed: number;
+    delayed: number;
+    error?: boolean;
+  };
+  realtime?: {
+    lastWebhookAt: string | null;
+    lastProcessedAt: string | null;
+    lastEmitAt: string | null;
+    lastSkipReason: string | null;
+    lastAccessLogId: string | null;
+    lastMode: 'queue' | 'sync' | null;
+    lastJobId: string | null;
+  };
+  timestamp: string;
+};
+
 
 export type Department = {
   id: string;
@@ -321,6 +348,17 @@ export async function syncDeviceCredentials(id: string) {
 
 export async function testDeviceConnection(id: string) {
   return apiRequest<DeviceConnectionResult>(`/devices/${id}/test-connection`, { method: 'POST' });
+}
+
+export async function getAkuvoxWebhookInfo() {
+  return apiRequest<{ webhookUrl: string; note: string }>('/devices/akuvox/webhook-info');
+}
+
+export async function testAkuvoxDoorLog(params?: { userId?: string; deviceIp?: string }) {
+  return apiRequest<{ jobId: string; mode: string; result?: unknown }>('/devices/akuvox/test-door-log', {
+    method: 'POST',
+    body: JSON.stringify(params ?? {}),
+  });
 }
 
 export async function getDeviceMappings(akuvoxDeviceId?: string) {

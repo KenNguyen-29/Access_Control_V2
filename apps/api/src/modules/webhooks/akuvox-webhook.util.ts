@@ -66,6 +66,7 @@ export function normalizeAkuvoxWebhookPayload(
   const employeeCode = firstString(
     merged.employeeCode,
     merged.userId,
+    merged.userid,
     merged.UserID,
     merged.active_user,
     merged.activeUser,
@@ -76,6 +77,13 @@ export function normalizeAkuvoxWebhookPayload(
 
   const deviceCode = firstString(merged.deviceCode, merged.deviceId, merged.DeviceID);
   const deviceIp = firstString(merged.ip, merged.deviceIp, merged.device_ip);
+  const timestamp =
+    firstString(merged.timestamp, merged.time, merged.eventTime) ?? new Date().toISOString();
+  const deviceKey = deviceIp ?? deviceCode ?? 'device';
+  // Do not use active_url as eventId — it is the fixed callback URL and collides across scans.
+  const eventId =
+    firstString(merged.eventId, merged.event) ??
+    `${employeeCode ?? 'unknown'}-${deviceKey}-${timestamp}`;
 
   const payload: AkuvoxWebhookPayload = {
     ...merged,
@@ -83,14 +91,9 @@ export function normalizeAkuvoxWebhookPayload(
     userId: employeeCode,
     deviceCode,
     deviceId: deviceCode,
-    timestamp: firstString(merged.timestamp, merged.time, merged.eventTime) ?? new Date().toISOString(),
-    eventId: firstString(
-      merged.eventId,
-      merged.event,
-      merged.active_url,
-      `${employeeCode ?? 'unknown'}-${deviceIp ?? deviceCode ?? 'device'}-${Date.now()}`,
-    ),
-    eventType: firstString(merged.eventType, merged.event, merged.active_url),
+    timestamp,
+    eventId,
+    eventType: firstString(merged.eventType, merged.event),
   };
 
   if (deviceIp) {

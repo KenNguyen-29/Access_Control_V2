@@ -16,6 +16,8 @@ import {
   WifiOff,
   Loader2,
   Activity,
+  Copy,
+  Webhook,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -34,8 +36,10 @@ import {
   getDeviceMappings,
   getAccessZones,
   getDevices,
+  getAkuvoxWebhookInfo,
   openDeviceDoor,
   syncDeviceCredentials,
+  testAkuvoxDoorLog,
   testDeviceConnection,
   updateDevice,
   type Device,
@@ -71,6 +75,7 @@ export default function DevicesPage() {
   const [mapForm, setMapForm] = useState({ akuvoxDeviceId: '', cameraDeviceId: '' });
   const [deleteTarget, setDeleteTarget] = useState<Device | null>(null);
   const [testingIds, setTestingIds] = useState<Set<string>>(new Set());
+  const [webhookTesting, setWebhookTesting] = useState(false);
 
   const devicesQuery = useQuery({
     queryKey: queryKeys.devices(DEVICES_PARAMS),
@@ -104,6 +109,12 @@ export default function DevicesPage() {
 
   const akuvoxDevices = useMemo(() => items.filter((d) => d.deviceType === 'AKUVOX'), [items]);
   const cameras = useMemo(() => items.filter((d) => d.deviceType === 'CAMERA'), [items]);
+
+  const webhookInfoQuery = useQuery({
+    queryKey: ['akuvoxWebhookInfo'],
+    queryFn: () => getAkuvoxWebhookInfo(),
+    enabled: akuvoxDevices.length > 0,
+  });
 
   const hasActiveFilters = search.trim() !== '' || typeFilter !== 'all';
 
@@ -188,6 +199,37 @@ export default function DevicesPage() {
         next.delete(device.id);
         return next;
       });
+    }
+  }
+
+  async function onCopyWebhookUrl() {
+    const url = webhookInfoQuery.data?.webhookUrl;
+    if (!url) return;
+    try {
+      await navigator.clipboard.writeText(url);
+      setNotice('Đã copy URL webhook Akuvox');
+    } catch {
+      setError('Không copy được URL — hãy chọn và copy thủ công');
+    }
+  }
+
+  async function onTestWebhook(deviceIp?: string) {
+    setWebhookTesting(true);
+    setError(null);
+    try {
+      const res = await testAkuvoxDoorLog({
+        deviceIp: deviceIp || akuvoxDevices[0]?.ipAddress || undefined,
+        userId: 'NV-0003',
+      });
+      setNotice(
+        res.mode === 'sync'
+          ? 'Test door_log thành công (xử lý đồng bộ) — kiểm tra tab Sự kiện trên dashboard'
+          : `Test door_log đã vào hàng đợi (job ${res.jobId})`,
+      );
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Test webhook thất bại');
+    } finally {
+      setWebhookTesting(false);
     }
   }
 
@@ -347,6 +389,56 @@ export default function DevicesPage() {
         <div className="rounded-sm border border-primary/30 bg-primary/5 px-4 py-2.5 text-sm text-foreground">
           {notice}
         </div>
+      )}
+
+      {akuvoxDevices.length > 0 && (
+        <DesignCard
+          title="Akuvox door log webhook"
+          description="Cấu hình HTTP push trên panel Akuvox (Setting → HTTP API / door log). Thiết bị được nhận diện theo IP client."
+        >
+          <div className="space-y-3">
+            <div>
+              <label className="mb-1 block text-xs text-muted-foreground">Webhook URL</label>
+              <div className="flex flex-wrap items-center gap-2">
+                <code className="min-w-0 flex-1 truncate rounded-sm border border-border bg-muted/30 px-3 py-2 font-mono text-xs">
+                  {webhookInfoQuery.data?.webhookUrl ?? 'Đang tải...'}
+                </code>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={!webhookInfoQuery.data?.webhookUrl}
+                  onClick={() => void onCopyWebhookUrl()}
+                >
+                  <Copy className="h-4 w-4" />
+                  Copy
+                </Button>
+              </div>
+              {webhookInfoQuery.data?.note && (
+                <p className="mt-1.5 text-xs text-muted-foreground">{webhookInfoQuery.data.note}</p>
+              )}
+            </div>
+            <ul className="list-inside list-disc space-y-1 text-xs text-muted-foreground">
+              <li>IP thiết bị trong form phải khớp IP panel (vd. 192.168.71.186)</li>
+              <li>UserID trên Akuvox = mã nhân viên (employeeCode), vd. NV-0003</li>
+              <li>Không dùng Action URL colon-pairs — dùng door log push</li>
+            </ul>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={webhookTesting || akuvoxDevices.length === 0}
+                onClick={() => void onTestWebhook()}
+              >
+                {webhookTesting ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Webhook className="h-4 w-4" />
+                )}
+                Test webhook mẫu
+              </Button>
+            </div>
+          </div>
+        </DesignCard>
       )}
 
       <DesignCard title="Tìm kiếm & bộ lọc">

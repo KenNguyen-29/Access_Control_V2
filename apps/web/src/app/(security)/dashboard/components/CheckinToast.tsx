@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { AccessAction, CheckinEvent } from '@acv2/shared';
-import { LogOut, UserCheck, X } from 'lucide-react';
+import { AlertTriangle, LogOut, UserCheck, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const AUTO_HIDE_MS = 6000;
@@ -13,22 +13,30 @@ export default function CheckinToast({ event }: { event: CheckinEvent | null }) 
 
   useEffect(() => {
     if (!event) return;
-    if (!event.isValid) return;
-    if (event.warningMessage) return;
-    if (event.action !== AccessAction.CHECK_IN && event.action !== AccessAction.CHECK_OUT) return;
 
+    // Always show feedback for a scan; style differs for success vs warning/invalid.
     setShown(event);
     setVisible(true);
 
     const timer = window.setTimeout(() => setVisible(false), AUTO_HIDE_MS);
     return () => window.clearTimeout(timer);
-  }, [event?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [event?.id, event?.warningMessage, event?.action]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!shown || !visible) return null;
 
   const isCheckOut = shown.action === AccessAction.CHECK_OUT;
+  const isCheckIn = shown.action === AccessAction.CHECK_IN;
+  const isWarning = Boolean(shown.warningMessage) || !shown.isValid || (!isCheckIn && !isCheckOut);
   const photo = shown.faceImageUrl || shown.snapshotUrl;
   const initial = (shown.fullName?.trim()?.[0] || '?').toUpperCase();
+
+  const title = isWarning
+    ? shown.isValid === false
+      ? 'Quét không hợp lệ'
+      : 'Quét đã ghi nhận'
+    : isCheckOut
+      ? 'Check-out thành công'
+      : 'Check-in thành công';
 
   return (
     <div
@@ -42,26 +50,28 @@ export default function CheckinToast({ event }: { event: CheckinEvent | null }) 
       <div
         className={cn(
           'overflow-hidden rounded-lg bg-white shadow-xl ring-1',
-          isCheckOut
+          isWarning
             ? 'border border-amber-400/50 shadow-amber-900/10 ring-amber-500/20'
-            : 'border border-emerald-400/50 shadow-emerald-900/10 ring-emerald-500/20',
+            : isCheckOut
+              ? 'border border-amber-400/50 shadow-amber-900/10 ring-amber-500/20'
+              : 'border border-emerald-400/50 shadow-emerald-900/10 ring-emerald-500/20',
         )}
       >
         <div
           className={cn(
             'flex items-center justify-between px-3 py-1.5',
-            isCheckOut ? 'bg-amber-600' : 'bg-emerald-600',
+            isWarning ? 'bg-amber-600' : isCheckOut ? 'bg-amber-600' : 'bg-emerald-600',
           )}
         >
           <div className="flex items-center gap-1.5 text-white">
-            {isCheckOut ? (
+            {isWarning ? (
+              <AlertTriangle className="h-3.5 w-3.5" />
+            ) : isCheckOut ? (
               <LogOut className="h-3.5 w-3.5" />
             ) : (
               <UserCheck className="h-3.5 w-3.5" />
             )}
-            <span className="text-[10px] font-bold uppercase tracking-widest">
-              {isCheckOut ? 'Check-out thành công' : 'Check-in thành công'}
-            </span>
+            <span className="text-[10px] font-bold uppercase tracking-widest">{title}</span>
           </div>
           <button
             type="button"
@@ -90,11 +100,14 @@ export default function CheckinToast({ event }: { event: CheckinEvent | null }) 
             <p
               className={cn(
                 'mt-0.5 text-xs font-semibold',
-                isCheckOut ? 'text-amber-700' : 'text-emerald-700',
+                isWarning || isCheckOut ? 'text-amber-700' : 'text-emerald-700',
               )}
             >
               {shown.employeeCode ?? '—'}
             </p>
+            {shown.warningMessage && (
+              <p className="mt-1 text-[11px] font-medium text-amber-700">{shown.warningMessage}</p>
+            )}
             <p className="mt-1 truncate text-[11px] text-slate-500">
               {shown.departmentName ?? '—'}
               {shown.deviceName ? ` · ${shown.deviceName}` : ''}

@@ -1,9 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   connectSocket,
-  disconnectSocket,
   onCheckinEvent,
   onFireEmergency,
 } from '@/lib/socket';
@@ -38,9 +37,23 @@ export function useSocket() {
       unsubscribeFire();
       socket.off('connect', onConnect);
       socket.off('disconnect', onDisconnect);
-      disconnectSocket();
     };
   }, []);
 
-  return { connected, lastEvent, fireEmergency, setFireEmergency };
+  const reconnect = useCallback(() => {
+    const socket = connectSocket();
+    if (socket.connected) {
+      socket.disconnect();
+    }
+    socket.connect();
+  }, []);
+
+  return {
+    connected,
+    lastEvent,
+    setLastEvent,
+    fireEmergency,
+    setFireEmergency,
+    reconnect,
+  };
 }

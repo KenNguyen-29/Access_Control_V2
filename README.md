@@ -87,12 +87,56 @@ Access_Control_V2/
 - `devices` — Akuvox & Camera management
 - `device-mappings` — Akuvox ↔ Camera linking
 - `credentials` — FaceID data
-- `webhooks` — Akuvox HTTP webhook receiver
+- `webhooks` — Akuvox door_log HTTP receiver (+ legacy Action URL webhook)
 - `attendance` — Attendance logs & reports
 - `events` — WebSocket real-time events
 - `health` — System health checks
 
-## Test Webhook Flow
+## Akuvox door_log (recommended)
+
+Configure the Akuvox panel to **HTTP push / door log** (not Action URL colon-pairs):
+
+```
+http://<API_SERVER_IP>:8080/api/akuvox/door_log
+```
+
+Example payload (Techwave-compatible):
+
+```json
+{"Type":"Face","Status":"Success","UserID":"NV-0003","Date":"2026-07-20","Time":"16:30:00"}
+```
+
+| Setting | Value |
+|---------|-------|
+| Device IP in Admin | Must match the panel IP (device is mapped by **HTTP client IP**) |
+| UserID on panel | Must equal `employeeCode` in Users (e.g. `NV-0003`) |
+| `API_PUBLIC_URL` | Base URL the panel can reach (used for face sync + webhook display) |
+| `AKUVOX_MOCK_MODE` | Set `false` when syncing to a real panel |
+| Windows Firewall | Allow inbound TCP **8080** from the panel subnet |
+
+Optional inbound security (`.env`):
+
+```
+AKUVOX_WEBHOOK_TOKEN=your-secret
+AKUVOX_ALLOWED_IPS=192.168.71.186
+```
+
+**Smoke test** (mock panel IP when testing from localhost):
+
+```bash
+curl -X POST http://localhost:8080/api/akuvox/door_log \
+  -H "Content-Type: application/json" \
+  -H "X-Forwarded-For: 192.168.71.186" \
+  -d '{"Type":"Face","Status":"Success","UserID":"NV-0003","Date":"2026-07-20","Time":"16:30:00"}'
+```
+
+After a scan or curl test, `GET /api/health` should show `realtime.lastWebhookAt` updating. Admin → **Devices** shows the webhook URL and a **Test webhook** button.
+
+Face enroll auto-syncs credentials to Akuvox panels when `AKUVOX_MOCK_MODE=false`.
+
+## Test Webhook Flow (legacy)
+
+Legacy Action URL / colon-pairs endpoint (kept for compatibility):
 
 ```bash
 curl -X POST http://localhost:8080/api/webhooks/akuvox \
@@ -105,7 +149,11 @@ curl -X POST http://localhost:8080/api/webhooks/akuvox \
   }'
 ```
 
-This will queue the event via BullMQ, save an AccessLog, and emit a `checkin_event` via WebSocket to the security dashboard.
+With `REDIS_ENABLED=false` (recommended for local), the webhook is processed **synchronously** in the API process, saves an AccessLog, and emits `checkin_event` over WebSocket.
+
+With `REDIS_ENABLED=true`, the event is queued via BullMQ then processed by the in-process worker. Watch Dashboard → **Realtime** panel (`waiting` / last webhook / process / emit) or `GET /api/health` if events stall after a scan.
+
+**Realtime tip:** keep `/dashboard` open with Socket **Online** while testing face scans. Leaving the page disconnects the live socket; reconnecting catch-ups recent logs automatically.
 
 ## Architecture
 
