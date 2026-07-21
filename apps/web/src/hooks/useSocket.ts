@@ -8,6 +8,12 @@ import {
 } from '@/lib/socket';
 import { CheckinEvent, FireEmergencyEvent } from '@acv2/shared';
 
+/** Punch-cooldown noise — do not surface on dashboard. */
+function isCooldownNoiseEvent(event: CheckinEvent): boolean {
+  const msg = (event.warningMessage || '').toLowerCase();
+  return msg.includes('chưa tính chấm công') || msg.includes('quét trong vòng');
+}
+
 export function useSocket() {
   const [connected, setConnected] = useState(false);
   const [lastEvent, setLastEvent] = useState<CheckinEvent | null>(null);
@@ -25,6 +31,7 @@ export function useSocket() {
     if (socket.connected) setConnected(true);
 
     const unsubscribeCheckin = onCheckinEvent((event) => {
+      if (isCooldownNoiseEvent(event)) return;
       setLastEvent(event);
     });
 

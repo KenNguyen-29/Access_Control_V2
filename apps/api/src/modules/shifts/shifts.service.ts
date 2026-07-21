@@ -32,7 +32,12 @@ export class ShiftsService {
       where: { code: dto.code, isDeleted: false },
     });
     if (exists) throw new BadRequestException(`Shift code ${dto.code} already exists`);
-    return this.prisma.workShift.create({ data: dto });
+    return this.prisma.workShift.create({
+      data: {
+        ...dto,
+        gracePeriodMinutes: dto.gracePeriodMinutes ?? 5,
+      },
+    });
   }
 
   async updateWorkShift(id: string, dto: UpdateWorkShiftDto) {

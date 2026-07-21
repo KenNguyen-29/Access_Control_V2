@@ -68,26 +68,28 @@ async function main() {
 
   const dayShift = await prisma.workShift.upsert({
     where: { code: 'DAY' },
-    update: {},
+    update: { gracePeriodMinutes: 5 },
     create: {
       name: 'Ca Hành Chính',
       code: 'DAY',
       startTime: '08:00',
       endTime: '17:00',
       breakMinutes: 60,
+      gracePeriodMinutes: 5,
       isDefault: true,
     },
   });
 
   await prisma.workShift.upsert({
     where: { code: 'NIGHT' },
-    update: {},
+    update: { gracePeriodMinutes: 5 },
     create: {
       name: 'Ca Đêm',
       code: 'NIGHT',
       startTime: '22:00',
       endTime: '06:00',
       isOvernight: true,
+      gracePeriodMinutes: 5,
     },
   });
 

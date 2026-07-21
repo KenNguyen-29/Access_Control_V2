@@ -50,6 +50,14 @@ pnpm dev
 > `POST /devices/:id/webrtc`. Cameras need a real RTSP URL reachable from the
 > machine running go2rtc.
 
+## Production deploy (CI/CD)
+
+Push `main` → GitHub Actions CI → auto deploy on self-hosted runner at `192.168.2.148`.
+
+**One-time server setup:** [docs/DEPLOY.md](./docs/DEPLOY.md) (Docker, `.env`, GitHub runner).
+
+After setup, every `git push origin main` deploys automatically — no manual SSH.
+
 ## URLs
 
 | Service | URL |

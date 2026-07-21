@@ -113,6 +113,14 @@ export class AttendanceService {
     return AttendanceStatus.ON_TIME;
   }
 
+  /** Minutes late after shift start + grace (grace does not count as late). */
+  private computeLateMinutes(shift: WorkShift, checkInAt: Date): number {
+    const startMin = this.timeToMinutes(shift.startTime);
+    const grace = Math.max(0, shift.gracePeriodMinutes ?? 0);
+    const eventMin = this.eventToMinutes(checkInAt);
+    return Math.max(0, eventMin - (startMin + grace));
+  }
+
   private computeMetricsFromTimes(
     shift: WorkShift | null,
     checkInAt: Date | null,
@@ -124,9 +132,7 @@ export class AttendanceService {
     if (!shift) return { lateMinutes, earlyLeaveMinutes, otMinutes };
 
     if (checkInAt) {
-      const startMin = this.timeToMinutes(shift.startTime);
-      const eventMin = this.eventToMinutes(checkInAt);
-      lateMinutes = Math.max(0, eventMin - startMin);
+      lateMinutes = this.computeLateMinutes(shift, checkInAt);
     }
 
     if (checkOutAt) {
@@ -155,12 +161,7 @@ export class AttendanceService {
     });
 
     if (!existing?.checkInAt) {
-      let lateMinutes = 0;
-      if (shift) {
-        const startMin = this.timeToMinutes(shift.startTime);
-        const eventMin = this.eventToMinutes(eventTime);
-        lateMinutes = Math.max(0, eventMin - startMin);
-      }
+      const lateMinutes = shift ? this.computeLateMinutes(shift, eventTime) : 0;
 
       const record = await this.prisma.attendanceRecord.upsert({
         where: { userId_date: { userId, date: workDate } },

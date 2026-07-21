@@ -29,7 +29,7 @@ export class CreateWorkShiftDto {
   @IsBoolean()
   isOvernight?: boolean;
 
-  @ApiPropertyOptional({ default: 15 })
+  @ApiPropertyOptional({ default: 5, description: 'Minutes after startTime still counted as on-time' })
   @IsOptional()
   @IsInt()
   @Min(0)

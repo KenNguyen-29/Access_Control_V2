@@ -99,7 +99,13 @@ export default function MiniAccessLog({ lastEvent }: Props) {
       unknownOnly: unknownOnly || undefined,
       isValid: validity === '' ? undefined : validity === 'true',
     })
-      .then(setLogs)
+      .then((items) =>
+        setLogs(
+          items.filter(
+            (l) => !(l.warningMessage || '').toLowerCase().includes('chưa tính chấm công'),
+          ),
+        ),
+      )
       .catch(() => setLogs([]))
       .finally(() => setLoading(false));
   }, [deviceId, action, validity]);
@@ -127,6 +133,7 @@ export default function MiniAccessLog({ lastEvent }: Props) {
     lastHandledEventKey.current = eventKey;
 
     const optimistic = checkinEventToAccessLog(lastEvent);
+    if ((optimistic.warningMessage || '').toLowerCase().includes('chưa tính chấm công')) return;
     const filters = { deviceId, action, validity };
     if (matchesFilters(optimistic, filters)) {
       setLogs((prev) => {

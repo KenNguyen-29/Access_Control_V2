@@ -29,6 +29,7 @@ COPY --from=api-build /app/node_modules ./node_modules
 COPY --from=api-build /app/apps/api/package.json ./apps/api/
 COPY --from=api-build /app/apps/api/dist ./apps/api/dist
 COPY --from=api-build /app/apps/api/prisma ./apps/api/prisma
+COPY --from=api-build /app/apps/api/tsconfig.seed.json ./apps/api/tsconfig.seed.json
 COPY --from=api-build /app/apps/api/node_modules ./apps/api/node_modules
 COPY --from=api-build /app/packages/shared ./packages/shared
 WORKDIR /app/apps/api

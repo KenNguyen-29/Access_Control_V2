@@ -14,6 +14,9 @@ import {
   normalizedDoorLogUserId,
 } from '../webhooks/akuvox-door-log.util';
 
+/** Suppress repeat face scans for the same person (no AccessLog / socket / punch). */
+const FACE_SCAN_COOLDOWN_MS = 5 * 60 * 1000;
+
 @Injectable()
 export class AkuvoxEventService {
   private readonly logger = new Logger(AkuvoxEventService.name);
@@ -236,6 +239,31 @@ export class AkuvoxEventService {
   }) {
     const { device, user, eventAt, sourceEventId, rawPayload, pendingSnapshot } = params;
 
+    // Same person scanned again within 5 minutes → skip notify (Sự kiện / toast) and punch.
+    if (user?.id) {
+      const cooldownSince = new Date(eventAt.getTime() - FACE_SCAN_COOLDOWN_MS);
+      const recent = await this.prisma.accessLog.findFirst({
+        where: {
+          userId: user.id,
+          eventAt: { gte: cooldownSince, lte: eventAt },
+          NOT: { sourceEventId },
+        },
+        orderBy: { eventAt: 'desc' },
+        select: { id: true, eventAt: true },
+      });
+      if (recent) {
+        this.metrics.markProcessed({ skipped: true, reason: 'cooldown_5m' });
+        this.logger.log(
+          `Skipped face scan cooldown_5m user=${user.employeeCode} previous=${recent.id} at=${recent.eventAt.toISOString()}`,
+        );
+        return {
+          ignored: true,
+          reason: 'COOLDOWN_5M',
+          previousAccessLogId: recent.id,
+        };
+      }
+    }
+
     let action: PrismaAccessAction = PrismaAccessAction.CHECK_IN;
     let attendanceId: string | undefined;
     let punchWarning: string | undefined;
@@ -245,6 +273,17 @@ export class AkuvoxEventService {
       punchWarning = params.deniedStatus?.trim() || 'Access denied';
     } else if (user && !params.skipPunch) {
       const punch = await this.attendance.processPunch(user.id, eventAt);
+      if (punch.outcome === 'IGNORED') {
+        this.metrics.markProcessed({ skipped: true, reason: punch.reason ?? 'ignored' });
+        this.logger.log(
+          `Skipped notify punch ignored reason=${punch.reason ?? '—'} user=${user.employeeCode}`,
+        );
+        return {
+          ignored: true,
+          reason: punch.reason ?? 'IGNORED',
+          attendanceId: punch.record?.id,
+        };
+      }
       attendanceId = punch.record?.id;
       punchWarning = punch.message;
       action = this.toPrismaAction(punch);

@@ -161,9 +161,9 @@ export default function ShiftsPage() {
   }
 
   const saveMutation = useMutation({
-    // Always persist grace=0 — feature removed from UI; attendance ignores grace.
+    // Mỗi ca được đi muộn tối đa 5 phút (sau đó mới tính LATE).
     mutationFn: () => {
-      const payload = { ...form, gracePeriodMinutes: 0 };
+      const payload = { ...form, gracePeriodMinutes: 5 };
       return editing ? updateWorkShift(editing.id, payload) : createWorkShift(payload);
     },
     onSuccess: () => {

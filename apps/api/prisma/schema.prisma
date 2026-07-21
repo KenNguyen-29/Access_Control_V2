@@ -349,7 +349,7 @@ model WorkShift {
   startTime          String
   endTime            String
   breakMinutes       Int      @default(0)
-  gracePeriodMinutes Int      @default(15)
+  gracePeriodMinutes Int      @default(5)
   salaryCoefficient  Float    @default(1)
   isOvernight        Boolean  @default(false)
   isDefault          Boolean  @default(false)

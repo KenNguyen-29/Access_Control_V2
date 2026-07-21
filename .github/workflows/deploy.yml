@@ -1,0 +1,57 @@
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main, master]
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      (github.event.workflow_run.head_branch == 'main' ||
+       github.event.workflow_run.head_branch == 'master')
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Load server .env
+        run: |
+          set -euo pipefail
+          ENV_FILE="${ACV2_ENV_FILE:-/home/admintechfarm/Access_Control_V2/.env}"
+          if [ ! -f "$ENV_FILE" ]; then
+            echo "::error::Missing $ENV_FILE — create once on the server (see docs/DEPLOY.md)."
+            exit 1
+          fi
+          cp "$ENV_FILE" .env
+          echo "Using env file: $ENV_FILE"
+
+      - name: Deploy containers
+        run: |
+          chmod +x scripts/deploy-server.sh
+          ./scripts/deploy-server.sh
+
+      - name: Health check
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8080/api/health >/dev/null; then
+              echo "API healthy"
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "::error::API health check failed"
+          docker compose -f docker-compose.prod.yml logs --tail=80 api
+          exit 1
