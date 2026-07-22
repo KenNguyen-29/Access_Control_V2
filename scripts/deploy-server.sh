@@ -34,9 +34,14 @@ if [ "${SEED_DB:-false}" = "true" ]; then
   docker compose -f docker-compose.prod.yml exec -T api npx prisma db seed
 fi
 
+WEB_HOST_PORT="$(grep -E '^WEB_HOST_PORT=' .env | cut -d= -f2- | tr -d ' "\r' || true)"
+API_HOST_PORT="$(grep -E '^API_HOST_PORT=' .env | cut -d= -f2- | tr -d ' "\r' || true)"
+WEB_HOST_PORT="${WEB_HOST_PORT:-3003}"
+API_HOST_PORT="${API_HOST_PORT:-8010}"
+
 echo ""
 echo "Done."
-echo "  Web:     http://$(hostname -I | awk '{print $1}'):3000"
-echo "  API:     http://$(hostname -I | awk '{print $1}'):8080/api"
-echo "  Swagger: http://$(hostname -I | awk '{print $1}'):8080/api/docs"
+echo "  Web:     http://$(hostname -I | awk '{print $1}'):${WEB_HOST_PORT}"
+echo "  API:     http://$(hostname -I | awk '{print $1}'):${API_HOST_PORT}/api"
+echo "  Swagger: http://$(hostname -I | awk '{print $1}'):${API_HOST_PORT}/api/docs"
 echo "  Login:   admin / admin123 (change after first login if seeded)"

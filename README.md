@@ -58,15 +58,17 @@ Push `main` → GitHub Actions CI → auto deploy on self-hosted runner at `192.
 
 After setup, every `git push origin main` deploys automatically — no manual SSH.
 
+**Production ports (company VM):** web **3003**, API **8010** — set via `WEB_HOST_PORT` / `API_HOST_PORT` in server `.env` ([`.env.production.example`](./.env.production.example)).
+
 ## URLs
 
-| Service | URL |
-|---------|-----|
-| Web UI | http://localhost:3000 |
-| API | http://localhost:8080/api |
-| Swagger | http://localhost:8080/api/docs |
-| MinIO Console | http://localhost:9001 |
-| go2rtc API | http://127.0.0.1:1984 |
+| Service | Local dev | Production (VM) |
+|---------|-----------|-----------------|
+| Web UI | http://localhost:3000 | http://\<VM-IP\>:3003 |
+| API | http://localhost:8080/api | http://\<VM-IP\>:8010/api |
+| Swagger | http://localhost:8080/api/docs | http://\<VM-IP\>:8010/api/docs |
+| MinIO Console | http://localhost:9001 | (internal Docker network) |
+| go2rtc API | http://127.0.0.1:1984 | http://127.0.0.1:1984 |
 
 ## Default Login
 
@@ -105,7 +107,7 @@ Access_Control_V2/
 Configure the Akuvox panel to **HTTP push / door log** (not Action URL colon-pairs):
 
 ```
-http://<API_SERVER_IP>:8080/api/akuvox/door_log
+http://<API_SERVER_IP>:8010/api/akuvox/door_log
 ```
 
 Example payload (Techwave-compatible):
@@ -120,7 +122,7 @@ Example payload (Techwave-compatible):
 | UserID on panel | Must equal `employeeCode` in Users (e.g. `NV-0003`) |
 | `API_PUBLIC_URL` | Base URL the panel can reach (used for face sync + webhook display) |
 | `AKUVOX_MOCK_MODE` | Set `false` when syncing to a real panel |
-| Windows Firewall | Allow inbound TCP **8080** from the panel subnet |
+| Windows Firewall | Allow inbound TCP **8010** (prod) or **8080** (dev) from the panel subnet |
 
 Optional inbound security (`.env`):
 

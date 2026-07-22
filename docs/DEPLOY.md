@@ -38,6 +38,8 @@ nano ~/Access_Control_V2/.env
 
 Dán nội dung từ [`.env.production.example`](../.env.production.example), sửa IP `192.168.2.148` và mật khẩu.
 
+Mặc định port công ty: **web 3003**, **API 8010** (`WEB_HOST_PORT`, `API_HOST_PORT`).
+
 Seed lần đầu (tùy chọn, chạy tay một lần sau khi có Docker):
 
 ```bash
@@ -86,7 +88,7 @@ Mỗi lần `git push origin main`:
 
 1. Tab **Actions** → workflow **CI** chạy xong
 2. Workflow **Deploy** tự chạy trên runner máy chủ
-3. Truy cập: `http://192.168.2.148:3000`
+3. Truy cập: `http://192.168.2.148:3003` (web), API `http://192.168.2.148:8010/api` (đổi port qua `WEB_HOST_PORT` / `API_HOST_PORT` trong `.env`).
 
 Không cần SSH thủ công để `git pull` nữa.
 
@@ -104,7 +106,7 @@ Thêm vào `~/actions-runner/.env` hoặc systemd service nếu đổi path.
 
 ## Firewall
 
-Mở TCP **3000**, **8080** cho LAN.
+Mở TCP **3003** (web), **8010** (API) cho LAN — hoặc đúng `WEB_HOST_PORT` / `API_HOST_PORT` trong `.env`.
 
 ---
 
@@ -125,7 +127,7 @@ Trong `~/Access_Control_V2/.env`:
 
 ```env
 AKUVOX_MOCK_MODE=false
-API_PUBLIC_URL=http://192.168.2.148:8080
+API_PUBLIC_URL=http://192.168.2.148:8010
 ```
 
-Action URL / door_log: `http://192.168.2.148:8080/api/...`
+Action URL / door_log: `http://192.168.2.148:8010/api/...`
