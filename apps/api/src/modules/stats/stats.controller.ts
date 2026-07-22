@@ -28,11 +28,17 @@ export class StatsController {
 
   @Get('weekly-timesheet')
   @ApiQuery({ name: 'weekStart', required: false })
+  @ApiQuery({ name: 'from', required: false })
+  @ApiQuery({ name: 'to', required: false })
   @ApiQuery({ name: 'departmentId', required: false })
   async weeklyTimesheet(
     @Query('weekStart') weekStart?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
     @Query('departmentId') departmentId?: string,
   ) {
-    return successResponse(await this.service.weeklyTimesheet({ weekStart, departmentId }));
+    return successResponse(
+      await this.service.weeklyTimesheet({ weekStart, from, to, departmentId }),
+    );
   }
 }

@@ -54,6 +54,8 @@ export interface WeeklyRow {
   checkInAt: Date | null;
   checkOutAt: Date | null;
   lateMinutes: number;
+  /** Minutes checked in before shift start. */
+  earlyArrivalMinutes: number;
   earlyLeaveMinutes: number;
   otMinutes: number;
   workedMinutes: number;
@@ -108,6 +110,22 @@ function computeWorkedMinutes(
 
   const raw = (checkOutAt.getTime() - checkInAt.getTime()) / 60000 - breakMinutes;
   return raw > 0 ? Math.round(raw) : 0;
+}
+
+function timeToMinutes(hhmm: string): number {
+  const [h, m] = hhmm.split(':').map(Number);
+  return (h || 0) * 60 + (m || 0);
+}
+
+/** Minutes checked in before shift start (0 if late or no shift/check-in). */
+function computeEarlyArrivalMinutes(
+  checkInAt: Date | null,
+  shiftStartTime: string | null | undefined,
+): number {
+  if (!checkInAt || !shiftStartTime) return 0;
+  const startMin = timeToMinutes(shiftStartTime);
+  const eventMin = checkInAt.getHours() * 60 + checkInAt.getMinutes();
+  return Math.max(0, startMin - eventMin);
 }
 
 @Injectable()
@@ -249,21 +267,33 @@ export class StatsService {
 
   async weeklyTimesheet(params: {
     weekStart?: string;
+    from?: string;
+    to?: string;
     departmentId?: string;
   }): Promise<WeeklyTimesheet> {
     const now = new Date();
-    const defaultStart = new Date(now);
-    const day = defaultStart.getDay();
-    const diff = (day + 6) % 7;
-    defaultStart.setDate(defaultStart.getDate() - diff);
-    const weekStart = parseDateOnly(params.weekStart ?? '', defaultStart);
-    const weekEnd = new Date(weekStart);
-    weekEnd.setUTCDate(weekEnd.getUTCDate() + 7);
+    let rangeStart: Date;
+    let rangeEndExclusive: Date;
+
+    if (params.from && params.to) {
+      rangeStart = parseDateOnly(params.from, now);
+      const toBase = parseDateOnly(params.to, now);
+      rangeEndExclusive = new Date(toBase);
+      rangeEndExclusive.setUTCDate(rangeEndExclusive.getUTCDate() + 1);
+    } else {
+      const defaultStart = new Date(now);
+      const day = defaultStart.getDay();
+      const diff = (day + 6) % 7;
+      defaultStart.setDate(defaultStart.getDate() - diff);
+      rangeStart = parseDateOnly(params.weekStart ?? '', defaultStart);
+      rangeEndExclusive = new Date(rangeStart);
+      rangeEndExclusive.setUTCDate(rangeEndExclusive.getUTCDate() + 7);
+    }
 
     const asOf = new Date();
     const records = await this.prisma.attendanceRecord.findMany({
       where: {
-        date: { gte: weekStart, lt: weekEnd },
+        date: { gte: rangeStart, lt: rangeEndExclusive },
         ...(params.departmentId ? { user: { departmentId: params.departmentId } } : {}),
       },
       include: {
@@ -285,6 +315,7 @@ export class StatsService {
       checkInAt: r.checkInAt,
       checkOutAt: r.checkOutAt,
       lateMinutes: r.lateMinutes,
+      earlyArrivalMinutes: computeEarlyArrivalMinutes(r.checkInAt, r.workShift?.startTime),
       earlyLeaveMinutes: r.earlyLeaveMinutes,
       otMinutes: r.otMinutes,
       workedMinutes: computeWorkedMinutes(
@@ -304,12 +335,12 @@ export class StatsService {
       return a.date.localeCompare(b.date);
     });
 
-    const weekEndDisplay = new Date(weekEnd);
-    weekEndDisplay.setUTCDate(weekEndDisplay.getUTCDate() - 1);
+    const rangeEndDisplay = new Date(rangeEndExclusive);
+    rangeEndDisplay.setUTCDate(rangeEndDisplay.getUTCDate() - 1);
 
     return {
-      weekStart: formatDateOnly(weekStart),
-      weekEnd: formatDateOnly(weekEndDisplay),
+      weekStart: formatDateOnly(rangeStart),
+      weekEnd: formatDateOnly(rangeEndDisplay),
       rows,
     };
   }

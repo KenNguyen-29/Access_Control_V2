@@ -576,6 +576,7 @@ export type WeeklyRow = {
   checkInAt: string | null;
   checkOutAt: string | null;
   lateMinutes: number;
+  earlyArrivalMinutes: number;
   earlyLeaveMinutes: number;
   otMinutes: number;
   workedMinutes: number;
@@ -602,11 +603,15 @@ export async function getAttendanceSummary(params: {
 }
 
 export async function getWeeklyTimesheet(params: {
-  weekStart: string;
+  weekStart?: string;
+  from?: string;
+  to?: string;
   departmentId?: string;
 }) {
   const q = new URLSearchParams();
-  q.set('weekStart', params.weekStart);
+  if (params.weekStart) q.set('weekStart', params.weekStart);
+  if (params.from) q.set('from', params.from);
+  if (params.to) q.set('to', params.to);
   if (params.departmentId) q.set('departmentId', params.departmentId);
   return apiRequest<WeeklyTimesheet>(`/stats/weekly-timesheet?${q.toString()}`);
 }

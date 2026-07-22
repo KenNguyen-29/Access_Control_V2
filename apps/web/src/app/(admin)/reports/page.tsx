@@ -33,7 +33,6 @@ import {
   ApiError,
   downloadAttendanceTemplate,
   exportAttendance,
-  getAccessLogs,
   getAttendanceRecords,
   getAttendanceSummary,
   getDepartments,
@@ -41,6 +40,7 @@ import {
   importAttendance,
   type WeeklyRow,
 } from '@/lib/api';
+import EmployeeWeekMatrix from './EmployeeWeekMatrix';
 
 function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
@@ -128,12 +128,22 @@ export default function ReportsPage() {
 
   const [weekStart, setWeekStart] = useState(initialWeekStart);
   const [recordsPage, setRecordsPage] = useState(1);
+  const [matrixDeptId, setMatrixDeptId] = useState('');
+  const [timesheetSort, setTimesheetSort] = useState<'name' | 'least' | 'most'>('name');
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   const [importNotice, setImportNotice] = useState<string | null>(null);
 
   const RECORDS_PAGE_SIZE = 10;
+  const MATRIX_DAY_COUNT = 30;
+  const matrixRange = useMemo(() => {
+    const to = applied.to || formatDateOnly(new Date());
+    const end = parseDateOnly(to);
+    const start = new Date(end);
+    start.setDate(end.getDate() - (MATRIX_DAY_COUNT - 1));
+    return { from: formatDateOnly(start), to };
+  }, [applied.to]);
 
   const departmentsQuery = useQuery({
     queryKey: queryKeys.departments(),
@@ -190,20 +200,31 @@ export default function ReportsPage() {
   const recordsTotalPages = Math.max(1, recordsQuery.data?.totalPages ?? 1);
   const recordsCurrentPage = Math.min(recordsPage, recordsTotalPages);
 
-  const logsQuery = useQuery({
-    queryKey: queryKeys.accessLogs(30),
-    queryFn: () => getAccessLogs(30),
+  const detailWeeklyQuery = useQuery({
+    queryKey: queryKeys.weeklyTimesheet({
+      from: matrixRange.from,
+      to: matrixRange.to,
+      departmentId: matrixDeptId,
+      scope: 'detail-matrix',
+    }),
+    queryFn: () =>
+      getWeeklyTimesheet({
+        from: matrixRange.from,
+        to: matrixRange.to,
+        departmentId: matrixDeptId || undefined,
+      }),
     enabled: tab === 'detail',
   });
-  const logs = logsQuery.data ?? [];
+  const detailWeekly = detailWeeklyQuery.data ?? null;
 
   const statsLoading = summaryQuery.isLoading;
   const statsError = errMsg(summaryQuery.error, 'Không tải được thống kê');
   const weeklyLoading = weeklyQuery.isLoading;
   const weeklyError = errMsg(weeklyQuery.error, 'Không tải được bảng tuần');
-  const detailLoading = recordsQuery.isLoading || logsQuery.isLoading;
-  const detailError =
-    exportError ?? errMsg(recordsQuery.error ?? logsQuery.error, 'Không tải được báo cáo');
+  const detailLoading = recordsQuery.isLoading;
+  const detailError = exportError ?? errMsg(recordsQuery.error, 'Không tải được báo cáo');
+  const matrixLoading = detailWeeklyQuery.isLoading;
+  const matrixError = errMsg(detailWeeklyQuery.error, 'Không tải được bảng 30 ngày');
 
   function loadSummary() {
     void summaryQuery.refetch();
@@ -213,18 +234,22 @@ export default function ReportsPage() {
   }
   function loadDetail() {
     void recordsQuery.refetch();
-    void logsQuery.refetch();
+  }
+  function loadMatrix() {
+    void detailWeeklyQuery.refetch();
   }
 
   function applyWeekRange(start: string, dept = departmentId) {
     const end = weekEndFromStart(start);
     setFrom(start);
     setTo(end);
+    setMatrixDeptId(dept);
     setApplied({ from: start, to: end, departmentId: dept });
   }
 
   function onFilter() {
     setRecordsPage(1);
+    setMatrixDeptId(departmentId);
     setApplied({ from, to, departmentId });
     setWeekStart(formatDateOnly(mondayOfWeek(parseDateOnly(from))));
   }
@@ -339,11 +364,21 @@ export default function ReportsPage() {
     return Array.from(map.values());
   }, [weekly]);
 
+  const sortedTimesheet = useMemo(() => {
+    const list = [...(summary?.timesheet ?? [])];
+    list.sort((a, b) => {
+      if (timesheetSort === 'least') return a.workedMinutes - b.workedMinutes;
+      if (timesheetSort === 'most') return b.workedMinutes - a.workedMinutes;
+      return a.fullName.localeCompare(b.fullName, 'vi');
+    });
+    return list;
+  }, [summary?.timesheet, timesheetSort]);
+
   return (
     <PageShell
       badge="Báo cáo"
       title="Báo cáo chấm công"
-      subtitle="Thống kê chấm công và nhật ký ra vào theo khoảng thời gian."
+      subtitle="Thống kê chấm công và chi tiết nhân viên 30 ngày gần nhất."
     >
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList className="flex w-full max-w-sm">
@@ -425,13 +460,30 @@ export default function ReportsPage() {
           </div>
 
           <DesignCard
-            title={`Bảng tổng hợp công (${summary?.timesheet.length ?? 0})`}
+            title={`Bảng tổng hợp công (${sortedTimesheet.length})`}
             description="Tổng hợp công theo từng nhân viên trong khoảng thời gian đã chọn (đồng bộ với tuần đang xem). Giờ làm cập nhật liên tục kể cả khi chưa check-out."
+            actions={
+              <div className="w-[180px]">
+                <Select
+                  id="timesheet-sort"
+                  className="h-9"
+                  value={timesheetSort}
+                  onChange={(e) =>
+                    setTimesheetSort(e.target.value as 'name' | 'least' | 'most')
+                  }
+                  aria-label="Sắp xếp bảng tổng hợp công"
+                >
+                  <option value="name">Mặc định (A–Z)</option>
+                  <option value="least">Làm ít nhất</option>
+                  <option value="most">Làm nhiều nhất</option>
+                </Select>
+              </div>
+            }
           >
             <QueryBoundary
               isLoading={statsLoading}
               error={statsError}
-              isEmpty={(summary?.timesheet.length ?? 0) === 0}
+              isEmpty={sortedTimesheet.length === 0}
               onRetry={() => loadSummary()}
               emptyTitle="Chưa có dữ liệu"
               emptyDescription="Chọn khoảng thời gian khác hoặc chờ dữ liệu chấm công."
@@ -450,7 +502,7 @@ export default function ReportsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {summary?.timesheet.map((t) => (
+                    {sortedTimesheet.map((t) => (
                       <tr key={t.userId} className="border-t border-border hover:bg-muted/20">
                         <td className="p-2">
                           <div className="flex items-center gap-2.5">
@@ -748,55 +800,17 @@ export default function ReportsPage() {
             </QueryBoundary>
           </DesignCard>
 
-          <DesignCard title="Nhật ký ra vào gần đây" description="Các sự kiện FaceID/thẻ mới nhất.">
-            <QueryBoundary
-              isLoading={detailLoading}
-              isEmpty={logs.length === 0}
-              emptyTitle="Chưa có nhật ký"
-              emptyDescription="Sự kiện ra vào sẽ hiển thị tại đây."
-            >
-              <div className="space-y-2">
-                {logs.map((l) => (
-                  <div
-                    key={l.id}
-                    className={cn(
-                      'flex flex-wrap items-center justify-between gap-3 rounded-sm border p-3',
-                      l.isValid === false ? 'border-destructive/30 bg-destructive/5' : 'border-border',
-                    )}
-                  >
-                    <div className="flex items-center gap-3">
-                      <span
-                        className={cn(
-                          'h-2.5 w-2.5 shrink-0 rounded-full',
-                          l.isValid === false ? 'bg-destructive' : 'bg-emerald-500',
-                        )}
-                      />
-                      <div>
-                        <p className="text-sm font-semibold text-foreground">
-                          {l.user?.fullName || 'Không xác định'}
-                          {l.user?.employeeCode && (
-                            <span className="ml-1 font-mono text-xs text-muted-foreground">
-                              ({l.user.employeeCode})
-                            </span>
-                          )}
-                        </p>
-                        <p className="text-xs text-muted-foreground">
-                          {l.device.name}
-                          {l.action ? ` · ${l.action}` : ''}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      {l.warningMessage && (
-                        <span className="text-xs text-destructive">{l.warningMessage}</span>
-                      )}
-                      <span className="font-mono text-xs text-muted-foreground">{formatDt(l.eventAt)}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </QueryBoundary>
-          </DesignCard>
+          <EmployeeWeekMatrix
+            rows={detailWeekly?.rows ?? []}
+            rangeFrom={matrixRange.from}
+            rangeTo={matrixRange.to}
+            departments={departments}
+            departmentId={matrixDeptId}
+            onDepartmentChange={setMatrixDeptId}
+            isLoading={matrixLoading}
+            error={matrixError}
+            onRetry={loadMatrix}
+          />
         </TabsContent>
       </Tabs>
     </PageShell>
