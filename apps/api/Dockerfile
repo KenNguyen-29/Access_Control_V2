@@ -21,18 +21,22 @@ RUN pnpm --filter @acv2/shared build \
   && pnpm --filter @acv2/api build \
   && pnpm --filter @acv2/api --prod deploy /app/deploy
 
+# Bundle dist + prisma; compile seed.ts → seed.js so production seed needs no ts-node
 RUN cp -R /app/apps/api/dist /app/deploy/dist \
   && cp -R /app/apps/api/prisma /app/deploy/prisma \
-  && (cp /app/apps/api/tsconfig.seed.json /app/deploy/tsconfig.seed.json || true) \
+  && cp /app/apps/api/package.json /app/deploy/package.json \
+  && cd /app/apps/api \
+  && pnpm exec tsc -p tsconfig.seed.json --outDir /tmp/seed-out --rootDir prisma \
+  && cp /tmp/seed-out/*.js /app/deploy/prisma/ \
   && cd /app/deploy \
-  && pnpm exec prisma generate --schema=./prisma/schema.prisma || npx --yes prisma@6.19.3 generate --schema=./prisma/schema.prisma
+  && (pnpm exec prisma generate --schema=./prisma/schema.prisma || npx --yes prisma@6.19.3 generate --schema=./prisma/schema.prisma)
 
 FROM node:20-alpine AS api
 WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=api-build /app/deploy ./
-# prisma CLI + ts-node for migrate/seed (not included in --prod deploy)
-RUN npm install -g prisma@6.19.3 ts-node typescript \
-  && node -e "require('express'); require('@prisma/client'); console.log('deps ok')"
+RUN npm install -g prisma@6.19.3 \
+  && node -e "require('express'); require('@prisma/client'); console.log('deps ok')" \
+  && test -f prisma/seed.js && test -f prisma/run-seed.cjs
 EXPOSE 8080
 CMD ["node", "dist/main.js"]
