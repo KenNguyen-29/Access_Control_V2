@@ -109,11 +109,22 @@ export class CredentialsService {
 
     const photoUrl = this.storage.getFileUrl(key);
 
-    void this.akuvox.syncUserCredentials(user.id).catch((err) => {
-      this.logger.warn(
-        `Auto Akuvox sync after face enroll failed for user=${user.id}: ${(err as Error).message}`,
-      );
+    // Only auto-sync if the user already has zone permissions.
+    // New-user flows assign zones via provisionUser *after* enroll — syncing here would race.
+    const zoneCount = await this.prisma.userAccessPermission.count({
+      where: { userId: user.id, isDeleted: false },
     });
+    if (zoneCount > 0) {
+      void this.akuvox.syncUserCredentials(user.id).catch((err) => {
+        this.logger.warn(
+          `Auto Akuvox sync after face enroll failed for user=${user.id}: ${(err as Error).message}`,
+        );
+      });
+    } else {
+      this.logger.log(
+        `Skip auto Akuvox sync after face enroll user=${user.id} (no zone yet; provision will sync)`,
+      );
+    }
 
     return { credential, faceImagePath: key, photoUrl };
   }

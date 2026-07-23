@@ -50,6 +50,13 @@ services:
       retries: 3
       start_period: 10s
 
+  # RTSP → WebRTC (host network so browser ICE candidates work on LAN)
+  go2rtc:
+    image: alexxit/go2rtc:latest
+    container_name: acv2-go2rtc
+    restart: unless-stopped
+    network_mode: host
+
   api:
     build:
       context: .
@@ -58,6 +65,8 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy
@@ -68,7 +77,8 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-acv2}:${POSTGRES_PASSWORD:-acv2secret}@postgres:5432/${POSTGRES_DB:-access_control_v2}?schema=public
       REDIS_HOST: redis
-      REDIS_PORT: 6379
+      REDIS_PORT: "6379"
+      REDIS_URL: redis://redis:6379
       MINIO_ENDPOINT: minio
       MINIO_PORT: 9000
       MINIO_USE_SSL: "false"
@@ -77,9 +87,10 @@ services:
       MINIO_BUCKET: ${MINIO_BUCKET:-acv2-assets}
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production-use-long-random-string}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
-      GO2RTC_BASE_URL: ${GO2RTC_BASE_URL:-http://127.0.0.1:1984}
-      GO2RTC_ENABLED: ${GO2RTC_ENABLED:-false}
-      GO2RTC_AUTO_START: ${GO2RTC_AUTO_START:-false}
+      # API container → go2rtc on host network
+      GO2RTC_BASE_URL: ${GO2RTC_BASE_URL:-http://host.docker.internal:1984}
+      GO2RTC_ENABLED: ${GO2RTC_ENABLED:-true}
+      GO2RTC_AUTO_START: "false"
       API_PORT: 8080
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3003}
       API_PUBLIC_URL: ${API_PUBLIC_URL:-http://localhost:8010}

@@ -30,7 +30,7 @@ export class AkuvoxService {
     this.mockMode = this.config.get<string>('AKUVOX_MOCK_MODE', 'true') === 'true';
     this.defaultUsername = this.config.get<string>('AKUVOX_DEFAULT_USERNAME', 'admin');
     this.defaultPassword = this.config.get<string>('AKUVOX_DEFAULT_PASSWORD', 'Admin123');
-    this.timeoutMs = Number(this.config.get<string>('AKUVOX_REQUEST_TIMEOUT', '5000'));
+    this.timeoutMs = Number(this.config.get<string>('AKUVOX_REQUEST_TIMEOUT', '15000'));
   }
 
   private parseConfig(device: Device): AkuvoxConfig {
