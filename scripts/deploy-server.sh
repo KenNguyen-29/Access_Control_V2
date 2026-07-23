@@ -50,7 +50,9 @@ docker compose -f docker-compose.prod.yml run --rm --no-deps api npx prisma migr
 
 if [ "${SEED_DB:-false}" = "true" ]; then
   echo "==> Seeding database..."
-  docker compose -f docker-compose.prod.yml run --rm --no-deps api npx prisma db seed
+  if ! docker compose -f docker-compose.prod.yml run --rm --no-deps api npx prisma db seed; then
+    echo "WARN: seed failed (often OK if data already exists). Check logs above."
+  fi
 fi
 
 echo "==> Starting API + Web..."

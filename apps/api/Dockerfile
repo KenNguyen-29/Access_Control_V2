@@ -31,8 +31,8 @@ FROM node:20-alpine AS api
 WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=api-build /app/deploy ./
-# prisma CLI for migrate/seed on server (devDependency not in --prod deploy)
-RUN npm install -g prisma@6.19.3 \
+# prisma CLI + ts-node for migrate/seed (not included in --prod deploy)
+RUN npm install -g prisma@6.19.3 ts-node typescript \
   && node -e "require('express'); require('@prisma/client'); console.log('deps ok')"
 EXPOSE 8080
 CMD ["node", "dist/main.js"]
