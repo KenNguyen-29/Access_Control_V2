@@ -50,15 +50,36 @@ services:
       retries: 3
       start_period: 10s
 
-  # RTSP → WebRTC (host network so browser ICE candidates work on LAN)
+  # Same Docker network as API → http://go2rtc:1984 (no host.docker.internal).
   go2rtc:
     image: alexxit/go2rtc:latest
     container_name: acv2-go2rtc
     restart: unless-stopped
-    network_mode: host
+    environment:
+      HOST_LAN_IP: ${HOST_LAN_IP:-192.168.2.148}
     volumes:
-      # Must listen on :1984 (all ifaces). Default 127.0.0.1 breaks API→go2rtc via host gateway.
-      - ./deploy/go2rtc/go2rtc.yaml:/config/go2rtc.yaml:ro
+      - ./deploy/go2rtc/go2rtc.yaml:/template/go2rtc.yaml:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        mkdir -p /config
+        sed "s/__HOST_LAN_IP__/$${HOST_LAN_IP}/g" /template/go2rtc.yaml > /config/go2rtc.yaml
+        cat /config/go2rtc.yaml
+        exec /sbin/tini -- go2rtc -config /config/go2rtc.yaml
+    ports:
+      - "1984:1984"
+      - "8554:8554"
+      - "8555:8555/tcp"
+      - "8555:8555/udp"
+    networks:
+      - acv2-net
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:1984/api"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
 
   api:
     build:
@@ -68,14 +89,14 @@ services:
     restart: unless-stopped
     env_file:
       - .env
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
       minio:
+        condition: service_healthy
+      go2rtc:
         condition: service_healthy
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-acv2}:${POSTGRES_PASSWORD:-acv2secret}@postgres:5432/${POSTGRES_DB:-access_control_v2}?schema=public
@@ -90,9 +111,9 @@ services:
       MINIO_BUCKET: ${MINIO_BUCKET:-acv2-assets}
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production-use-long-random-string}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
-      # API container → go2rtc on host network
-      GO2RTC_BASE_URL: ${GO2RTC_BASE_URL:-http://host.docker.internal:1984}
-      GO2RTC_ENABLED: ${GO2RTC_ENABLED:-true}
+      # Same compose network as go2rtc service (NOT 127.0.0.1 / host.docker.internal)
+      GO2RTC_BASE_URL: http://go2rtc:1984
+      GO2RTC_ENABLED: "true"
       GO2RTC_AUTO_START: "false"
       API_PORT: 8080
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3003}
