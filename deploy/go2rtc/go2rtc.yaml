@@ -1,0 +1,10 @@
+# Listen on all interfaces so the API container can reach go2rtc via
+# host.docker.internal / docker bridge gateway (not only 127.0.0.1).
+api:
+  listen: ":1984"
+
+rtsp:
+  listen: ":8554"
+
+webrtc:
+  listen: ":8555"

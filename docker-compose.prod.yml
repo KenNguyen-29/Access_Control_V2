@@ -56,6 +56,9 @@ services:
     container_name: acv2-go2rtc
     restart: unless-stopped
     network_mode: host
+    volumes:
+      # Must listen on :1984 (all ifaces). Default 127.0.0.1 breaks API→go2rtc via host gateway.
+      - ./deploy/go2rtc/go2rtc.yaml:/config/go2rtc.yaml:ro
 
   api:
     build:
