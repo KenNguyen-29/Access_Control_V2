@@ -20,24 +20,58 @@ if [ ! -f .env ]; then
   exit 1
 fi
 
-echo "==> Building and starting containers..."
-docker compose -f docker-compose.prod.yml up -d --build
+# shellcheck disable=SC1091
+set -a
+# Export only simple KEY=VALUE lines for compose variable substitution
+WEB_HOST_PORT="$(grep -E '^WEB_HOST_PORT=' .env | cut -d= -f2- | tr -d ' "\r' || true)"
+API_HOST_PORT="$(grep -E '^API_HOST_PORT=' .env | cut -d= -f2- | tr -d ' "\r' || true)"
+POSTGRES_USER="$(grep -E '^POSTGRES_USER=' .env | cut -d= -f2- | tr -d ' "\r' || true)"
+POSTGRES_DB="$(grep -E '^POSTGRES_DB=' .env | cut -d= -f2- | tr -d ' "\r' || true)"
+WEB_HOST_PORT="${WEB_HOST_PORT:-3003}"
+API_HOST_PORT="${API_HOST_PORT:-8010}"
+POSTGRES_USER="${POSTGRES_USER:-acv2}"
+POSTGRES_DB="${POSTGRES_DB:-access_control_v2}"
+set +a
 
-echo "==> Waiting for API..."
-sleep 8
+echo "==> Building and starting infra (postgres/redis/minio)..."
+docker compose -f docker-compose.prod.yml up -d --build postgres redis minio
 
-echo "==> Running database migrations..."
-docker compose -f docker-compose.prod.yml exec -T api npx prisma migrate deploy
+echo "==> Waiting for postgres healthy..."
+for i in $(seq 1 30); do
+  if docker compose -f docker-compose.prod.yml exec -T postgres \
+    pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 2
+done
+
+echo "==> Running database migrations (one-off container)..."
+docker compose -f docker-compose.prod.yml run --rm --no-deps api npx prisma migrate deploy
 
 if [ "${SEED_DB:-false}" = "true" ]; then
   echo "==> Seeding database..."
-  docker compose -f docker-compose.prod.yml exec -T api npx prisma db seed
+  docker compose -f docker-compose.prod.yml run --rm --no-deps api npx prisma db seed
 fi
 
-WEB_HOST_PORT="$(grep -E '^WEB_HOST_PORT=' .env | cut -d= -f2- | tr -d ' "\r' || true)"
-API_HOST_PORT="$(grep -E '^API_HOST_PORT=' .env | cut -d= -f2- | tr -d ' "\r' || true)"
-WEB_HOST_PORT="${WEB_HOST_PORT:-3003}"
-API_HOST_PORT="${API_HOST_PORT:-8010}"
+echo "==> Starting API + Web..."
+docker compose -f docker-compose.prod.yml up -d --build api web
+
+echo "==> Waiting for API to stay up..."
+for i in $(seq 1 40); do
+  status="$(docker inspect -f '{{.State.Status}}' acv2-api 2>/dev/null || echo missing)"
+  if [ "$status" = "running" ]; then
+    if curl -fsS "http://127.0.0.1:${API_HOST_PORT}/api/health" >/dev/null 2>&1; then
+      echo "API is healthy."
+      break
+    fi
+  fi
+  if [ "$status" = "restarting" ] || [ "$status" = "exited" ]; then
+    echo "API container status=$status — recent logs:"
+    docker compose -f docker-compose.prod.yml logs --tail=80 api || true
+    exit 1
+  fi
+  sleep 2
+done
 
 echo ""
 echo "Done."
