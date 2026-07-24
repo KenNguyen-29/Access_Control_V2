@@ -23,16 +23,55 @@ async function main() {
 
   const adminRole = await prisma.role.findUniqueOrThrow({ where: { code: UserRole.ADMIN } });
 
-  const passwordHash = await bcrypt.hash('admin123', 10);
-  await prisma.account.upsert({
-    where: { username: 'admin' },
-    update: {},
-    create: {
-      username: 'admin',
-      passwordHash,
-      roleId: adminRole.id,
-    },
-  });
+  const bootstrapPassword = process.env.ADMIN_BOOTSTRAP_PASSWORD?.trim();
+  const bootstrapUsername = (process.env.ADMIN_BOOTSTRAP_USERNAME || 'admin').trim();
+
+  if (bootstrapPassword) {
+    if (bootstrapPassword.length < 8) {
+      throw new Error('ADMIN_BOOTSTRAP_PASSWORD must be at least 8 characters');
+    }
+    if (bootstrapPassword === 'admin123') {
+      throw new Error(
+        'ADMIN_BOOTSTRAP_PASSWORD must not be the insecure default "admin123". Choose a strong password.',
+      );
+    }
+    const passwordHash = await bcrypt.hash(bootstrapPassword, 12);
+    await prisma.account.upsert({
+      where: { username: bootstrapUsername },
+      update: {
+        passwordHash,
+        mustChangePassword: true,
+        isActive: true,
+        isDeleted: false,
+        roleId: adminRole.id,
+      },
+      create: {
+        username: bootstrapUsername,
+        passwordHash,
+        roleId: adminRole.id,
+        mustChangePassword: true,
+      },
+    });
+    console.log(
+      `Admin account "${bootstrapUsername}" bootstrapped (mustChangePassword=true). Change password after first login.`,
+    );
+  } else {
+    // Never create or refresh admin/admin123. Mark existing default admin to force password change.
+    const existingAdmin = await prisma.account.findUnique({ where: { username: 'admin' } });
+    if (existingAdmin) {
+      await prisma.account.update({
+        where: { id: existingAdmin.id },
+        data: { mustChangePassword: true },
+      });
+      console.log(
+        'Existing admin found: mustChangePassword=true. Set ADMIN_BOOTSTRAP_PASSWORD to rotate password on seed.',
+      );
+    } else {
+      console.log(
+        'No admin account created. Set ADMIN_BOOTSTRAP_PASSWORD (and optional ADMIN_BOOTSTRAP_USERNAME) to bootstrap.',
+      );
+    }
+  }
 
   const dept = await prisma.department.upsert({
     where: { code: 'IT' },

@@ -28,6 +28,13 @@ import { QueryBoundary } from '@/components/ui/query-states';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { cn } from '@/lib/utils';
 import { DesignCard, PageShell } from '@/components/design/PageShell';
+import { FieldError, RequiredMark } from '@/components/ui/field-error';
+import {
+  hasFormErrors,
+  validateFilterDateRange,
+  type FieldErrors,
+} from '@/lib/formValidation';
+import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { queryKeys } from '@/lib/queryKeys';
 import {
   ApiError,
@@ -108,6 +115,63 @@ function errMsg(err: unknown, fallback: string) {
   return err instanceof ApiError ? err.message : fallback;
 }
 
+type TriFilter = '' | 'yes' | 'no';
+
+function matchesTri(filter: TriFilter, hasValue: boolean) {
+  if (filter === 'yes') return hasValue;
+  if (filter === 'no') return !hasValue;
+  return true;
+}
+
+function triToBool(filter: TriFilter): boolean | undefined {
+  if (filter === 'yes') return true;
+  if (filter === 'no') return false;
+  return undefined;
+}
+
+const ATTENDANCE_STATUS_OPTIONS = [
+  { value: '', label: 'Tất cả trạng thái' },
+  { value: 'ON_TIME', label: 'Đúng giờ' },
+  { value: 'LATE', label: 'Đi muộn' },
+  { value: 'EARLY_LEAVE', label: 'Về sớm' },
+  { value: 'OVERTIME', label: 'Tăng ca' },
+  { value: 'ABSENT', label: 'Vắng' },
+] as const;
+
+function TriSelect({
+  id,
+  label,
+  value,
+  onChange,
+  yesLabel = 'Có',
+  noLabel = 'Không',
+}: {
+  id: string;
+  label: string;
+  value: TriFilter;
+  onChange: (v: TriFilter) => void;
+  yesLabel?: string;
+  noLabel?: string;
+}) {
+  return (
+    <div>
+      <label htmlFor={id} className="mb-1 block text-xs text-muted-foreground">
+        {label}
+      </label>
+      <Select
+        id={id}
+        className="h-10"
+        value={value}
+        onChange={(e) => onChange(e.target.value as TriFilter)}
+      >
+        <option value="">Tất cả</option>
+        <option value="yes">{yesLabel}</option>
+        <option value="no">{noLabel}</option>
+      </Select>
+    </div>
+  );
+}
+
 export default function ReportsPage() {
   const queryClient = useQueryClient();
   const importInputRef = useRef<HTMLInputElement>(null);
@@ -119,6 +183,7 @@ export default function ReportsPage() {
   // ── Shared filters (input vs applied) ──────────
   const [from, setFrom] = useState(initialWeekStart);
   const [to, setTo] = useState(initialWeekEnd);
+  const [dateErrors, setDateErrors] = useState<FieldErrors<'from' | 'to'>>({});
   const [departmentId, setDepartmentId] = useState('');
   const [applied, setApplied] = useState({
     from: initialWeekStart,
@@ -130,6 +195,23 @@ export default function ReportsPage() {
   const [recordsPage, setRecordsPage] = useState(1);
   const [matrixDeptId, setMatrixDeptId] = useState('');
   const [timesheetSort, setTimesheetSort] = useState<'name' | 'least' | 'most'>('name');
+  const [timesheetSearch, setTimesheetSearch] = useState('');
+  const [timesheetLate, setTimesheetLate] = useState<TriFilter>('');
+  const [timesheetEarlyArrival, setTimesheetEarlyArrival] = useState<TriFilter>('');
+  const [timesheetEarlyLeave, setTimesheetEarlyLeave] = useState<TriFilter>('');
+  const [timesheetOt, setTimesheetOt] = useState<TriFilter>('');
+  const [weeklySearch, setWeeklySearch] = useState('');
+  const [weeklyStatus, setWeeklyStatus] = useState('');
+  const [weeklyLate, setWeeklyLate] = useState<TriFilter>('');
+  const [weeklyEarlyArrival, setWeeklyEarlyArrival] = useState<TriFilter>('');
+  const [weeklyEarlyLeave, setWeeklyEarlyLeave] = useState<TriFilter>('');
+  const [weeklyOt, setWeeklyOt] = useState<TriFilter>('');
+  const [recordsSearch, setRecordsSearch] = useState('');
+  const [recordsStatus, setRecordsStatus] = useState('');
+  const [recordsLate, setRecordsLate] = useState<TriFilter>('');
+  const [recordsEarlyLeave, setRecordsEarlyLeave] = useState<TriFilter>('');
+  const [recordsOt, setRecordsOt] = useState<TriFilter>('');
+  const debouncedRecordsSearch = useDebouncedValue(recordsSearch, 300);
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
@@ -183,8 +265,14 @@ export default function ReportsPage() {
     queryKey: queryKeys.attendanceRecords({
       from: applied.from,
       to: applied.to,
+      departmentId: applied.departmentId,
       page: recordsPage,
       pageSize: RECORDS_PAGE_SIZE,
+      search: debouncedRecordsSearch.trim() || undefined,
+      status: recordsStatus || undefined,
+      hasLate: triToBool(recordsLate),
+      hasEarlyLeave: triToBool(recordsEarlyLeave),
+      hasOt: triToBool(recordsOt),
     }),
     queryFn: () =>
       getAttendanceRecords({
@@ -192,6 +280,12 @@ export default function ReportsPage() {
         pageSize: RECORDS_PAGE_SIZE,
         from: applied.from || undefined,
         to: applied.to || undefined,
+        departmentId: applied.departmentId || undefined,
+        search: debouncedRecordsSearch.trim() || undefined,
+        status: recordsStatus || undefined,
+        hasLate: triToBool(recordsLate),
+        hasEarlyLeave: triToBool(recordsEarlyLeave),
+        hasOt: triToBool(recordsOt),
       }),
     enabled: tab === 'detail',
   });
@@ -248,6 +342,9 @@ export default function ReportsPage() {
   }
 
   function onFilter() {
+    const errors = validateFilterDateRange(from, to);
+    setDateErrors(errors);
+    if (hasFormErrors(errors)) return;
     setRecordsPage(1);
     setMatrixDeptId(departmentId);
     setApplied({ from, to, departmentId });
@@ -352,8 +449,22 @@ export default function ReportsPage() {
   }, [summary]);
 
   const weeklyGroups = useMemo(() => {
+    const q = weeklySearch.trim().toLowerCase();
+    const filtered = (weekly?.rows ?? []).filter((row) => {
+      if (q) {
+        const hay = `${row.fullName} ${row.employeeCode} ${row.departmentName ?? ''} ${row.shiftName ?? ''} ${row.shiftCode ?? ''}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      if (weeklyStatus && row.status !== weeklyStatus) return false;
+      if (!matchesTri(weeklyLate, row.lateMinutes > 0)) return false;
+      if (!matchesTri(weeklyEarlyArrival, (row.earlyArrivalMinutes ?? 0) > 0)) return false;
+      if (!matchesTri(weeklyEarlyLeave, row.earlyLeaveMinutes > 0)) return false;
+      if (!matchesTri(weeklyOt, row.otMinutes > 0)) return false;
+      return true;
+    });
+
     const map = new Map<string, { fullName: string; employeeCode: string; rows: WeeklyRow[] }>();
-    for (const row of weekly?.rows ?? []) {
+    for (const row of filtered) {
       let group = map.get(row.userId);
       if (!group) {
         group = { fullName: row.fullName, employeeCode: row.employeeCode, rows: [] };
@@ -362,17 +473,49 @@ export default function ReportsPage() {
       group.rows.push(row);
     }
     return Array.from(map.values());
-  }, [weekly]);
+  }, [
+    weekly,
+    weeklySearch,
+    weeklyStatus,
+    weeklyLate,
+    weeklyEarlyArrival,
+    weeklyEarlyLeave,
+    weeklyOt,
+  ]);
+
+  const weeklyFilteredCount = useMemo(
+    () => weeklyGroups.reduce((n, g) => n + g.rows.length, 0),
+    [weeklyGroups],
+  );
 
   const sortedTimesheet = useMemo(() => {
-    const list = [...(summary?.timesheet ?? [])];
+    const q = timesheetSearch.trim().toLowerCase();
+    let list = [...(summary?.timesheet ?? [])].filter((t) => {
+      if (q) {
+        const hay = `${t.fullName} ${t.employeeCode} ${t.departmentName ?? ''}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      if (!matchesTri(timesheetLate, t.lateCount > 0)) return false;
+      if (!matchesTri(timesheetEarlyArrival, (t.earlyArrivalCount ?? 0) > 0)) return false;
+      if (!matchesTri(timesheetEarlyLeave, t.earlyCount > 0)) return false;
+      if (!matchesTri(timesheetOt, t.otMinutes > 0)) return false;
+      return true;
+    });
     list.sort((a, b) => {
       if (timesheetSort === 'least') return a.workedMinutes - b.workedMinutes;
       if (timesheetSort === 'most') return b.workedMinutes - a.workedMinutes;
       return a.fullName.localeCompare(b.fullName, 'vi');
     });
     return list;
-  }, [summary?.timesheet, timesheetSort]);
+  }, [
+    summary?.timesheet,
+    timesheetSort,
+    timesheetSearch,
+    timesheetLate,
+    timesheetEarlyArrival,
+    timesheetEarlyLeave,
+    timesheetOt,
+  ]);
 
   return (
     <PageShell
@@ -392,26 +535,51 @@ export default function ReportsPage() {
             <div>
               <label htmlFor="report-from" className="mb-1 block text-xs text-muted-foreground">
                 Từ ngày
+                <RequiredMark />
               </label>
               <Input
                 id="report-from"
                 type="date"
-                className="input-design h-10"
+                className={cn('input-design h-10', dateErrors.from && 'border-destructive')}
                 value={from}
-                onChange={(e) => setFrom(e.target.value)}
+                max={to || undefined}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  setFrom(next);
+                  setDateErrors((prev) => {
+                    const n = { ...prev };
+                    delete n.from;
+                    if (to && next && to < next) delete n.to;
+                    return n;
+                  });
+                  if (to && next && to < next) setTo('');
+                }}
+                aria-invalid={Boolean(dateErrors.from)}
               />
+              <FieldError message={dateErrors.from} />
             </div>
             <div>
               <label htmlFor="report-to" className="mb-1 block text-xs text-muted-foreground">
                 Đến ngày
+                <RequiredMark />
               </label>
               <Input
                 id="report-to"
                 type="date"
-                className="input-design h-10"
+                className={cn('input-design h-10', dateErrors.to && 'border-destructive')}
                 value={to}
-                onChange={(e) => setTo(e.target.value)}
+                min={from || undefined}
+                onChange={(e) => {
+                  setTo(e.target.value);
+                  setDateErrors((prev) => {
+                    const n = { ...prev };
+                    delete n.to;
+                    return n;
+                  });
+                }}
+                aria-invalid={Boolean(dateErrors.to)}
               />
+              <FieldError message={dateErrors.to} />
             </div>
             <div>
               <label htmlFor="report-dept" className="mb-1 block text-xs text-muted-foreground">
@@ -480,16 +648,57 @@ export default function ReportsPage() {
               </div>
             }
           >
+            <div className="mb-4 grid grid-cols-1 items-end gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+              <div className="sm:col-span-2 xl:col-span-2">
+                <label htmlFor="timesheet-search" className="mb-1 block text-xs text-muted-foreground">
+                  Tìm kiếm
+                </label>
+                <div className="relative">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    id="timesheet-search"
+                    placeholder="Tên, mã NV, phòng ban..."
+                    className="input-design h-10 pl-10"
+                    value={timesheetSearch}
+                    onChange={(e) => setTimesheetSearch(e.target.value)}
+                  />
+                </div>
+              </div>
+              <TriSelect
+                id="timesheet-late"
+                label="Đi muộn"
+                value={timesheetLate}
+                onChange={setTimesheetLate}
+              />
+              <TriSelect
+                id="timesheet-early-arrival"
+                label="Đi sớm"
+                value={timesheetEarlyArrival}
+                onChange={setTimesheetEarlyArrival}
+              />
+              <TriSelect
+                id="timesheet-early-leave"
+                label="Về sớm"
+                value={timesheetEarlyLeave}
+                onChange={setTimesheetEarlyLeave}
+              />
+              <TriSelect
+                id="timesheet-ot"
+                label="Tăng ca"
+                value={timesheetOt}
+                onChange={setTimesheetOt}
+              />
+            </div>
             <QueryBoundary
               isLoading={statsLoading}
               error={statsError}
               isEmpty={sortedTimesheet.length === 0}
               onRetry={() => loadSummary()}
               emptyTitle="Chưa có dữ liệu"
-              emptyDescription="Chọn khoảng thời gian khác hoặc chờ dữ liệu chấm công."
+              emptyDescription="Chọn khoảng thời gian khác hoặc nới bộ lọc bảng tổng hợp."
             >
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[760px] text-sm">
+                <table className="w-full min-w-[860px] text-sm">
                   <thead>
                     <tr className="border-b border-border bg-muted/30 text-left">
                       <th className="p-2 font-semibold">Nhân viên</th>
@@ -497,6 +706,7 @@ export default function ReportsPage() {
                       <th className="p-2 text-right font-semibold">Ngày công</th>
                       <th className="p-2 text-right font-semibold">Giờ làm</th>
                       <th className="p-2 text-right font-semibold">Đi muộn</th>
+                      <th className="p-2 text-right font-semibold">Đi sớm</th>
                       <th className="p-2 text-right font-semibold">Về sớm</th>
                       <th className="p-2 text-right font-semibold">OT</th>
                     </tr>
@@ -519,6 +729,14 @@ export default function ReportsPage() {
                         <td className={cn('p-2 text-right', t.lateCount > 0 && 'text-orange-600')}>
                           {t.lateCount}
                         </td>
+                        <td
+                          className={cn(
+                            'p-2 text-right',
+                            (t.earlyArrivalCount ?? 0) > 0 && 'text-sky-600',
+                          )}
+                        >
+                          {t.earlyArrivalCount ?? 0}
+                        </td>
                         <td className={cn('p-2 text-right', t.earlyCount > 0 && 'text-orange-600')}>
                           {t.earlyCount}
                         </td>
@@ -534,7 +752,7 @@ export default function ReportsPage() {
           </DesignCard>
 
           <DesignCard
-            title="Chấm công theo tuần"
+            title={`Chấm công theo tuần (${weeklyFilteredCount})`}
             description="Chi tiết chấm công từng ngày theo nhân viên, kèm hệ số lương của ca."
             actions={
               <div className="flex items-center gap-2">
@@ -555,16 +773,64 @@ export default function ReportsPage() {
               </div>
             }
           >
+            <div className="mb-4 grid grid-cols-1 items-end gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-7">
+              <div className="sm:col-span-2 xl:col-span-2">
+                <label htmlFor="weekly-search" className="mb-1 block text-xs text-muted-foreground">
+                  Tìm kiếm
+                </label>
+                <div className="relative">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    id="weekly-search"
+                    placeholder="Tên, mã NV, ca..."
+                    className="input-design h-10 pl-10"
+                    value={weeklySearch}
+                    onChange={(e) => setWeeklySearch(e.target.value)}
+                  />
+                </div>
+              </div>
+              <div>
+                <label htmlFor="weekly-status" className="mb-1 block text-xs text-muted-foreground">
+                  Trạng thái
+                </label>
+                <Select
+                  id="weekly-status"
+                  className="h-10"
+                  value={weeklyStatus}
+                  onChange={(e) => setWeeklyStatus(e.target.value)}
+                >
+                  {ATTENDANCE_STATUS_OPTIONS.map((o) => (
+                    <option key={o.value || 'all'} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              <TriSelect id="weekly-late" label="Đi muộn" value={weeklyLate} onChange={setWeeklyLate} />
+              <TriSelect
+                id="weekly-early-arrival"
+                label="Đi sớm"
+                value={weeklyEarlyArrival}
+                onChange={setWeeklyEarlyArrival}
+              />
+              <TriSelect
+                id="weekly-early-leave"
+                label="Về sớm"
+                value={weeklyEarlyLeave}
+                onChange={setWeeklyEarlyLeave}
+              />
+              <TriSelect id="weekly-ot" label="Tăng ca" value={weeklyOt} onChange={setWeeklyOt} />
+            </div>
             <QueryBoundary
               isLoading={weeklyLoading}
               error={weeklyError}
-              isEmpty={(weekly?.rows.length ?? 0) === 0}
+              isEmpty={weeklyFilteredCount === 0}
               onRetry={() => loadWeekly()}
               emptyTitle="Chưa có dữ liệu tuần này"
-              emptyDescription="Chuyển sang tuần khác hoặc chờ dữ liệu chấm công."
+              emptyDescription="Chuyển sang tuần khác hoặc nới bộ lọc."
             >
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[920px] text-sm">
+                <table className="w-full min-w-[1020px] text-sm">
                   <thead>
                     <tr className="border-b border-border bg-muted/30 text-left">
                       <th className="p-2 font-semibold">Nhân viên</th>
@@ -575,6 +841,7 @@ export default function ReportsPage() {
                       <th className="p-2 text-right font-semibold">Giờ làm</th>
                       <th className="p-2 text-right font-semibold">Đi muộn</th>
                       <th className="p-2 text-right font-semibold">Đi sớm</th>
+                      <th className="p-2 text-right font-semibold">Về sớm</th>
                       <th className="p-2 text-right font-semibold">OT</th>
                       <th className="p-2 text-right font-semibold">Hệ số</th>
                       <th className="p-2 font-semibold">Trạng thái</th>
@@ -630,7 +897,22 @@ export default function ReportsPage() {
                           <td className={cn('p-2 text-right', r.lateMinutes > 0 && 'text-orange-600')}>
                             {r.lateMinutes > 0 ? formatMinutes(r.lateMinutes) : '—'}
                           </td>
-                          <td className={cn('p-2 text-right', r.earlyLeaveMinutes > 0 && 'text-orange-600')}>
+                          <td
+                            className={cn(
+                              'p-2 text-right',
+                              (r.earlyArrivalMinutes ?? 0) > 0 && 'text-sky-600',
+                            )}
+                          >
+                            {(r.earlyArrivalMinutes ?? 0) > 0
+                              ? formatMinutes(r.earlyArrivalMinutes)
+                              : '—'}
+                          </td>
+                          <td
+                            className={cn(
+                              'p-2 text-right',
+                              r.earlyLeaveMinutes > 0 && 'text-orange-600',
+                            )}
+                          >
                             {r.earlyLeaveMinutes > 0 ? formatMinutes(r.earlyLeaveMinutes) : '—'}
                           </td>
                           <td className={cn('p-2 text-right', r.otMinutes > 0 && 'text-emerald-600')}>
@@ -714,25 +996,95 @@ export default function ReportsPage() {
             title={`Bản ghi chấm công (${recordsTotal})`}
             description="Chi tiết chấm công theo bộ lọc."
           >
+            <div className="mb-4 grid grid-cols-1 items-end gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+              <div className="sm:col-span-2">
+                <label htmlFor="records-search" className="mb-1 block text-xs text-muted-foreground">
+                  Tìm kiếm
+                </label>
+                <div className="relative">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    id="records-search"
+                    placeholder="Tên hoặc mã nhân viên..."
+                    className="input-design h-10 pl-10"
+                    value={recordsSearch}
+                    onChange={(e) => {
+                      setRecordsSearch(e.target.value);
+                      setRecordsPage(1);
+                    }}
+                  />
+                </div>
+              </div>
+              <div>
+                <label htmlFor="records-status" className="mb-1 block text-xs text-muted-foreground">
+                  Trạng thái
+                </label>
+                <Select
+                  id="records-status"
+                  className="h-10"
+                  value={recordsStatus}
+                  onChange={(e) => {
+                    setRecordsStatus(e.target.value);
+                    setRecordsPage(1);
+                  }}
+                >
+                  {ATTENDANCE_STATUS_OPTIONS.map((o) => (
+                    <option key={o.value || 'all'} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              <TriSelect
+                id="records-late"
+                label="Đi muộn"
+                value={recordsLate}
+                onChange={(v) => {
+                  setRecordsLate(v);
+                  setRecordsPage(1);
+                }}
+              />
+              <TriSelect
+                id="records-early-leave"
+                label="Về sớm"
+                value={recordsEarlyLeave}
+                onChange={(v) => {
+                  setRecordsEarlyLeave(v);
+                  setRecordsPage(1);
+                }}
+              />
+              <TriSelect
+                id="records-ot"
+                label="Tăng ca"
+                value={recordsOt}
+                onChange={(v) => {
+                  setRecordsOt(v);
+                  setRecordsPage(1);
+                }}
+              />
+            </div>
             <QueryBoundary
               isLoading={detailLoading}
               error={detailError}
               isEmpty={records.length === 0}
               onRetry={() => loadDetail()}
               emptyTitle="Chưa có bản ghi"
-              emptyDescription="Chọn khoảng thời gian khác hoặc chờ dữ liệu chấm công."
+              emptyDescription="Chọn khoảng thời gian khác hoặc nới bộ lọc."
             >
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[820px] text-sm">
+                <table className="w-full min-w-[960px] text-sm">
                   <thead>
                     <tr className="border-b border-border bg-muted/30 text-left">
                       <th className="p-2 font-semibold">Ngày</th>
                       <th className="p-2 font-semibold">Nhân viên</th>
+                      <th className="p-2 font-semibold">Phòng ban</th>
                       <th className="p-2 font-semibold">Ca</th>
                       <th className="p-2 font-semibold">Vào</th>
                       <th className="p-2 font-semibold">Ra</th>
                       <th className="p-2 font-semibold">Trạng thái</th>
-                      <th className="p-2 font-semibold">Muộn / OT</th>
+                      <th className="p-2 text-right font-semibold">Muộn</th>
+                      <th className="p-2 text-right font-semibold">Về sớm</th>
+                      <th className="p-2 text-right font-semibold">OT</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -749,20 +1101,40 @@ export default function ReportsPage() {
                             </span>
                           )}
                         </td>
+                        <td className="p-2 text-muted-foreground">
+                          {r.user?.department?.name ?? '—'}
+                        </td>
                         <td className="p-2">{r.workShift?.name || '—'}</td>
                         <td className="p-2 font-mono text-xs">{formatDt(r.checkInAt)}</td>
                         <td className="p-2 font-mono text-xs">{formatDt(r.checkOutAt)}</td>
                         <td className="p-2">
                           <StatusBadge status={r.status} />
                         </td>
-                        <td className="p-2 text-xs">
-                          <span className={(r.lateMinutes ?? 0) > 0 ? 'text-orange-600' : 'text-muted-foreground'}>
-                            {r.lateMinutes ?? 0}p
-                          </span>
-                          <span className="text-muted-foreground"> / </span>
-                          <span className={(r.otMinutes ?? 0) > 0 ? 'text-emerald-600' : 'text-muted-foreground'}>
-                            {r.otMinutes ?? 0}p
-                          </span>
+                        <td
+                          className={cn(
+                            'p-2 text-right text-xs',
+                            (r.lateMinutes ?? 0) > 0 ? 'text-orange-600' : 'text-muted-foreground',
+                          )}
+                        >
+                          {r.lateMinutes ?? 0}p
+                        </td>
+                        <td
+                          className={cn(
+                            'p-2 text-right text-xs',
+                            (r.earlyLeaveMinutes ?? 0) > 0
+                              ? 'text-orange-600'
+                              : 'text-muted-foreground',
+                          )}
+                        >
+                          {r.earlyLeaveMinutes ?? 0}p
+                        </td>
+                        <td
+                          className={cn(
+                            'p-2 text-right text-xs',
+                            (r.otMinutes ?? 0) > 0 ? 'text-emerald-600' : 'text-muted-foreground',
+                          )}
+                        >
+                          {r.otMinutes ?? 0}p
                         </td>
                       </tr>
                     ))}

@@ -23,6 +23,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Dialog, ConfirmDialog } from '@/components/ui/dialog';
+import { FieldError, RequiredMark } from '@/components/ui/field-error';
 import { DeviceTypeBadge, SyncBadge } from '@/components/ui/status-badge';
 import { QueryBoundary } from '@/components/ui/query-states';
 import { DesignCard, PageShell } from '@/components/design/PageShell';
@@ -44,6 +45,15 @@ import {
   updateDevice,
   type Device,
 } from '@/lib/api';
+import {
+  clearFieldError,
+  hasFormErrors,
+  validateDeviceForm,
+  validateDeviceMappingForm,
+  type DeviceFormFieldErrors,
+  type FieldErrors,
+} from '@/lib/formValidation';
+import { cn } from '@/lib/utils';
 
 const DEFAULT_RTSP_TEMPLATE = 'rtsp://192.168.1.100:554/Streaming/Channels/101';
 
@@ -72,7 +82,11 @@ export default function DevicesPage() {
   const [mapOpen, setMapOpen] = useState(false);
   const [editing, setEditing] = useState<Device | null>(null);
   const [form, setForm] = useState(EMPTY_FORM);
+  const [fieldErrors, setFieldErrors] = useState<DeviceFormFieldErrors>({});
   const [mapForm, setMapForm] = useState({ akuvoxDeviceId: '', cameraDeviceId: '' });
+  const [mapFieldErrors, setMapFieldErrors] = useState<
+    FieldErrors<'akuvoxDeviceId' | 'cameraDeviceId'>
+  >({});
   const [deleteTarget, setDeleteTarget] = useState<Device | null>(null);
   const [testingIds, setTestingIds] = useState<Set<string>>(new Set());
   const [webhookTesting, setWebhookTesting] = useState(false);
@@ -147,6 +161,7 @@ export default function DevicesPage() {
   function openCreate() {
     setEditing(null);
     setForm(EMPTY_FORM);
+    setFieldErrors({});
     setOpen(true);
   }
 
@@ -164,7 +179,28 @@ export default function DevicesPage() {
         (device.deviceType === 'CAMERA' ? device.rtspUsername : device.akuvoxUsername) || '',
       password: '',
     });
+    setFieldErrors({});
     setOpen(true);
+  }
+
+  function patchForm(patch: Partial<typeof EMPTY_FORM>) {
+    setForm((prev) => ({ ...prev, ...patch }));
+    setFieldErrors((prev) =>
+      clearFieldError(prev, Object.keys(patch) as (keyof DeviceFormFieldErrors)[]),
+    );
+  }
+
+  function openMapDialog() {
+    setMapForm({ akuvoxDeviceId: '', cameraDeviceId: '' });
+    setMapFieldErrors({});
+    setMapOpen(true);
+  }
+
+  function patchMapForm(patch: Partial<typeof mapForm>) {
+    setMapForm((prev) => ({ ...prev, ...patch }));
+    setMapFieldErrors((prev) =>
+      clearFieldError(prev, Object.keys(patch) as ('akuvoxDeviceId' | 'cameraDeviceId')[]),
+    );
   }
 
   async function onTest(device: Device) {
@@ -236,9 +272,6 @@ export default function DevicesPage() {
   const saveMutation = useMutation({
     mutationFn: async () => {
       const isAkuvox = form.deviceType === 'AKUVOX';
-      if (isAkuvox && !form.zoneId.trim()) {
-        throw new ApiError('Akuvox cần chọn khu vực', 400);
-      }
       const duplicateZone = isAkuvox
         ? items.find(
             (d) =>
@@ -302,12 +335,28 @@ export default function DevicesPage() {
     onSuccess: () => {
       setMapOpen(false);
       setMapForm({ akuvoxDeviceId: '', cameraDeviceId: '' });
+      setMapFieldErrors({});
       void queryClient.invalidateQueries({ queryKey: queryKeys.deviceMappings() });
     },
     onError: (e) => setError(e instanceof ApiError ? e.message : 'Tạo liên kết thất bại'),
   });
 
   function onSave() {
+    const hasExistingPassword = Boolean(
+      editing &&
+        (form.deviceType === 'AKUVOX' ? editing.hasAkuvoxPassword : editing.hasRtspPassword),
+    );
+    const errors = validateDeviceForm({
+      ...form,
+      isEdit: !!editing,
+      hasExistingPassword,
+    });
+    setFieldErrors(errors);
+    if (hasFormErrors(errors)) {
+      setError('Vui lòng kiểm tra lại thông tin đã nhập');
+      return;
+    }
+    setError(null);
     saveMutation.mutate();
   }
 
@@ -342,6 +391,13 @@ export default function DevicesPage() {
   }
 
   function onCreateMapping() {
+    const errors = validateDeviceMappingForm(mapForm);
+    setMapFieldErrors(errors);
+    if (hasFormErrors(errors)) {
+      setError('Vui lòng kiểm tra lại thông tin đã nhập');
+      return;
+    }
+    setError(null);
     mappingMutation.mutate();
   }
 
@@ -374,7 +430,7 @@ export default function DevicesPage() {
             <Activity className={testingIds.size > 0 ? 'h-4 w-4 animate-pulse' : 'h-4 w-4'} />
             Kiểm tra kết nối
           </Button>
-          <Button variant="outline" size="sm" onClick={() => setMapOpen(true)}>
+          <Button variant="outline" size="sm" onClick={openMapDialog}>
             <Link2 className="h-4 w-4" />
             Liên kết
           </Button>
@@ -656,29 +712,41 @@ export default function DevicesPage() {
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="mb-1 block text-xs text-muted-foreground">Tên thiết bị</label>
+              <label className="mb-1 block text-xs text-muted-foreground">
+                Tên thiết bị
+                <RequiredMark />
+              </label>
               <Input
                 placeholder="Cổng chính"
-                className="input-design h-10"
+                className={cn('input-design h-10', fieldErrors.name && 'border-destructive')}
                 value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                onChange={(e) => patchForm({ name: e.target.value })}
+                aria-invalid={Boolean(fieldErrors.name)}
               />
+              <FieldError message={fieldErrors.name} />
             </div>
             <div>
-              <label className="mb-1 block text-xs text-muted-foreground">Mã thiết bị</label>
+              <label className="mb-1 block text-xs text-muted-foreground">
+                Mã thiết bị
+                <RequiredMark />
+              </label>
               <Input
                 placeholder="DEV001"
-                className="input-design h-10"
+                className={cn('input-design h-10', fieldErrors.code && 'border-destructive')}
                 value={form.code}
-                onChange={(e) => setForm({ ...form, code: e.target.value })}
+                onChange={(e) => patchForm({ code: e.target.value })}
+                aria-invalid={Boolean(fieldErrors.code)}
               />
+              <FieldError message={fieldErrors.code} />
             </div>
           </div>
           <div>
             <label className="mb-1 block text-xs text-muted-foreground">Loại</label>
             <Select
               value={form.deviceType}
-              onChange={(e) => setForm({ ...form, deviceType: e.target.value as 'AKUVOX' | 'CAMERA' })}
+              onChange={(e) =>
+                patchForm({ deviceType: e.target.value as 'AKUVOX' | 'CAMERA' })
+              }
               disabled={!!editing}
             >
               <option value="AKUVOX">AKUVOX</option>
@@ -687,11 +755,14 @@ export default function DevicesPage() {
           </div>
           <div>
             <label className="mb-1 block text-xs text-muted-foreground">
-              Khu vực {form.deviceType === 'AKUVOX' && <span className="text-destructive">*</span>}
+              Khu vực
+              {form.deviceType === 'AKUVOX' && <RequiredMark />}
             </label>
             <Select
               value={form.zoneId}
-              onChange={(e) => setForm({ ...form, zoneId: e.target.value })}
+              onChange={(e) => patchForm({ zoneId: e.target.value })}
+              className={cn(fieldErrors.zoneId && 'border-destructive')}
+              aria-invalid={Boolean(fieldErrors.zoneId)}
             >
               <option value="">
                 {form.deviceType === 'AKUVOX' ? '— Chọn khu vực —' : '— Không gắn khu vực —'}
@@ -702,6 +773,7 @@ export default function DevicesPage() {
                 </option>
               ))}
             </Select>
+            <FieldError message={fieldErrors.zoneId} />
             {form.deviceType === 'AKUVOX' && form.zoneId && (
               <p className="mt-1 text-xs text-muted-foreground">
                 Mỗi khu vực nên có một Akuvox — FaceID sẽ đồng bộ theo khu vực.
@@ -710,13 +782,18 @@ export default function DevicesPage() {
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="mb-1 block text-xs text-muted-foreground">Địa chỉ IP</label>
+              <label className="mb-1 block text-xs text-muted-foreground">
+                Địa chỉ IP
+                <RequiredMark />
+              </label>
               <Input
                 placeholder="192.168.1.x"
-                className="input-design h-10"
+                className={cn('input-design h-10', fieldErrors.ipAddress && 'border-destructive')}
                 value={form.ipAddress}
-                onChange={(e) => setForm({ ...form, ipAddress: e.target.value })}
+                onChange={(e) => patchForm({ ipAddress: e.target.value })}
+                aria-invalid={Boolean(fieldErrors.ipAddress)}
               />
+              <FieldError message={fieldErrors.ipAddress} />
             </div>
             <div>
               <label className="mb-1 block text-xs text-muted-foreground">Vị trí</label>
@@ -724,18 +801,26 @@ export default function DevicesPage() {
                 placeholder="Tầng 1"
                 className="input-design h-10"
                 value={form.location}
-                onChange={(e) => setForm({ ...form, location: e.target.value })}
+                onChange={(e) => patchForm({ location: e.target.value })}
               />
             </div>
           </div>
           <div>
-            <label className="mb-1 block text-xs text-muted-foreground">RTSP URL</label>
+            <label className="mb-1 block text-xs text-muted-foreground">
+              RTSP URL
+              {form.deviceType === 'CAMERA' && <RequiredMark />}
+            </label>
             <Input
               placeholder={DEFAULT_RTSP_TEMPLATE}
-              className="input-design h-10 font-mono text-xs"
+              className={cn(
+                'input-design h-10 font-mono text-xs',
+                fieldErrors.rtspUrl && 'border-destructive',
+              )}
               value={form.rtspUrl}
-              onChange={(e) => setForm({ ...form, rtspUrl: e.target.value })}
+              onChange={(e) => patchForm({ rtspUrl: e.target.value })}
+              aria-invalid={Boolean(fieldErrors.rtspUrl)}
             />
+            <FieldError message={fieldErrors.rtspUrl} />
             <p className="mt-1 text-xs text-muted-foreground">
               Mẫu có sẵn — chỉ cần sửa IP (và cổng/đường dẫn nếu khác) cho đúng thiết bị.
             </p>
@@ -747,16 +832,24 @@ export default function DevicesPage() {
                 : 'Tài khoản đăng nhập camera (RTSP)'}
             </div>
             <div>
-              <label className="mb-1 block text-xs text-muted-foreground">Tài khoản</label>
+              <label className="mb-1 block text-xs text-muted-foreground">
+                Tài khoản
+                <RequiredMark />
+              </label>
               <Input
                 placeholder="admin"
-                className="input-design h-10"
+                className={cn('input-design h-10', fieldErrors.username && 'border-destructive')}
                 value={form.username}
-                onChange={(e) => setForm({ ...form, username: e.target.value })}
+                onChange={(e) => patchForm({ username: e.target.value })}
+                aria-invalid={Boolean(fieldErrors.username)}
               />
+              <FieldError message={fieldErrors.username} />
             </div>
             <div>
-              <label className="mb-1 block text-xs text-muted-foreground">Mật khẩu</label>
+              <label className="mb-1 block text-xs text-muted-foreground">
+                Mật khẩu
+                {!editing && <RequiredMark />}
+              </label>
               <Input
                 type="password"
                 placeholder={
@@ -764,27 +857,19 @@ export default function DevicesPage() {
                     ? '••••• (giữ nguyên nếu để trống)'
                     : '••••••'
                 }
-                className="input-design h-10"
+                className={cn('input-design h-10', fieldErrors.password && 'border-destructive')}
                 value={form.password}
-                onChange={(e) => setForm({ ...form, password: e.target.value })}
+                onChange={(e) => patchForm({ password: e.target.value })}
+                aria-invalid={Boolean(fieldErrors.password)}
               />
+              <FieldError message={fieldErrors.password} />
             </div>
           </div>
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="outline" size="sm" onClick={() => setOpen(false)}>
               Hủy
             </Button>
-            <Button
-              variant="accent"
-              size="sm"
-              disabled={
-                saving ||
-                !form.name ||
-                !form.code ||
-                (form.deviceType === 'AKUVOX' && !form.zoneId)
-              }
-              onClick={() => onSave()}
-            >
+            <Button variant="accent" size="sm" disabled={saving} onClick={() => onSave()}>
               {saving ? 'Đang lưu...' : 'Lưu'}
             </Button>
           </div>
@@ -794,10 +879,15 @@ export default function DevicesPage() {
       <Dialog open={mapOpen} onClose={() => setMapOpen(false)} title="Tạo liên kết" className="max-w-md">
         <div className="space-y-3">
           <div>
-            <label className="mb-1 block text-xs text-muted-foreground">Đầu đọc Akuvox</label>
+            <label className="mb-1 block text-xs text-muted-foreground">
+              Đầu đọc Akuvox
+              <RequiredMark />
+            </label>
             <Select
               value={mapForm.akuvoxDeviceId}
-              onChange={(e) => setMapForm({ ...mapForm, akuvoxDeviceId: e.target.value })}
+              onChange={(e) => patchMapForm({ akuvoxDeviceId: e.target.value })}
+              className={cn(mapFieldErrors.akuvoxDeviceId && 'border-destructive')}
+              aria-invalid={Boolean(mapFieldErrors.akuvoxDeviceId)}
             >
               <option value="">— Chọn Akuvox —</option>
               {akuvoxDevices.map((d) => (
@@ -806,12 +896,18 @@ export default function DevicesPage() {
                 </option>
               ))}
             </Select>
+            <FieldError message={mapFieldErrors.akuvoxDeviceId} />
           </div>
           <div>
-            <label className="mb-1 block text-xs text-muted-foreground">Camera</label>
+            <label className="mb-1 block text-xs text-muted-foreground">
+              Camera
+              <RequiredMark />
+            </label>
             <Select
               value={mapForm.cameraDeviceId}
-              onChange={(e) => setMapForm({ ...mapForm, cameraDeviceId: e.target.value })}
+              onChange={(e) => patchMapForm({ cameraDeviceId: e.target.value })}
+              className={cn(mapFieldErrors.cameraDeviceId && 'border-destructive')}
+              aria-invalid={Boolean(mapFieldErrors.cameraDeviceId)}
             >
               <option value="">— Chọn Camera —</option>
               {cameras.map((d) => (
@@ -820,6 +916,7 @@ export default function DevicesPage() {
                 </option>
               ))}
             </Select>
+            <FieldError message={mapFieldErrors.cameraDeviceId} />
           </div>
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="outline" size="sm" onClick={() => setMapOpen(false)}>
@@ -828,7 +925,7 @@ export default function DevicesPage() {
             <Button
               variant="accent"
               size="sm"
-              disabled={mappingMutation.isPending || !mapForm.akuvoxDeviceId || !mapForm.cameraDeviceId}
+              disabled={mappingMutation.isPending}
               onClick={() => onCreateMapping()}
             >
               Tạo liên kết

@@ -26,6 +26,13 @@ import {
   type User,
   ApiError,
 } from '@/lib/api';
+import {
+  hasFormErrors,
+  validateUserForm,
+  type UserFormFieldErrors,
+} from '@/lib/formValidation';
+import { FieldError, RequiredMark } from '@/components/ui/field-error';
+import { cn } from '@/lib/utils';
 
 const EMPTY_FORM = {
   employeeCode: '',
@@ -133,6 +140,7 @@ export default function UsersPage() {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<User | null>(null);
   const [form, setForm] = useState(EMPTY_FORM);
+  const [fieldErrors, setFieldErrors] = useState<UserFormFieldErrors>({});
   const [deleteTarget, setDeleteTarget] = useState<User | null>(null);
 
   const departmentId = deptFilter === 'all' ? undefined : deptFilter;
@@ -193,6 +201,7 @@ export default function UsersPage() {
   function openCreate() {
     setEditing(null);
     setForm({ ...EMPTY_FORM, autoSyncFace: true });
+    setFieldErrors({});
     setNotice(null);
     setOpen(true);
   }
@@ -210,7 +219,19 @@ export default function UsersPage() {
       faceImageFile: null,
       facePreviewUrl: user.faceImageUrl || '',
     });
+    setFieldErrors({});
     setOpen(true);
+  }
+
+  function patchForm(patch: Partial<typeof EMPTY_FORM>) {
+    setForm((prev) => ({ ...prev, ...patch }));
+    setFieldErrors((prev) => {
+      const next = { ...prev };
+      for (const key of Object.keys(patch) as (keyof UserFormFieldErrors)[]) {
+        if (key in next) delete next[key];
+      }
+      return next;
+    });
   }
 
   async function onPickFace(e: React.ChangeEvent<HTMLInputElement>) {
@@ -271,10 +292,14 @@ export default function UsersPage() {
       }
       const payload = {
         fullName: form.fullName.trim(),
-        email: form.email.trim() || undefined,
-        phone: form.phone.trim() || undefined,
+        email: form.email.trim(),
+        phone: form.phone.trim(),
         departmentId: form.departmentId || undefined,
       };
+      const errors = validateUserForm(form);
+      if (hasFormErrors(errors)) {
+        throw new ApiError('Vui lòng kiểm tra lại thông tin đã nhập', 400);
+      }
       const saved = editing
         ? await updateUser(editing.id, { ...payload, employeeCode: form.employeeCode.trim() })
         : await createUser(payload);
@@ -320,6 +345,13 @@ export default function UsersPage() {
   const deleting = deleteMutation.isPending;
 
   function onSave() {
+    const errors = validateUserForm(form);
+    setFieldErrors(errors);
+    if (hasFormErrors(errors)) {
+      setError('Vui lòng kiểm tra lại thông tin đã nhập');
+      return;
+    }
+    setError(null);
     saveMutation.mutate();
   }
 
@@ -571,39 +603,60 @@ export default function UsersPage() {
             </div>
           )}
           <div>
-            <label className="mb-1 block text-xs text-muted-foreground">Họ tên</label>
+            <label className="mb-1 block text-xs text-muted-foreground">
+              Họ tên
+              <RequiredMark />
+            </label>
             <Input
               placeholder="Nguyễn Văn A"
-              className="input-design h-10"
+              className={cn('input-design h-10', fieldErrors.fullName && 'border-destructive')}
               value={form.fullName}
-              onChange={(e) => setForm({ ...form, fullName: e.target.value })}
+              onChange={(e) => patchForm({ fullName: e.target.value })}
+              aria-invalid={Boolean(fieldErrors.fullName)}
             />
+            <FieldError message={fieldErrors.fullName} />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="mb-1 block text-xs text-muted-foreground">Email</label>
+              <label className="mb-1 block text-xs text-muted-foreground">
+                Email
+                <RequiredMark />
+              </label>
               <Input
+                type="email"
+                inputMode="email"
+                autoComplete="email"
                 placeholder="email@example.com"
-                className="input-design h-10"
+                className={cn('input-design h-10', fieldErrors.email && 'border-destructive')}
                 value={form.email}
-                onChange={(e) => setForm({ ...form, email: e.target.value })}
+                onChange={(e) => patchForm({ email: e.target.value })}
+                aria-invalid={Boolean(fieldErrors.email)}
               />
+              <FieldError message={fieldErrors.email} />
             </div>
             <div>
-              <label className="mb-1 block text-xs text-muted-foreground">Số điện thoại</label>
+              <label className="mb-1 block text-xs text-muted-foreground">
+                Số điện thoại
+                <RequiredMark />
+              </label>
               <Input
-                placeholder="09xxxxxxxx"
-                className="input-design h-10"
+                type="tel"
+                inputMode="tel"
+                autoComplete="tel"
+                placeholder="0912345678"
+                className={cn('input-design h-10', fieldErrors.phone && 'border-destructive')}
                 value={form.phone}
-                onChange={(e) => setForm({ ...form, phone: e.target.value })}
+                onChange={(e) => patchForm({ phone: e.target.value })}
+                aria-invalid={Boolean(fieldErrors.phone)}
               />
+              <FieldError message={fieldErrors.phone} />
             </div>
           </div>
           <div>
             <label className="mb-1 block text-xs text-muted-foreground">Phòng ban</label>
             <Select
               value={form.departmentId}
-              onChange={(e) => setForm({ ...form, departmentId: e.target.value })}
+              onChange={(e) => patchForm({ departmentId: e.target.value })}
             >
               <option value="">— Chọn phòng ban —</option>
               {departments.map((d) => (
@@ -661,7 +714,7 @@ export default function UsersPage() {
             <Button
               variant="accent"
               size="sm"
-              disabled={saving || !form.fullName}
+              disabled={saving}
               onClick={() => onSave()}
             >
               {saving ? 'Đang lưu...' : 'Lưu'}

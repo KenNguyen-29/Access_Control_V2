@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { HardDrive, Check, X, Pencil, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { FieldError } from '@/components/ui/field-error';
 import { PageShell, DesignCard } from '@/components/design/PageShell';
 import { QueryBoundary } from '@/components/ui/query-states';
 import { SETTING_KEYS } from '@/lib/settingsCatalog';
@@ -15,6 +16,8 @@ import {
   upsertSystemSetting,
   type SystemSetting,
 } from '@/lib/api';
+import { validateRetentionDays } from '@/lib/formValidation';
+import { cn } from '@/lib/utils';
 
 const STORAGE_KEYS = [SETTING_KEYS.LOG_RETENTION_DAYS, SETTING_KEYS.STORAGE_RETENTION_DAYS] as const;
 
@@ -28,6 +31,7 @@ export default function StorageSettingsPage() {
   const [error, setError] = useState<string | null>(null);
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
+  const [fieldError, setFieldError] = useState<string | undefined>();
   const [notice, setNotice] = useState<string | null>(null);
 
   const settingsQuery = useQuery({
@@ -64,6 +68,7 @@ export default function StorageSettingsPage() {
   function startEdit(s: SystemSetting) {
     setEditingKey(s.key);
     setEditValue(s.value);
+    setFieldError(undefined);
   }
 
   const saveMutation = useMutation({
@@ -78,6 +83,12 @@ export default function StorageSettingsPage() {
   const saving = saveMutation.isPending;
 
   function saveEdit(key: string) {
+    const err = validateRetentionDays(editValue);
+    setFieldError(err);
+    if (err) {
+      setError('Vui lòng kiểm tra lại thông tin đã nhập');
+      return;
+    }
     setError(null);
     setNotice(null);
     saveMutation.mutate(key);
@@ -114,30 +125,43 @@ export default function StorageSettingsPage() {
               actions={<HardDrive className="h-5 w-5 text-muted-foreground" />}
             >
               {editingKey === s.key ? (
-                <div className="flex items-center gap-2">
-                  <Input
-                    className="h-9 max-w-[120px]"
-                    type="number"
-                    min={1}
-                    value={editValue}
-                    onChange={(e) => setEditValue(e.target.value)}
-                  />
-                  <Button
-                    size="icon"
-                    disabled={saving}
-                    onClick={() => saveEdit(s.key)}
-                    title="Lưu"
-                  >
-                    <Check className="h-4 w-4" />
-                  </Button>
-                  <Button
-                    size="icon"
-                    variant="outline"
-                    onClick={() => setEditingKey(null)}
-                    title="Hủy"
-                  >
-                    <X className="h-4 w-4" />
-                  </Button>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      className={cn(
+                        'h-9 max-w-[120px]',
+                        fieldError && 'border-destructive',
+                      )}
+                      type="number"
+                      min={1}
+                      value={editValue}
+                      onChange={(e) => {
+                        setEditValue(e.target.value);
+                        setFieldError(undefined);
+                      }}
+                      aria-invalid={Boolean(fieldError)}
+                    />
+                    <Button
+                      size="icon"
+                      disabled={saving}
+                      onClick={() => saveEdit(s.key)}
+                      title="Lưu"
+                    >
+                      <Check className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      size="icon"
+                      variant="outline"
+                      onClick={() => {
+                        setEditingKey(null);
+                        setFieldError(undefined);
+                      }}
+                      title="Hủy"
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                  <FieldError message={fieldError} />
                 </div>
               ) : (
                 <div className="flex items-center justify-between gap-3">

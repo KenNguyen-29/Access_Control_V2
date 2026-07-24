@@ -3,9 +3,17 @@
 import { useEffect, useRef, useState } from 'react';
 import { Monitor, Maximize2, Loader2, VideoOff, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { exchangeDeviceWebRtc } from '@/lib/api';
+import { ApiError, exchangeDeviceWebRtc } from '@/lib/api';
 
-type StreamState = 'connecting' | 'live' | 'offline';
+type PlaybackState = 'connecting' | 'live' | 'offline';
+type LinkState = 'unknown' | 'up' | 'down';
+
+type StreamDiag = {
+  network: LinkState;
+  rtsp: LinkState;
+  playback: PlaybackState;
+  reason: string | null;
+};
 
 const ICE_SERVERS: RTCIceServer[] = [{ urls: 'stun:stun.l.google.com:19302' }];
 
@@ -15,6 +23,7 @@ export type CameraItem = {
   name: string;
   location?: string;
   ip?: string;
+  /** Network reachability from device check (ping/TCP). */
   online?: boolean;
 };
 
@@ -32,13 +41,22 @@ function connectDelayMs(id: string): number {
  */
 function useCameraStream(cam: CameraItem, enabled = true) {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const [state, setState] = useState<StreamState>('connecting');
+  const [diag, setDiag] = useState<StreamDiag>({
+    network: cam.online === false ? 'down' : cam.online ? 'up' : 'unknown',
+    rtsp: 'unknown',
+    playback: 'connecting',
+    reason: null,
+  });
 
   useEffect(() => {
     if (!enabled) return;
-    // No backing device (e.g. demo camera) → nothing to stream.
     if (!cam.id) {
-      setState('offline');
+      setDiag({
+        network: 'unknown',
+        rtsp: 'down',
+        playback: 'offline',
+        reason: 'Chưa gắn thiết bị camera',
+      });
       return;
     }
 
@@ -46,10 +64,26 @@ function useCameraStream(cam: CameraItem, enabled = true) {
     let pc: RTCPeerConnection | null = null;
     let startTimer: ReturnType<typeof setTimeout> | null = null;
     const deviceId = cam.id;
-    setState('connecting');
+    const network: LinkState = cam.online === false ? 'down' : cam.online ? 'up' : 'unknown';
+    setDiag({
+      network,
+      rtsp: 'unknown',
+      playback: 'connecting',
+      reason: network === 'down' ? 'Mạng thiết bị không phản hồi (ping/TCP)' : null,
+    });
 
     const connect = async () => {
       if (cancelled) return;
+      if (network === 'down') {
+        setDiag({
+          network: 'down',
+          rtsp: 'down',
+          playback: 'offline',
+          reason: 'Mạng thiết bị không phản hồi — kiểm tra IP/cáp trước khi mở luồng',
+        });
+        return;
+      }
+
       const connection = new RTCPeerConnection({ iceServers: ICE_SERVERS });
       pc = connection;
 
@@ -62,14 +96,35 @@ function useCameraStream(cam: CameraItem, enabled = true) {
         if (!video || !stream || cancelled) return;
         video.srcObject = stream;
         void video.play().catch(() => undefined);
-        setState('live');
+        setDiag({
+          network: network === 'unknown' ? 'up' : network,
+          rtsp: 'up',
+          playback: 'live',
+          reason: null,
+        });
       };
 
       connection.onconnectionstatechange = () => {
         if (cancelled) return;
         const s = connection.connectionState;
-        if (s === 'connected') setState('live');
-        else if (s === 'failed' || s === 'disconnected' || s === 'closed') setState('offline');
+        if (s === 'connected') {
+          setDiag((prev) => ({
+            ...prev,
+            network: prev.network === 'unknown' ? 'up' : prev.network,
+            rtsp: 'up',
+            playback: 'live',
+            reason: null,
+          }));
+        } else if (s === 'failed' || s === 'disconnected' || s === 'closed') {
+          setDiag((prev) => ({
+            ...prev,
+            playback: 'offline',
+            reason:
+              s === 'failed'
+                ? 'WebRTC playback thất bại (ICE/DTLS)'
+                : 'Phiên phát bị ngắt kết nối',
+          }));
+        }
       };
 
       try {
@@ -80,9 +135,27 @@ function useCameraStream(cam: CameraItem, enabled = true) {
         const answer = await exchangeDeviceWebRtc(deviceId, { type: 'offer', sdp: offer.sdp });
         if (cancelled) return;
 
+        setDiag((prev) => ({
+          ...prev,
+          rtsp: 'up',
+          reason: prev.playback === 'live' ? null : 'Đã nhận SDP từ go2rtc — chờ track video',
+        }));
+
         await connection.setRemoteDescription({ type: answer.type as RTCSdpType, sdp: answer.sdp });
-      } catch {
-        if (!cancelled) setState('offline');
+      } catch (err) {
+        if (cancelled) return;
+        const msg =
+          err instanceof ApiError
+            ? err.message
+            : err instanceof Error
+              ? err.message
+              : 'Không trao đổi được SDP với go2rtc/RTSP';
+        setDiag({
+          network,
+          rtsp: 'down',
+          playback: 'offline',
+          reason: `RTSP/go2rtc: ${msg}`,
+        });
       }
     };
 
@@ -93,16 +166,16 @@ function useCameraStream(cam: CameraItem, enabled = true) {
       if (startTimer) clearTimeout(startTimer);
       pc?.close();
     };
-  }, [cam.id, cam.code, enabled]);
+  }, [cam.id, cam.code, cam.online, enabled]);
 
-  return { videoRef, state };
+  return { videoRef, diag, state: diag.playback };
 }
 
-const STATE_LABEL: Record<StreamState, string> = {
-  connecting: 'Đang kết nối',
-  live: 'LIVE',
-  offline: 'Mất tín hiệu',
-};
+function linkLabel(s: LinkState) {
+  if (s === 'up') return 'OK';
+  if (s === 'down') return 'Lỗi';
+  return '…';
+}
 
 export const DEMO_CAMERAS: CameraItem[] = [
   { code: 'CAM-MAIN', name: 'Camera Cổng Chính', location: 'Cổng chính', ip: '192.168.1.10', online: true },
@@ -173,7 +246,7 @@ function Corner({ className }: { className?: string }) {
   return <span className={cn('absolute h-3 w-3 border-white/10', className)} />;
 }
 
-function StatusDot({ state }: { state: StreamState }) {
+function StatusDot({ state }: { state: PlaybackState }) {
   return (
     <span
       className={cn(
@@ -188,11 +261,11 @@ function StatusDot({ state }: { state: StreamState }) {
   );
 }
 
-function StreamOverlay({ state }: { state: StreamState }) {
-  if (state === 'live') return null;
+function StreamOverlay({ diag }: { diag: StreamDiag }) {
+  if (diag.playback === 'live') return null;
   return (
-    <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-[#0a0c10] text-slate-500">
-      {state === 'connecting' ? (
+    <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-[#0a0c10] px-3 text-center text-slate-500">
+      {diag.playback === 'connecting' ? (
         <>
           <Loader2 className="h-6 w-6 animate-spin text-primary/70" />
           <span className="text-[10px] font-bold uppercase tracking-[0.2em]">Đang kết nối</span>
@@ -201,8 +274,27 @@ function StreamOverlay({ state }: { state: StreamState }) {
         <>
           <VideoOff className="h-6 w-6 opacity-40" />
           <span className="text-[10px] font-bold uppercase tracking-[0.2em]">Mất tín hiệu</span>
+          {diag.reason && (
+            <span className="max-w-[90%] text-[10px] leading-snug text-slate-400">{diag.reason}</span>
+          )}
         </>
       )}
+    </div>
+  );
+}
+
+function DiagBadges({ diag }: { diag: StreamDiag }) {
+  return (
+    <div className="pointer-events-none absolute bottom-2 left-2 flex flex-wrap gap-1">
+      <span className="rounded-sm border border-white/10 bg-black/50 px-1.5 py-0.5 font-mono text-[9px] text-white/80">
+        Net {linkLabel(diag.network)}
+      </span>
+      <span className="rounded-sm border border-white/10 bg-black/50 px-1.5 py-0.5 font-mono text-[9px] text-white/80">
+        RTSP {linkLabel(diag.rtsp)}
+      </span>
+      <span className="rounded-sm border border-white/10 bg-black/50 px-1.5 py-0.5 font-mono text-[9px] text-white/80">
+        Play {diag.playback === 'live' ? 'OK' : diag.playback === 'connecting' ? '…' : 'Lỗi'}
+      </span>
     </div>
   );
 }
@@ -218,7 +310,7 @@ function CameraSlot({
   onClick?: () => void;
   onExpand?: () => void;
 }) {
-  const { videoRef, state } = useCameraStream(cam);
+  const { videoRef, diag, state } = useCameraStream(cam);
 
   return (
     <div
@@ -246,7 +338,7 @@ function CameraSlot({
         className={cn('h-full w-full object-cover', state === 'live' ? 'opacity-100' : 'opacity-0')}
       />
 
-      <StreamOverlay state={state} />
+      <StreamOverlay diag={diag} />
 
       {/* Top overlay: status + name */}
       <div className="pointer-events-none absolute left-2 top-2 flex items-center gap-1.5 rounded-sm border border-white/10 bg-black/40 px-2.5 py-1 backdrop-blur-md">
@@ -272,6 +364,8 @@ function CameraSlot({
         </button>
       )}
 
+      <DiagBadges diag={diag} />
+
       {/* Hover overlay: IP */}
       {cam.ip && (
         <div className="pointer-events-none absolute bottom-2 right-2 flex items-center gap-2 rounded-sm border border-white/10 bg-black/40 px-2 py-1 opacity-0 backdrop-blur-md transition-opacity group-hover:opacity-100">
@@ -289,7 +383,7 @@ function CameraSlot({
 
 /** Full single-camera detail view (modal overlay) for close inspection / testing. */
 export function CameraDetailModal({ cam, onClose }: { cam: CameraItem; onClose: () => void }) {
-  const { videoRef, state } = useCameraStream(cam);
+  const { videoRef, diag, state } = useCameraStream(cam);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -298,6 +392,9 @@ export function CameraDetailModal({ cam, onClose }: { cam: CameraItem; onClose: 
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
+
+  const playbackLabel =
+    state === 'live' ? 'LIVE' : state === 'connecting' ? 'Đang kết nối' : 'Mất tín hiệu';
 
   return (
     <div
@@ -310,21 +407,27 @@ export function CameraDetailModal({ cam, onClose }: { cam: CameraItem; onClose: 
       >
         {/* Header */}
         <div className="flex items-center justify-between border-b border-slate-800 px-4 py-2.5">
-          <div className="flex items-center gap-2.5">
-            <StatusDot state={state} />
-            <span className="text-sm font-semibold text-white">{cam.name}</span>
-            <span
-              className={cn(
-                'rounded-sm px-1.5 py-0.5 text-[10px] font-bold uppercase',
-                state === 'live'
-                  ? 'bg-red-500/20 text-red-300'
-                  : state === 'connecting'
-                    ? 'bg-amber-500/20 text-amber-300'
-                    : 'bg-slate-700/40 text-slate-400',
-              )}
-            >
-              {STATE_LABEL[state]}
-            </span>
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center gap-2.5">
+              <StatusDot state={state} />
+              <span className="text-sm font-semibold text-white">{cam.name}</span>
+              <span
+                className={cn(
+                  'rounded-sm px-1.5 py-0.5 text-[10px] font-bold uppercase',
+                  state === 'live'
+                    ? 'bg-red-500/20 text-red-300'
+                    : state === 'connecting'
+                      ? 'bg-amber-500/20 text-amber-300'
+                      : 'bg-slate-700/40 text-slate-400',
+                )}
+              >
+                {playbackLabel}
+              </span>
+            </div>
+            <p className="font-mono text-[11px] text-slate-400">
+              Net {linkLabel(diag.network)} · RTSP {linkLabel(diag.rtsp)} · Play {playbackLabel}
+              {diag.reason ? ` · ${diag.reason}` : ''}
+            </p>
           </div>
           <button
             type="button"
@@ -345,7 +448,7 @@ export function CameraDetailModal({ cam, onClose }: { cam: CameraItem; onClose: 
             muted
             className={cn('h-full w-full object-contain', state === 'live' ? 'opacity-100' : 'opacity-0')}
           />
-          <StreamOverlay state={state} />
+          <StreamOverlay diag={diag} />
         </div>
 
         {/* Meta footer */}
@@ -353,7 +456,7 @@ export function CameraDetailModal({ cam, onClose }: { cam: CameraItem; onClose: 
           <Meta label="Mã" value={cam.code} mono />
           <Meta label="IP" value={cam.ip || '—'} mono />
           <Meta label="Vị trí" value={cam.location || '—'} />
-          <Meta label="Trạng thái" value={STATE_LABEL[state]} />
+          <Meta label="Playback" value={playbackLabel} />
         </div>
       </div>
     </div>

@@ -5,8 +5,16 @@ import { X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
+import { FieldError, RequiredMark } from '@/components/ui/field-error';
 import { DualListTransfer, UserDualListTransfer } from '@/components/access-control/DualListTransfer';
 import type { AccessGroup, AccessPerson, AccessPoint } from '@/lib/accessControl';
+import {
+  clearFieldError,
+  hasFormErrors,
+  validateAccessGroupForm,
+  type FieldErrors,
+} from '@/lib/formValidation';
+import { cn } from '@/lib/utils';
 
 interface AddAccessGroupPanelProps {
   open: boolean;
@@ -28,6 +36,8 @@ function itemToPerson(item: { id: string; label: string; subLabel?: string }): A
   };
 }
 
+type AccessGroupFieldErrors = FieldErrors<'name' | 'scheduleTemplate'>;
+
 export function AddAccessGroupPanel({
   open,
   onClose,
@@ -45,6 +55,7 @@ export function AddAccessGroupPanel({
   const [selectedPoints, setSelectedPoints] = useState<
     { id: string; label: string; subLabel?: string }[]
   >([]);
+  const [fieldErrors, setFieldErrors] = useState<AccessGroupFieldErrors>({});
 
   useEffect(() => {
     if (open && editGroup) {
@@ -64,11 +75,13 @@ export function AddAccessGroupPanel({
           subLabel: p.groupName,
         })),
       );
+      setFieldErrors({});
     } else if (open) {
       setName('');
       setScheduleTemplate(scheduleTemplates[0] ?? '');
       setSelectedPersons([]);
       setSelectedPoints([]);
+      setFieldErrors({});
     }
   }, [open, editGroup, scheduleTemplates]);
 
@@ -81,7 +94,9 @@ export function AddAccessGroupPanel({
   }));
 
   const handleSave = async () => {
-    if (!name.trim()) return;
+    const errors = validateAccessGroupForm({ name, scheduleTemplate });
+    setFieldErrors(errors);
+    if (hasFormErrors(errors)) return;
     await onSave({
       name: name.trim(),
       scheduleTemplate,
@@ -111,18 +126,33 @@ export function AddAccessGroupPanel({
       <div className="flex-1 space-y-5 overflow-y-auto bg-white p-4">
         <div className="space-y-1.5">
           <label className="text-sm font-medium">
-            Tên khu vực <span className="text-destructive">*</span>
+            Tên khu vực
+            <RequiredMark />
           </label>
-          <Input value={name} onChange={(e) => setName(e.target.value)} className="bg-white" />
+          <Input
+            value={name}
+            onChange={(e) => {
+              setName(e.target.value);
+              setFieldErrors((prev) => clearFieldError(prev, 'name'));
+            }}
+            className={cn('bg-white', fieldErrors.name && 'border-destructive')}
+            aria-invalid={Boolean(fieldErrors.name)}
+          />
+          <FieldError message={fieldErrors.name} />
         </div>
         <div className="space-y-1.5">
           <label className="text-sm font-medium">
-            Lịch làm việc <span className="text-destructive">*</span>
+            Lịch làm việc
+            <RequiredMark />
           </label>
           <Select
             value={scheduleTemplate}
-            onChange={(e) => setScheduleTemplate(e.target.value)}
-            className="bg-white"
+            onChange={(e) => {
+              setScheduleTemplate(e.target.value);
+              setFieldErrors((prev) => clearFieldError(prev, 'scheduleTemplate'));
+            }}
+            className={cn('bg-white', fieldErrors.scheduleTemplate && 'border-destructive')}
+            aria-invalid={Boolean(fieldErrors.scheduleTemplate)}
           >
             {scheduleTemplates.map((s) => (
               <option key={s} value={s}>
@@ -130,6 +160,7 @@ export function AddAccessGroupPanel({
               </option>
             ))}
           </Select>
+          <FieldError message={fieldErrors.scheduleTemplate} />
         </div>
 
         <UserDualListTransfer
@@ -155,7 +186,7 @@ export function AddAccessGroupPanel({
           type="button"
           variant="accent"
           onClick={() => void handleSave()}
-          disabled={!name.trim() || saving}
+          disabled={saving}
         >
           Lưu
         </Button>

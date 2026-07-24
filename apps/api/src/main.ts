@@ -2,7 +2,7 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
-import { json, urlencoded, Request } from 'express';
+import { json, urlencoded, NextFunction, Request, Response } from 'express';
 import { AppModule } from './app.module';
 import { AllExceptionsFilter } from './common/filters/http-exception.filter';
 import { akuvoxDoorLogMiddleware } from './common/middleware/akuvox-door-log.middleware';
@@ -33,6 +33,29 @@ async function bootstrap() {
   app.enableCors({
     origin: corsOrigin,
     credentials: true,
+  });
+
+  // Security headers (API)
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader(
+      'Permissions-Policy',
+      'camera=(), microphone=(), geolocation=()',
+    );
+    res.removeHeader('X-Powered-By');
+    if (configService.get<string>('ENABLE_HSTS') === 'true') {
+      res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    }
+    // CSP report-only for API JSON responses is low-value; set a restrictive baseline for docs UI
+    if ((req.url || '').includes('/docs')) {
+      res.setHeader(
+        'Content-Security-Policy-Report-Only',
+        "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'",
+      );
+    }
+    next();
   });
 
   app.useGlobalPipes(

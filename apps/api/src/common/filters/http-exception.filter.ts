@@ -8,6 +8,32 @@ import {
 } from '@nestjs/common';
 import { Request, Response } from 'express';
 
+const VALIDATION_VI: Array<[RegExp, string]> = [
+  [/must be an email/i, 'Email không hợp lệ'],
+  [/should not be empty/i, 'Không được để trống'],
+  [/must be a string/i, 'Giá trị phải là chuỗi'],
+  [/must be a number/i, 'Giá trị phải là số'],
+  [/must be a boolean/i, 'Giá trị phải là đúng/sai'],
+  [/must be an integer/i, 'Giá trị phải là số nguyên'],
+  [/must be a valid enum/i, 'Giá trị không hợp lệ'],
+  [/must be a UUID/i, 'Định danh không hợp lệ'],
+  [/must be a Date/i, 'Ngày không hợp lệ'],
+  [/must match/i, 'Định dạng không hợp lệ'],
+  [/must be longer than or equal to/i, 'Giá trị quá ngắn'],
+  [/must be shorter than or equal to/i, 'Giá trị quá dài'],
+  [/must not be less than/i, 'Giá trị quá nhỏ'],
+  [/must not be greater than/i, 'Giá trị quá lớn'],
+  [/property .* should not exist/i, 'Trường không được phép'],
+  [/Invalid credentials/i, 'Tên đăng nhập hoặc mật khẩu không đúng'],
+];
+
+function toVietnameseMessage(raw: string): string {
+  for (const [re, vi] of VALIDATION_VI) {
+    if (re.test(raw)) return vi;
+  }
+  return raw;
+}
+
 /** Shapes all errors as { success: false, message } so the client can display them. */
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
@@ -25,14 +51,17 @@ export class AllExceptionsFilter implements ExceptionFilter {
       status = exception.getStatus();
       const res = exception.getResponse();
       if (typeof res === 'string') {
-        message = res;
+        message = toVietnameseMessage(res);
       } else if (res && typeof res === 'object') {
         const m = (res as { message?: string | string[] }).message;
-        if (Array.isArray(m)) message = m[0] ?? message;
-        else if (typeof m === 'string') message = m;
+        if (Array.isArray(m)) {
+          message = toVietnameseMessage(m[0] ?? message);
+        } else if (typeof m === 'string') {
+          message = toVietnameseMessage(m);
+        }
       }
     } else if (exception instanceof Error) {
-      message = exception.message || message;
+      message = toVietnameseMessage(exception.message || message);
     }
 
     if (status >= HttpStatus.INTERNAL_SERVER_ERROR) {

@@ -1,33 +1,53 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
-import { IsOptional, IsString } from 'class-validator';
+import { Transform } from 'class-transformer';
+import { IsNotEmpty, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 import { successResponse } from '../../common/utils/response.util';
 import { AccessZonesService } from './access-zones.service';
 
+function emptyToUndefined({ value }: { value: unknown }) {
+  if (typeof value !== 'string') return value;
+  const trimmed = value.trim();
+  return trimmed === '' ? undefined : trimmed;
+}
+
 class CreateAccessZoneDto {
+  @Transform(emptyToUndefined)
   @IsString()
+  @IsNotEmpty({ message: 'Vui lòng nhập tên khu vực' })
+  @MinLength(2)
+  @MaxLength(100)
   name!: string;
 
+  @Transform(emptyToUndefined)
   @IsOptional()
   @IsString()
   parentZoneId?: string;
 
+  @Transform(emptyToUndefined)
   @IsOptional()
   @IsString()
+  @MaxLength(500)
   description?: string;
 }
 
 class UpdateAccessZoneDto {
+  @Transform(emptyToUndefined)
   @IsOptional()
   @IsString()
+  @MinLength(2)
+  @MaxLength(100)
   name?: string;
 
+  @Transform(emptyToUndefined)
   @IsOptional()
   @IsString()
   parentZoneId?: string;
 
+  @Transform(emptyToUndefined)
   @IsOptional()
   @IsString()
+  @MaxLength(500)
   description?: string;
 }
 

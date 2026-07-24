@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { AttendanceCalculationService } from '../attendance/attendance-calculation.service';
 
 export interface StatsOverview {
   users: number;
@@ -33,6 +34,9 @@ export interface TimesheetRow {
   daysWorked: number;
   workedMinutes: number;
   lateCount: number;
+  /** Số ngày đi sớm (check-in trước giờ ca). */
+  earlyArrivalCount: number;
+  /** Số ngày về sớm. */
   earlyCount: number;
   otMinutes: number;
 }
@@ -85,52 +89,12 @@ function parseDateOnly(value: string, fallback: Date): Date {
   return new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
 }
 
-/** Worked minutes; if still checked in, counts up to now (live partial hours). */
-function computeWorkedMinutes(
-  workDate: Date,
-  checkInAt: Date | null,
-  checkOutAt: Date | null,
-  breakMinutes: number,
-  asOf: Date = new Date(),
-): number {
-  if (!checkInAt) return 0;
-
-  if (!checkOutAt) {
-    const workDateKey = formatDateOnly(workDate);
-    const todayKey = [
-      asOf.getFullYear(),
-      String(asOf.getMonth() + 1).padStart(2, '0'),
-      String(asOf.getDate()).padStart(2, '0'),
-    ].join('-');
-    if (workDateKey !== todayKey) return 0;
-
-    const liveRaw = (asOf.getTime() - checkInAt.getTime()) / 60000;
-    return liveRaw > 0 ? Math.round(liveRaw) : 0;
-  }
-
-  const raw = (checkOutAt.getTime() - checkInAt.getTime()) / 60000 - breakMinutes;
-  return raw > 0 ? Math.round(raw) : 0;
-}
-
-function timeToMinutes(hhmm: string): number {
-  const [h, m] = hhmm.split(':').map(Number);
-  return (h || 0) * 60 + (m || 0);
-}
-
-/** Minutes checked in before shift start (0 if late or no shift/check-in). */
-function computeEarlyArrivalMinutes(
-  checkInAt: Date | null,
-  shiftStartTime: string | null | undefined,
-): number {
-  if (!checkInAt || !shiftStartTime) return 0;
-  const startMin = timeToMinutes(shiftStartTime);
-  const eventMin = checkInAt.getHours() * 60 + checkInAt.getMinutes();
-  return Math.max(0, startMin - eventMin);
-}
-
 @Injectable()
 export class StatsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly calc: AttendanceCalculationService,
+  ) {}
 
   async overview(): Promise<StatsOverview> {
     const startOfDay = new Date();
@@ -219,19 +183,25 @@ export class StatsService {
     const byUser = new Map<string, TimesheetRow>();
 
     for (const r of records) {
-      const worked = computeWorkedMinutes(
-        r.date,
+      const metrics = this.calc.computeMetricsFromTimes(
+        r.workShift,
         r.checkInAt,
         r.checkOutAt,
-        r.workShift?.breakMinutes ?? 0,
+        r.date,
         asOf,
       );
+      // Prefer recomputed early/late/ot from shared calc; fall back to stored if no shift.
+      const lateMinutes = r.workShift ? metrics.lateMinutes : r.lateMinutes;
+      const earlyLeaveMinutes = r.workShift ? metrics.earlyLeaveMinutes : r.earlyLeaveMinutes;
+      const otMinutes = r.workShift ? metrics.otMinutes : r.otMinutes;
+      const worked = metrics.workedMinutes;
+      const status = r.workShift ? metrics.status : r.status;
 
-      if (r.status !== 'ABSENT') summary.presentCount += 1;
-      if (r.status === 'ABSENT') summary.absentCount += 1;
-      if (r.lateMinutes > 0 || r.status === 'LATE') summary.lateCount += 1;
-      if (r.earlyLeaveMinutes > 0 || r.status === 'EARLY_LEAVE') summary.earlyLeaveCount += 1;
-      summary.otMinutes += r.otMinutes;
+      if (status !== 'ABSENT') summary.presentCount += 1;
+      if (status === 'ABSENT') summary.absentCount += 1;
+      if (lateMinutes > 0 || status === 'LATE') summary.lateCount += 1;
+      if (earlyLeaveMinutes > 0 || status === 'EARLY_LEAVE') summary.earlyLeaveCount += 1;
+      summary.otMinutes += otMinutes;
       summary.workedMinutes += worked;
 
       let row = byUser.get(r.userId);
@@ -244,16 +214,20 @@ export class StatsService {
           daysWorked: 0,
           workedMinutes: 0,
           lateCount: 0,
+          earlyArrivalCount: 0,
           earlyCount: 0,
           otMinutes: 0,
         };
         byUser.set(r.userId, row);
       }
-      if (r.status !== 'ABSENT') row.daysWorked += 1;
+      if (status !== 'ABSENT') row.daysWorked += 1;
       row.workedMinutes += worked;
-      if (r.lateMinutes > 0 || r.status === 'LATE') row.lateCount += 1;
-      if (r.earlyLeaveMinutes > 0 || r.status === 'EARLY_LEAVE') row.earlyCount += 1;
-      row.otMinutes += r.otMinutes;
+      if (lateMinutes > 0 || status === 'LATE') row.lateCount += 1;
+      if (metrics.earlyArrivalMinutes > 0) {
+        row.earlyArrivalCount += 1;
+      }
+      if (earlyLeaveMinutes > 0 || status === 'EARLY_LEAVE') row.earlyCount += 1;
+      row.otMinutes += otMinutes;
     }
 
     summary.staffCount = byUser.size;
@@ -303,31 +277,34 @@ export class StatsService {
       orderBy: [{ userId: 'asc' }, { date: 'asc' }],
     });
 
-    const rows: WeeklyRow[] = records.map((r) => ({
-      userId: r.userId,
-      fullName: r.user?.fullName ?? r.userId,
-      employeeCode: r.user?.employeeCode ?? '',
-      departmentName: r.user?.department?.name ?? null,
-      date: formatDateOnly(r.date),
-      weekday: r.date.getUTCDay(),
-      shiftName: r.workShift?.name ?? null,
-      shiftCode: r.workShift?.code ?? null,
-      checkInAt: r.checkInAt,
-      checkOutAt: r.checkOutAt,
-      lateMinutes: r.lateMinutes,
-      earlyArrivalMinutes: computeEarlyArrivalMinutes(r.checkInAt, r.workShift?.startTime),
-      earlyLeaveMinutes: r.earlyLeaveMinutes,
-      otMinutes: r.otMinutes,
-      workedMinutes: computeWorkedMinutes(
-        r.date,
+    const rows: WeeklyRow[] = records.map((r) => {
+      const metrics = this.calc.computeMetricsFromTimes(
+        r.workShift,
         r.checkInAt,
         r.checkOutAt,
-        r.workShift?.breakMinutes ?? 0,
+        r.date,
         asOf,
-      ),
-      salaryCoefficient: r.workShift?.salaryCoefficient ?? 1,
-      status: r.status,
-    }));
+      );
+      return {
+        userId: r.userId,
+        fullName: r.user?.fullName ?? r.userId,
+        employeeCode: r.user?.employeeCode ?? '',
+        departmentName: r.user?.department?.name ?? null,
+        date: formatDateOnly(r.date),
+        weekday: r.date.getUTCDay(),
+        shiftName: r.workShift?.name ?? null,
+        shiftCode: r.workShift?.code ?? null,
+        checkInAt: r.checkInAt,
+        checkOutAt: r.checkOutAt,
+        lateMinutes: r.workShift ? metrics.lateMinutes : r.lateMinutes,
+        earlyArrivalMinutes: metrics.earlyArrivalMinutes,
+        earlyLeaveMinutes: r.workShift ? metrics.earlyLeaveMinutes : r.earlyLeaveMinutes,
+        otMinutes: r.workShift ? metrics.otMinutes : r.otMinutes,
+        workedMinutes: metrics.workedMinutes,
+        salaryCoefficient: r.workShift?.salaryCoefficient ?? 1,
+        status: r.workShift ? metrics.status : r.status,
+      };
+    });
 
     rows.sort((a, b) => {
       const byName = a.fullName.localeCompare(b.fullName, 'vi');

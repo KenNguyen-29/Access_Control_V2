@@ -4,6 +4,7 @@ import { AccessAction, AttendanceRecord, AttendanceStatus, WorkShift } from '@pr
 import * as ExcelJS from 'exceljs';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginationDto } from '../../common/dto/pagination.dto';
+import { AttendanceCalculationService } from './attendance-calculation.service';
 import {
   ATTENDANCE_HEADER_ALIASES,
   cellToNumber,
@@ -45,6 +46,7 @@ export class AttendanceService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    private readonly calc: AttendanceCalculationService,
   ) {
     this.punchCooldownMinutes = Number(this.config.get<string>('PUNCH_COOLDOWN_MINUTES', '5'));
   }
@@ -53,21 +55,12 @@ export class AttendanceService {
     return this.punchCooldownMinutes * 60 * 1000;
   }
 
-  private workDateOnly(d: Date): Date {
+  private utcDateOnly(d: Date): Date {
     return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
   }
 
-  private timeToMinutes(hhmm: string): number {
-    const [h, m] = hhmm.split(':').map(Number);
-    return (h || 0) * 60 + (m || 0);
-  }
-
-  private eventToMinutes(eventTime: Date): number {
-    return eventTime.getHours() * 60 + eventTime.getMinutes();
-  }
-
   async resolveShiftForUser(userId: string, at: Date): Promise<WorkShift | null> {
-    const day = this.workDateOnly(at);
+    const day = this.calc.resolveWorkDateForPunch(null, at);
     const assignment = await this.prisma.employeeShift.findFirst({
       where: {
         userId,
@@ -97,71 +90,23 @@ export class AttendanceService {
     });
   }
 
-  private computeStatus(params: {
-    lateMinutes: number;
-    earlyLeaveMinutes: number;
-    otMinutes: number;
-    checkInAt: Date | null;
-    checkOutAt: Date | null;
-    explicit?: AttendanceStatus | null;
-  }): AttendanceStatus {
-    if (params.explicit) return params.explicit;
-    if (!params.checkInAt && !params.checkOutAt) return AttendanceStatus.ABSENT;
-    if (params.otMinutes > 0) return AttendanceStatus.OVERTIME;
-    if (params.earlyLeaveMinutes > 0) return AttendanceStatus.EARLY_LEAVE;
-    if (params.lateMinutes > 0) return AttendanceStatus.LATE;
-    return AttendanceStatus.ON_TIME;
-  }
-
-  /** Minutes late after shift start + grace (grace does not count as late). */
-  private computeLateMinutes(shift: WorkShift, checkInAt: Date): number {
-    const startMin = this.timeToMinutes(shift.startTime);
-    const grace = Math.max(0, shift.gracePeriodMinutes ?? 0);
-    const eventMin = this.eventToMinutes(checkInAt);
-    return Math.max(0, eventMin - (startMin + grace));
-  }
-
-  private computeMetricsFromTimes(
-    shift: WorkShift | null,
-    checkInAt: Date | null,
-    checkOutAt: Date | null,
-  ): { lateMinutes: number; earlyLeaveMinutes: number; otMinutes: number } {
-    let lateMinutes = 0;
-    let earlyLeaveMinutes = 0;
-    let otMinutes = 0;
-    if (!shift) return { lateMinutes, earlyLeaveMinutes, otMinutes };
-
-    if (checkInAt) {
-      lateMinutes = this.computeLateMinutes(shift, checkInAt);
-    }
-
-    if (checkOutAt) {
-      let endMin = this.timeToMinutes(shift.endTime);
-      let eventMin = this.eventToMinutes(checkOutAt);
-      if (shift.isOvernight && eventMin < this.timeToMinutes(shift.startTime)) {
-        eventMin += 24 * 60;
-        endMin += 24 * 60;
-      }
-      if (eventMin < endMin) {
-        earlyLeaveMinutes = endMin - eventMin;
-      } else {
-        otMinutes = eventMin - endMin;
-      }
-    }
-
-    return { lateMinutes, earlyLeaveMinutes, otMinutes };
-  }
-
   async processPunch(userId: string, eventTime: Date): Promise<PunchResult> {
     const cooldownMinutes = this.punchCooldownMinutes;
-    const shift = await this.resolveShiftForUser(userId, eventTime);
-    const workDate = this.workDateOnly(eventTime);
+    // Resolve shift using calendar day first, then overnight-aware work date.
+    const provisionalShift = await this.resolveShiftForUser(userId, eventTime);
+    const workDate = this.calc.resolveWorkDateForPunch(provisionalShift, eventTime);
+    const shift =
+      provisionalShift ??
+      (await this.resolveShiftForUser(
+        userId,
+        new Date(workDate.getUTCFullYear(), workDate.getUTCMonth(), workDate.getUTCDate(), 12),
+      ));
     const existing = await this.prisma.attendanceRecord.findUnique({
       where: { userId_date: { userId, date: workDate } },
     });
 
     if (!existing?.checkInAt) {
-      const lateMinutes = shift ? this.computeLateMinutes(shift, eventTime) : 0;
+      const lateMinutes = shift ? this.calc.computeLateMinutes(shift, eventTime) : 0;
 
       const record = await this.prisma.attendanceRecord.upsert({
         where: { userId_date: { userId, date: workDate } },
@@ -208,24 +153,12 @@ export class AttendanceService {
       };
     }
 
-    let earlyLeaveMinutes = 0;
-    let otMinutes = 0;
-    if (shift) {
-      let endMin = this.timeToMinutes(shift.endTime);
-      let eventMin = this.eventToMinutes(eventTime);
-      if (shift.isOvernight && eventMin < this.timeToMinutes(shift.startTime)) {
-        eventMin += 24 * 60;
-        endMin += 24 * 60;
-      }
-      if (eventMin < endMin) {
-        earlyLeaveMinutes = endMin - eventMin;
-      } else {
-        otMinutes = eventMin - endMin;
-      }
-    }
+    const { earlyLeaveMinutes, otMinutes } = shift
+      ? this.calc.computeEarlyLeaveAndOt(shift, eventTime)
+      : { earlyLeaveMinutes: 0, otMinutes: 0 };
 
     const lateMinutes = existing.lateMinutes ?? 0;
-    const status = this.computeStatus({
+    const status = this.calc.computeStatus({
       lateMinutes,
       earlyLeaveMinutes,
       otMinutes,
@@ -254,10 +187,31 @@ export class AttendanceService {
       to?: string;
       departmentId?: string;
       status?: AttendanceStatus;
+      search?: string;
+      hasLate?: boolean;
+      hasEarlyLeave?: boolean;
+      hasOt?: boolean;
     },
   ) {
     const page = query.page ?? 1;
     const pageSize = query.pageSize ?? 20;
+    const search = query.search?.trim();
+    const userFilter =
+      query.departmentId || search
+        ? {
+            user: {
+              ...(query.departmentId ? { departmentId: query.departmentId } : {}),
+              ...(search
+                ? {
+                    OR: [
+                      { fullName: { contains: search, mode: 'insensitive' as const } },
+                      { employeeCode: { contains: search, mode: 'insensitive' as const } },
+                    ],
+                  }
+                : {}),
+            },
+          }
+        : {};
     const where = {
       ...(query.userId ? { userId: query.userId } : {}),
       ...(query.status ? { status: query.status } : {}),
@@ -269,9 +223,13 @@ export class AttendanceService {
             },
           }
         : {}),
-      ...(query.departmentId
-        ? { user: { departmentId: query.departmentId } }
-        : {}),
+      ...userFilter,
+      ...(query.hasLate === true ? { lateMinutes: { gt: 0 } } : {}),
+      ...(query.hasLate === false ? { lateMinutes: { lte: 0 } } : {}),
+      ...(query.hasEarlyLeave === true ? { earlyLeaveMinutes: { gt: 0 } } : {}),
+      ...(query.hasEarlyLeave === false ? { earlyLeaveMinutes: { lte: 0 } } : {}),
+      ...(query.hasOt === true ? { otMinutes: { gt: 0 } } : {}),
+      ...(query.hasOt === false ? { otMinutes: { lte: 0 } } : {}),
     };
 
     const [items, total] = await Promise.all([
@@ -441,7 +399,7 @@ export class AttendanceService {
       let workDate = parseLocalDateOnly(dateRaw.slice(0, 10));
       if (!workDate) {
         const asDt = parseLocalDateTime(row.getCell(headerMap.date!).value);
-        if (asDt) workDate = this.workDateOnly(asDt);
+        if (asDt) workDate = this.utcDateOnly(asDt);
       }
 
       if (!workDate) {
@@ -450,7 +408,7 @@ export class AttendanceService {
       }
 
       // Persist date as UTC midnight for @db.Date consistency with processPunch
-      workDate = this.workDateOnly(workDate);
+      workDate = this.utcDateOnly(workDate);
 
       const user = await this.prisma.user.findFirst({
         where: { employeeCode, isDeleted: false },
@@ -497,7 +455,7 @@ export class AttendanceService {
         : null;
       const otFromFile = headerMap.ot ? cellToNumber(row.getCell(headerMap.ot).value) : null;
 
-      const computed = this.computeMetricsFromTimes(shift, checkInAt, checkOutAt);
+      const computed = this.calc.computeMetricsFromTimes(shift, checkInAt, checkOutAt, workDate);
       const lateMinutes = lateFromFile ?? computed.lateMinutes;
       const earlyLeaveMinutes = earlyFromFile ?? computed.earlyLeaveMinutes;
       const otMinutes = otFromFile ?? computed.otMinutes;
@@ -513,7 +471,7 @@ export class AttendanceService {
         });
       }
 
-      const status = this.computeStatus({
+      const status = this.calc.computeStatus({
         lateMinutes,
         earlyLeaveMinutes,
         otMinutes,

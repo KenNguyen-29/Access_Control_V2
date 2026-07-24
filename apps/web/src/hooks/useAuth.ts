@@ -1,10 +1,16 @@
 'use client';
 
-import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
-import { login } from '@/lib/api';
+import { useRouter } from 'next/navigation';
+import { changePassword, login, logout as apiLogout } from '@/lib/api';
 
-type Account = { id: string; username: string; role: string };
+type Account = {
+  id: string;
+  username: string;
+  role: string;
+  mustChangePassword?: boolean;
+  mfaEnabled?: boolean;
+};
 
 export function useAuth() {
   const router = useRouter();
@@ -31,20 +37,53 @@ export function useAuth() {
       const result = await login(username, password);
       localStorage.setItem('accessToken', result.accessToken);
       localStorage.setItem('account', JSON.stringify(result.account));
+      // Companion cookie so Next middleware can soft-guard routes
+      document.cookie = `acv2_session=1; path=/; SameSite=Lax; max-age=${7 * 24 * 3600}`;
       setAccount(result.account);
       setIsAuthenticated(true);
+      if (result.mustChangePassword || result.account.mustChangePassword) {
+        router.push('/change-password');
+        return;
+      }
       router.push('/home');
     },
     [router],
   );
 
-  const signOut = useCallback(() => {
+  const signOut = useCallback(async () => {
+    try {
+      await apiLogout();
+    } catch {
+      /* ignore */
+    }
     localStorage.removeItem('accessToken');
     localStorage.removeItem('account');
+    document.cookie = 'acv2_session=; path=/; Max-Age=0';
     setAccount(null);
     setIsAuthenticated(false);
     router.push('/login');
   }, [router]);
 
-  return { isAuthenticated, loading, account, signIn, signOut };
+  const updatePassword = useCallback(
+    async (currentPassword: string, newPassword: string) => {
+      await changePassword(currentPassword, newPassword);
+      const raw = localStorage.getItem('account');
+      if (raw) {
+        const next = { ...(JSON.parse(raw) as Account), mustChangePassword: false };
+        localStorage.setItem('account', JSON.stringify(next));
+        setAccount(next);
+      }
+      router.push('/home');
+    },
+    [router],
+  );
+
+  return {
+    isAuthenticated,
+    loading,
+    account,
+    signIn,
+    signOut,
+    updatePassword,
+  };
 }

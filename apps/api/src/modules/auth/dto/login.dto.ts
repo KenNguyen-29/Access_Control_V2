@@ -1,13 +1,14 @@
-import { IsString, MinLength } from 'class-validator';
+import { IsNotEmpty, IsString, MinLength } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class LoginDto {
-  @ApiProperty({ example: 'admin' })
+  @ApiProperty({ example: 'your-username' })
   @IsString()
+  @IsNotEmpty({ message: 'Vui lòng nhập tên đăng nhập' })
   username!: string;
 
-  @ApiProperty({ example: 'admin123' })
+  @ApiProperty({ example: '********' })
   @IsString()
-  @MinLength(4)
+  @MinLength(1, { message: 'Vui lòng nhập mật khẩu' })
   password!: string;
 }

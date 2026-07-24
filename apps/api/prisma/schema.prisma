@@ -69,6 +69,11 @@ enum EmergencySafeStatus {
   MISSING
 }
 
+enum EmployeeShiftAssignType {
+  FIXED
+  RANGED
+}
+
 // ── Org & Auth ─────────────────────────────────────────────
 
 model Department {
@@ -129,18 +134,43 @@ model User {
 }
 
 model Account {
-  id           String   @id @default(cuid())
-  username     String   @unique
-  passwordHash String
-  roleId       String
-  isActive     Boolean  @default(true)
-  isDeleted    Boolean  @default(false)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id                  String    @id @default(cuid())
+  username            String    @unique
+  passwordHash        String
+  roleId              String
+  isActive            Boolean   @default(true)
+  isDeleted           Boolean   @default(false)
+  mustChangePassword  Boolean   @default(false)
+  passwordChangedAt   DateTime?
+  /// MFA preparation (not enforced yet)
+  mfaEnabled          Boolean   @default(false)
+  mfaSecret           String?
+  mfaBackupCodes      String?
+  failedLoginCount    Int       @default(0)
+  lockedUntil         DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
 
-  role Role @relation(fields: [roleId], references: [id])
+  role          Role           @relation(fields: [roleId], references: [id])
+  refreshTokens RefreshToken[]
 
   @@map("accounts")
+}
+
+model RefreshToken {
+  id        String    @id @default(cuid())
+  accountId String
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+  userAgent String?
+  ipAddress String?
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId])
+  @@map("refresh_tokens")
 }
 
 // ── Access Zones ───────────────────────────────────────────
@@ -364,14 +394,15 @@ model WorkShift {
 }
 
 model EmployeeShift {
-  id          String    @id @default(cuid())
-  userId      String
-  workShiftId String
-  startDate   DateTime  @db.Date
-  endDate     DateTime? @db.Date
-  isDeleted   Boolean   @default(false)
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  id             String                 @id @default(cuid())
+  userId         String
+  workShiftId    String
+  startDate      DateTime               @db.Date
+  endDate        DateTime?              @db.Date
+  assignmentType EmployeeShiftAssignType @default(RANGED)
+  isDeleted      Boolean                @default(false)
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
 
   user      User      @relation(fields: [userId], references: [id])
   workShift WorkShift @relation(fields: [workShiftId], references: [id])

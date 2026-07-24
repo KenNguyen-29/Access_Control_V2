@@ -102,7 +102,7 @@ export function AppNav() {
           </div>
           <button
             type="button"
-            onClick={signOut}
+            onClick={() => void signOut()}
             title="Đăng xuất"
             className="flex h-10 w-11 items-center justify-center rounded-sm text-white/70 transition-colors hover:bg-white/10 hover:text-white"
           >

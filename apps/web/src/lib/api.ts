@@ -17,9 +17,37 @@ function getToken(): string | null {
   return localStorage.getItem('accessToken');
 }
 
+let refreshPromise: Promise<string | null> | null = null;
+
+async function refreshAccessToken(): Promise<string | null> {
+  if (refreshPromise) return refreshPromise;
+  refreshPromise = (async () => {
+    try {
+      const res = await fetch(`${API_URL}/auth/refresh`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const json = (await res.json()) as ApiResponse<{ accessToken: string; account?: unknown }>;
+      if (!res.ok || !json.success || !json.data?.accessToken) return null;
+      localStorage.setItem('accessToken', json.data.accessToken);
+      if (json.data.account) {
+        localStorage.setItem('account', JSON.stringify(json.data.account));
+      }
+      return json.data.accessToken;
+    } catch {
+      return null;
+    } finally {
+      refreshPromise = null;
+    }
+  })();
+  return refreshPromise;
+}
+
 export async function apiRequest<T>(
   path: string,
   options: RequestInit = {},
+  _retried = false,
 ): Promise<T> {
   const token = getToken();
   const headers: Record<string, string> = {
@@ -34,7 +62,15 @@ export async function apiRequest<T>(
   const res = await fetch(`${API_URL}${path}`, {
     ...options,
     headers,
+    credentials: 'include',
   });
+
+  if (res.status === 401 && !_retried && !path.startsWith('/auth/')) {
+    const next = await refreshAccessToken();
+    if (next) {
+      return apiRequest<T>(path, options, true);
+    }
+  }
 
   const contentType = res.headers.get('content-type') || '';
   if (
@@ -58,10 +94,44 @@ export async function apiRequest<T>(
 export async function login(username: string, password: string) {
   return apiRequest<{
     accessToken: string;
-    account: { id: string; username: string; role: string };
+    mustChangePassword?: boolean;
+    mfaEnabled?: boolean;
+    mfaRequired?: boolean;
+    account: {
+      id: string;
+      username: string;
+      role: string;
+      mustChangePassword?: boolean;
+      mfaEnabled?: boolean;
+    };
   }>('/auth/login', {
     method: 'POST',
     body: JSON.stringify({ username, password }),
+  });
+}
+
+export async function refreshSession() {
+  return apiRequest<{
+    accessToken: string;
+    mustChangePassword?: boolean;
+    account: {
+      id: string;
+      username: string;
+      role: string;
+      mustChangePassword?: boolean;
+      mfaEnabled?: boolean;
+    };
+  }>('/auth/refresh', { method: 'POST' });
+}
+
+export async function logout() {
+  return apiRequest<{ ok: boolean }>('/auth/logout', { method: 'POST' });
+}
+
+export async function changePassword(currentPassword: string, newPassword: string) {
+  return apiRequest<{ ok: boolean; mustChangePassword: boolean }>('/auth/change-password', {
+    method: 'POST',
+    body: JSON.stringify({ currentPassword, newPassword }),
   });
 }
 
@@ -178,12 +248,15 @@ export type WorkShift = {
   isDefault: boolean;
 };
 
+export type EmployeeShiftAssignType = 'FIXED' | 'RANGED';
+
 export type EmployeeShift = {
   id: string;
   userId: string;
   workShiftId: string;
   startDate: string;
   endDate?: string | null;
+  assignmentType?: EmployeeShiftAssignType;
   user?: User;
   workShift?: WorkShift;
 };
@@ -427,7 +500,8 @@ export async function getEmployeeShifts(userId?: string) {
 export async function createEmployeeShift(data: {
   userId: string;
   workShiftId: string;
-  startDate: string;
+  mode?: EmployeeShiftAssignType;
+  startDate?: string;
   endDate?: string;
 }) {
   return apiRequest<EmployeeShift>('/shifts/employee-shifts', {
@@ -440,12 +514,14 @@ export type BulkAssignResult = {
   assigned: number;
   skipped: number;
   skippedUserIds: string[];
+  mode?: EmployeeShiftAssignType;
 };
 
 export async function bulkAssignEmployeeShift(data: {
   userIds: string[];
   workShiftId: string;
-  startDate: string;
+  mode: EmployeeShiftAssignType;
+  startDate?: string;
   endDate?: string;
 }) {
   return apiRequest<BulkAssignResult>('/shifts/employee-shifts/bulk', {
@@ -455,9 +531,11 @@ export async function bulkAssignEmployeeShift(data: {
 }
 
 export async function endEmployeeShift(id: string, endDate?: string) {
+  const today = new Date();
+  const fallback = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
   return apiRequest<EmployeeShift>(`/shifts/employee-shifts/${id}/end`, {
     method: 'POST',
-    body: JSON.stringify({ endDate }),
+    body: JSON.stringify({ endDate: endDate || fallback }),
   });
 }
 
@@ -473,6 +551,10 @@ export async function getAttendanceRecords(params?: {
   to?: string;
   departmentId?: string;
   status?: string;
+  search?: string;
+  hasLate?: boolean;
+  hasEarlyLeave?: boolean;
+  hasOt?: boolean;
 }) {
   const q = new URLSearchParams();
   if (params?.page) q.set('page', String(params.page));
@@ -482,6 +564,10 @@ export async function getAttendanceRecords(params?: {
   if (params?.to) q.set('to', params.to);
   if (params?.departmentId) q.set('departmentId', params.departmentId);
   if (params?.status) q.set('status', params.status);
+  if (params?.search) q.set('search', params.search);
+  if (params?.hasLate !== undefined) q.set('hasLate', String(params.hasLate));
+  if (params?.hasEarlyLeave !== undefined) q.set('hasEarlyLeave', String(params.hasEarlyLeave));
+  if (params?.hasOt !== undefined) q.set('hasOt', String(params.hasOt));
   const qs = q.toString();
   return apiRequest<PaginatedData<AttendanceRecord>>(`/attendance/records${qs ? `?${qs}` : ''}`);
 }
@@ -555,6 +641,9 @@ export type TimesheetRow = {
   daysWorked: number;
   workedMinutes: number;
   lateCount: number;
+  /** Số ngày đi sớm (check-in trước giờ ca). */
+  earlyArrivalCount?: number;
+  /** Số ngày về sớm. */
   earlyCount: number;
   otMinutes: number;
 };

@@ -26,6 +26,8 @@ const CONG_META: Record<CongKind, { label: string; colorClass: string; cong: num
 };
 
 type MatrixSort = 'name' | 'least' | 'most';
+type TriFilter = '' | 'yes' | 'no';
+type CongKindFilter = '' | CongKind | 'earlyArrival' | 'earlyLeave';
 
 type DayCell = {
   date: string;
@@ -107,6 +109,30 @@ function resolveDayCong(day: DayCell | undefined): { kind: CongKind; cong: numbe
   if (day.lateMinutes > 0 || day.status === 'LATE') return { kind: 'late', cong: CONG_META.late.cong };
   // Đúng giờ → 1
   return { kind: 'onTime', cong: CONG_META.onTime.cong };
+}
+
+function matchesTri(filter: TriFilter, hasValue: boolean) {
+  if (filter === 'yes') return hasValue;
+  if (filter === 'no') return !hasValue;
+  return true;
+}
+
+function employeeHasFlag(
+  emp: EmployeeWeek,
+  predicate: (day: DayCell) => boolean,
+): boolean {
+  for (const day of emp.days.values()) {
+    if (isPresent(day) && predicate(day)) return true;
+  }
+  return false;
+}
+
+function employeeHasCongKind(emp: EmployeeWeek, kind: CongKind): boolean {
+  for (const day of emp.days.values()) {
+    const resolved = resolveDayCong(day);
+    if (resolved?.kind === kind) return true;
+  }
+  return false;
 }
 
 function dayTooltip(day: DayCell | undefined): string {
@@ -208,6 +234,11 @@ export default function EmployeeWeekMatrix({
 }: Props) {
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState<MatrixSort>('name');
+  const [congFilter, setCongFilter] = useState<CongKindFilter>('');
+  const [earlyArrival, setEarlyArrival] = useState<TriFilter>('');
+  const [earlyLeave, setEarlyLeave] = useState<TriFilter>('');
+  const [hasOt, setHasOt] = useState<TriFilter>('');
+  const [hasLate, setHasLate] = useState<TriFilter>('');
   const [page, setPage] = useState(1);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const debouncedSearch = useDebouncedValue(search, 250);
@@ -220,16 +251,61 @@ export default function EmployeeWeekMatrix({
     if (q) {
       list = list.filter(
         (e) =>
-          e.fullName.toLowerCase().includes(q) || e.employeeCode.toLowerCase().includes(q),
+          e.fullName.toLowerCase().includes(q) ||
+          e.employeeCode.toLowerCase().includes(q) ||
+          (e.departmentName ?? '').toLowerCase().includes(q),
       );
     }
+    if (congFilter === 'earlyArrival') {
+      list = list.filter((e) => employeeHasFlag(e, (d) => d.earlyArrivalMinutes > 0));
+    } else if (congFilter === 'earlyLeave') {
+      list = list.filter((e) =>
+        employeeHasFlag(e, (d) => d.earlyLeaveMinutes > 0 || d.status === 'EARLY_LEAVE'),
+      );
+    } else if (congFilter) {
+      list = list.filter((e) => employeeHasCongKind(e, congFilter));
+    }
+    list = list.filter((e) => {
+      if (!matchesTri(hasLate, employeeHasFlag(e, (d) => d.lateMinutes > 0 || d.status === 'LATE'))) {
+        return false;
+      }
+      if (!matchesTri(earlyArrival, employeeHasFlag(e, (d) => d.earlyArrivalMinutes > 0))) {
+        return false;
+      }
+      if (
+        !matchesTri(
+          earlyLeave,
+          employeeHasFlag(e, (d) => d.earlyLeaveMinutes > 0 || d.status === 'EARLY_LEAVE'),
+        )
+      ) {
+        return false;
+      }
+      if (
+        !matchesTri(
+          hasOt,
+          employeeHasFlag(e, (d) => d.otMinutes > 0 || d.status === 'OVERTIME'),
+        )
+      ) {
+        return false;
+      }
+      return true;
+    });
     list = [...list].sort((a, b) => {
       if (sort === 'least') return a.totalCong - b.totalCong;
       if (sort === 'most') return b.totalCong - a.totalCong;
       return a.fullName.localeCompare(b.fullName, 'vi');
     });
     return list;
-  }, [rows, debouncedSearch, sort]);
+  }, [
+    rows,
+    debouncedSearch,
+    sort,
+    congFilter,
+    earlyArrival,
+    earlyLeave,
+    hasOt,
+    hasLate,
+  ]);
 
   const totalPages = Math.max(1, Math.ceil(employees.length / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
@@ -237,12 +313,23 @@ export default function EmployeeWeekMatrix({
 
   useEffect(() => {
     setPage(1);
-  }, [debouncedSearch, sort, departmentId, rangeFrom, rangeTo]);
+  }, [
+    debouncedSearch,
+    sort,
+    departmentId,
+    rangeFrom,
+    rangeTo,
+    congFilter,
+    earlyArrival,
+    earlyLeave,
+    hasOt,
+    hasLate,
+  ]);
 
   return (
-    <DesignCard title="Bảng chấm công 30 ngày gần nhất">
-      <div className="mb-4 grid grid-cols-1 items-end gap-4 sm:grid-cols-2 lg:grid-cols-[1fr_180px_200px]">
-        <div>
+    <DesignCard title={`Bảng chấm công 30 ngày gần nhất (${employees.length})`}>
+      <div className="mb-4 grid grid-cols-1 items-end gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+        <div className="sm:col-span-2">
           <label htmlFor="matrix-search" className="mb-1 block text-xs text-muted-foreground">
             Tìm kiếm
           </label>
@@ -250,7 +337,7 @@ export default function EmployeeWeekMatrix({
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               id="matrix-search"
-              placeholder="Tên hoặc mã nhân viên..."
+              placeholder="Tên, mã NV, phòng ban..."
               className="input-design h-10 pl-10"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
@@ -288,6 +375,85 @@ export default function EmployeeWeekMatrix({
                 {d.name}
               </option>
             ))}
+          </Select>
+        </div>
+        <div>
+          <label htmlFor="matrix-cong" className="mb-1 block text-xs text-muted-foreground">
+            Loại công
+          </label>
+          <Select
+            id="matrix-cong"
+            className="h-10"
+            value={congFilter}
+            onChange={(e) => setCongFilter(e.target.value as CongKindFilter)}
+          >
+            <option value="">Tất cả loại công</option>
+            <option value="late">Đi muộn</option>
+            <option value="onTime">Đúng giờ</option>
+            <option value="ot">Tăng ca</option>
+            <option value="sunday">Làm CN</option>
+            <option value="earlyArrival">Có đi sớm</option>
+            <option value="earlyLeave">Có về sớm</option>
+          </Select>
+        </div>
+        <div>
+          <label htmlFor="matrix-late" className="mb-1 block text-xs text-muted-foreground">
+            Đi muộn
+          </label>
+          <Select
+            id="matrix-late"
+            className="h-10"
+            value={hasLate}
+            onChange={(e) => setHasLate(e.target.value as TriFilter)}
+          >
+            <option value="">Tất cả</option>
+            <option value="yes">Có</option>
+            <option value="no">Không</option>
+          </Select>
+        </div>
+        <div>
+          <label htmlFor="matrix-early-arrival" className="mb-1 block text-xs text-muted-foreground">
+            Đi sớm
+          </label>
+          <Select
+            id="matrix-early-arrival"
+            className="h-10"
+            value={earlyArrival}
+            onChange={(e) => setEarlyArrival(e.target.value as TriFilter)}
+          >
+            <option value="">Tất cả</option>
+            <option value="yes">Có</option>
+            <option value="no">Không</option>
+          </Select>
+        </div>
+        <div>
+          <label htmlFor="matrix-early-leave" className="mb-1 block text-xs text-muted-foreground">
+            Về sớm
+          </label>
+          <Select
+            id="matrix-early-leave"
+            className="h-10"
+            value={earlyLeave}
+            onChange={(e) => setEarlyLeave(e.target.value as TriFilter)}
+          >
+            <option value="">Tất cả</option>
+            <option value="yes">Có</option>
+            <option value="no">Không</option>
+          </Select>
+        </div>
+        <div>
+          <label htmlFor="matrix-ot" className="mb-1 block text-xs text-muted-foreground">
+            Tăng ca
+          </label>
+          <Select
+            id="matrix-ot"
+            className="h-10"
+            value={hasOt}
+            onChange={(e) => setHasOt(e.target.value as TriFilter)}
+          >
+            <option value="">Tất cả</option>
+            <option value="yes">Có</option>
+            <option value="no">Không</option>
           </Select>
         </div>
       </div>

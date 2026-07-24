@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Dialog, ConfirmDialog } from '@/components/ui/dialog';
+import { FieldError, RequiredMark } from '@/components/ui/field-error';
 import { PageShell, DesignCard } from '@/components/design/PageShell';
 import { QueryBoundary } from '@/components/ui/query-states';
 import { queryKeys } from '@/lib/queryKeys';
@@ -18,8 +19,16 @@ import {
   updateAccessZone,
   type AccessZone,
 } from '@/lib/api';
+import {
+  clearFieldError,
+  hasFormErrors,
+  validateZoneForm,
+  type FieldErrors,
+} from '@/lib/formValidation';
+import { cn } from '@/lib/utils';
 
 const EMPTY = { name: '', parentZoneId: '', description: '' };
+type ZoneFieldErrors = FieldErrors<keyof typeof EMPTY>;
 
 export default function ZonesSettingsPage() {
   const queryClient = useQueryClient();
@@ -27,6 +36,7 @@ export default function ZonesSettingsPage() {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<AccessZone | null>(null);
   const [form, setForm] = useState(EMPTY);
+  const [fieldErrors, setFieldErrors] = useState<ZoneFieldErrors>({});
   const [deleteTarget, setDeleteTarget] = useState<AccessZone | null>(null);
 
   const zonesQuery = useQuery({
@@ -51,6 +61,7 @@ export default function ZonesSettingsPage() {
   function openCreate() {
     setEditing(null);
     setForm(EMPTY);
+    setFieldErrors({});
     setOpen(true);
   }
 
@@ -61,7 +72,15 @@ export default function ZonesSettingsPage() {
       parentZoneId: zone.parentZoneId || '',
       description: zone.description || '',
     });
+    setFieldErrors({});
     setOpen(true);
+  }
+
+  function patchForm(patch: Partial<typeof EMPTY>) {
+    setForm((prev) => ({ ...prev, ...patch }));
+    setFieldErrors((prev) =>
+      clearFieldError(prev, Object.keys(patch) as (keyof typeof EMPTY)[]),
+    );
   }
 
   const saveMutation = useMutation({
@@ -93,7 +112,13 @@ export default function ZonesSettingsPage() {
   const deleting = deleteMutation.isPending;
 
   function handleSave() {
-    if (!form.name.trim()) return;
+    const errors = validateZoneForm(form);
+    setFieldErrors(errors);
+    if (hasFormErrors(errors)) {
+      setError('Vui lòng kiểm tra lại thông tin đã nhập');
+      return;
+    }
+    setError(null);
     saveMutation.mutate();
   }
 
@@ -179,18 +204,24 @@ export default function ZonesSettingsPage() {
       >
         <div className="space-y-3">
           <div>
-            <label className="mb-1 block text-xs text-muted-foreground">Tên</label>
+            <label className="mb-1 block text-xs text-muted-foreground">
+              Tên
+              <RequiredMark />
+            </label>
             <Input
               value={form.name}
-              onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+              onChange={(e) => patchForm({ name: e.target.value })}
               placeholder="VD: Nhà máy A"
+              className={cn(fieldErrors.name && 'border-destructive')}
+              aria-invalid={Boolean(fieldErrors.name)}
             />
+            <FieldError message={fieldErrors.name} />
           </div>
           <div>
             <label className="mb-1 block text-xs text-muted-foreground">Khu vực cha</label>
             <Select
               value={form.parentZoneId}
-              onChange={(e) => setForm((f) => ({ ...f, parentZoneId: e.target.value }))}
+              onChange={(e) => patchForm({ parentZoneId: e.target.value })}
             >
               <option value="">Không có</option>
               {parentOptions.map((z) => (
@@ -204,9 +235,12 @@ export default function ZonesSettingsPage() {
             <label className="mb-1 block text-xs text-muted-foreground">Mô tả</label>
             <Input
               value={form.description}
-              onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+              onChange={(e) => patchForm({ description: e.target.value })}
               placeholder="Tùy chọn"
+              className={cn(fieldErrors.description && 'border-destructive')}
+              aria-invalid={Boolean(fieldErrors.description)}
             />
+            <FieldError message={fieldErrors.description} />
           </div>
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="outline" onClick={() => setOpen(false)}>

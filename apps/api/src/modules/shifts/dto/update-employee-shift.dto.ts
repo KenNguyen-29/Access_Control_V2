@@ -1,5 +1,14 @@
-import { IsOptional, IsString } from 'class-validator';
+import { IsDateString, IsOptional, IsString, ValidateIf } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
+import { IsDateOnOrAfter } from '../../../common/validators/date-range.validator';
+
+function emptyToUndefined({ value }: { value: unknown }) {
+  if (value === null) return null;
+  if (typeof value !== 'string') return value;
+  const trimmed = value.trim();
+  return trimmed === '' ? undefined : trimmed;
+}
 
 export class UpdateEmployeeShiftDto {
   @ApiPropertyOptional()
@@ -8,12 +17,16 @@ export class UpdateEmployeeShiftDto {
   workShiftId?: string;
 
   @ApiPropertyOptional()
+  @Transform(emptyToUndefined)
   @IsOptional()
-  @IsString()
+  @IsDateString({}, { message: 'Ngày bắt đầu không hợp lệ' })
   startDate?: string;
 
   @ApiPropertyOptional()
+  @Transform(emptyToUndefined)
   @IsOptional()
-  @IsString()
+  @ValidateIf((_, v) => v !== null && v !== undefined)
+  @IsDateString({}, { message: 'Ngày kết thúc không hợp lệ' })
+  @IsDateOnOrAfter('startDate')
   endDate?: string | null;
 }

@@ -16,6 +16,13 @@ import {
   provisionUser,
   type Department,
 } from '@/lib/api';
+import {
+  hasFormErrors,
+  validateUserForm,
+  type UserFormFieldErrors,
+} from '@/lib/formValidation';
+import { FieldError, RequiredMark } from '@/components/ui/field-error';
+import { cn } from '@/lib/utils';
 
 const EMPTY_FORM = {
   fullName: '',
@@ -85,6 +92,7 @@ export function AddZoneEmployeeDialog({
 }: Props) {
   const queryClient = useQueryClient();
   const [form, setForm] = useState(EMPTY_FORM);
+  const [fieldErrors, setFieldErrors] = useState<UserFormFieldErrors>({});
   const [localError, setLocalError] = useState<string | null>(null);
 
   const departmentsQuery = useQuery({
@@ -100,6 +108,7 @@ export function AddZoneEmployeeDialog({
         revokePreviewUrl(prev.facePreviewUrl);
         return EMPTY_FORM;
       });
+      setFieldErrors({});
       setLocalError(null);
     }
   }, [open]);
@@ -127,6 +136,17 @@ export function AddZoneEmployeeDialog({
     e.target.value = '';
   }
 
+  function patchForm(patch: Partial<typeof EMPTY_FORM>) {
+    setForm((prev) => ({ ...prev, ...patch }));
+    setFieldErrors((prev) => {
+      const next = { ...prev };
+      for (const key of Object.keys(patch) as (keyof UserFormFieldErrors)[]) {
+        if (key in next) delete next[key];
+      }
+      return next;
+    });
+  }
+
   function clearFaceImage() {
     setForm((prev) => {
       revokePreviewUrl(prev.facePreviewUrl);
@@ -134,12 +154,27 @@ export function AddZoneEmployeeDialog({
     });
   }
 
+  function onSave() {
+    const errors = validateUserForm(form);
+    setFieldErrors(errors);
+    if (hasFormErrors(errors)) {
+      setLocalError('Vui lòng kiểm tra lại thông tin đã nhập');
+      return;
+    }
+    setLocalError(null);
+    saveMutation.mutate();
+  }
+
   const saveMutation = useMutation({
     mutationFn: async () => {
+      const errors = validateUserForm(form);
+      if (hasFormErrors(errors)) {
+        throw new ApiError('Vui lòng kiểm tra lại thông tin đã nhập', 400);
+      }
       const payload = {
         fullName: form.fullName.trim(),
-        email: form.email.trim() || undefined,
-        phone: form.phone.trim() || undefined,
+        email: form.email.trim(),
+        phone: form.phone.trim(),
         departmentId: form.departmentId || undefined,
       };
       const saved = await createUser(payload);
@@ -155,6 +190,7 @@ export function AddZoneEmployeeDialog({
     onSuccess: ({ saved, provision }) => {
       void queryClient.invalidateQueries({ queryKey: ['users'] });
       void queryClient.invalidateQueries({ queryKey: ['permissions'] });
+      void queryClient.invalidateQueries({ queryKey: ['accessControl'] });
       const zoneResult = provision.syncByZone[0];
       const zoneLabel = zoneResult?.zoneName ?? zoneName;
       const hasRealSuccess = zoneResult?.results?.some((r) => r.ok) && !zoneResult?.mock;
@@ -231,39 +267,60 @@ export function AddZoneEmployeeDialog({
           Mã nhân viên sẽ được tự sinh sau khi lưu theo dạng <span className="font-mono">NV-0001</span>.
         </div>
         <div>
-          <label className="mb-1 block text-xs text-muted-foreground">Họ tên</label>
+          <label className="mb-1 block text-xs text-muted-foreground">
+            Họ tên
+            <RequiredMark />
+          </label>
           <Input
             placeholder="Nguyễn Văn A"
-            className="input-design h-10"
+            className={cn('input-design h-10', fieldErrors.fullName && 'border-destructive')}
             value={form.fullName}
-            onChange={(e) => setForm({ ...form, fullName: e.target.value })}
+            onChange={(e) => patchForm({ fullName: e.target.value })}
+            aria-invalid={Boolean(fieldErrors.fullName)}
           />
+          <FieldError message={fieldErrors.fullName} />
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="mb-1 block text-xs text-muted-foreground">Email</label>
+            <label className="mb-1 block text-xs text-muted-foreground">
+              Email
+              <RequiredMark />
+            </label>
             <Input
+              type="email"
+              inputMode="email"
+              autoComplete="email"
               placeholder="email@example.com"
-              className="input-design h-10"
+              className={cn('input-design h-10', fieldErrors.email && 'border-destructive')}
               value={form.email}
-              onChange={(e) => setForm({ ...form, email: e.target.value })}
+              onChange={(e) => patchForm({ email: e.target.value })}
+              aria-invalid={Boolean(fieldErrors.email)}
             />
+            <FieldError message={fieldErrors.email} />
           </div>
           <div>
-            <label className="mb-1 block text-xs text-muted-foreground">Số điện thoại</label>
+            <label className="mb-1 block text-xs text-muted-foreground">
+              Số điện thoại
+              <RequiredMark />
+            </label>
             <Input
-              placeholder="09xxxxxxxx"
-              className="input-design h-10"
+              type="tel"
+              inputMode="tel"
+              autoComplete="tel"
+              placeholder="0912345678"
+              className={cn('input-design h-10', fieldErrors.phone && 'border-destructive')}
               value={form.phone}
-              onChange={(e) => setForm({ ...form, phone: e.target.value })}
+              onChange={(e) => patchForm({ phone: e.target.value })}
+              aria-invalid={Boolean(fieldErrors.phone)}
             />
+            <FieldError message={fieldErrors.phone} />
           </div>
         </div>
         <div>
           <label className="mb-1 block text-xs text-muted-foreground">Phòng ban</label>
           <Select
             value={form.departmentId}
-            onChange={(e) => setForm({ ...form, departmentId: e.target.value })}
+            onChange={(e) => patchForm({ departmentId: e.target.value })}
           >
             <option value="">— Chọn phòng ban —</option>
             {departments.map((d) => (
@@ -277,12 +334,7 @@ export function AddZoneEmployeeDialog({
           <Button variant="outline" size="sm" onClick={onClose}>
             Hủy
           </Button>
-          <Button
-            variant="accent"
-            size="sm"
-            disabled={saving || !form.fullName}
-            onClick={() => saveMutation.mutate()}
-          >
+          <Button variant="accent" size="sm" disabled={saving} onClick={() => onSave()}>
             {saving ? 'Đang lưu...' : 'Thêm & đồng bộ'}
           </Button>
         </div>

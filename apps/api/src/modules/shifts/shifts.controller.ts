@@ -8,6 +8,7 @@ import { BulkAssignEmployeeShiftDto } from './dto/bulk-assign-employee-shift.dto
 import { UpdateWorkShiftDto } from './dto/update-work-shift.dto';
 import { UpdateEmployeeShiftDto } from './dto/update-employee-shift.dto';
 import { SetDefaultShiftDto } from './dto/set-default-shift.dto';
+import { EndEmployeeShiftDto } from './dto/end-employee-shift.dto';
 
 @ApiTags('shifts')
 @ApiBearerAuth()
@@ -67,8 +68,11 @@ export class ShiftsController {
   }
 
   @Post('employee-shifts/:id/end')
-  async endEmployeeShift(@Param('id') id: string, @Body() body?: { endDate?: string }) {
-    return successResponse(await this.service.endEmployeeShift(id, body?.endDate), 'Employee shift ended');
+  async endEmployeeShift(@Param('id') id: string, @Body() body: EndEmployeeShiftDto = {}) {
+    return successResponse(
+      await this.service.endEmployeeShift(id, body?.endDate),
+      'Employee shift ended',
+    );
   }
 
   @Delete('employee-shifts/:id')

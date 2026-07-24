@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus, RefreshCw, Search, User as UserIcon } from 'lucide-react';
 import { Collapsible } from '@/components/ui/collapsible';
 import { Button } from '@/components/ui/button';
@@ -22,9 +22,11 @@ import {
   type UserAccessSummary,
 } from '@/lib/api';
 import { syncUserToZoneDevices, type AccessSyncReport } from '@/lib/accessSync';
+import { FieldError, RequiredMark } from '@/components/ui/field-error';
 import { cn } from '@/lib/utils';
 
 export function PersonAccessPanel() {
+  const queryClient = useQueryClient();
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [summary, setSummary] = useState<UserAccessSummary | null>(null);
   const [allZones, setAllZones] = useState<Array<{ zoneId: string; zoneName: string }>>([]);
@@ -36,6 +38,7 @@ export function PersonAccessPanel() {
   const debouncedSearch = useDebouncedValue(search);
   const [deptFilter, setDeptFilter] = useState('all');
   const [addZoneId, setAddZoneId] = useState('');
+  const [addZoneError, setAddZoneError] = useState<string | undefined>();
   const [busy, setBusy] = useState(false);
   const [syncReport, setSyncReport] = useState<AccessSyncReport | null>(null);
 
@@ -108,15 +111,25 @@ export function PersonAccessPanel() {
   }, [summary]);
 
   const handleAddZone = async () => {
-    if (!selectedUserId || !addZoneId) return;
+    if (!selectedUserId) {
+      setError('Vui lòng chọn nhân viên');
+      return;
+    }
+    if (!addZoneId) {
+      setAddZoneError('Vui lòng chọn khu vực');
+      return;
+    }
     setBusy(true);
     setError(null);
     setNotice(null);
+    setAddZoneError(undefined);
     try {
       await createPermission({ userId: selectedUserId, zoneId: addZoneId });
       setNotice('Đã thêm khu vực');
       setAddZoneId('');
       await loadSummary(selectedUserId);
+      void queryClient.invalidateQueries({ queryKey: ['accessControl'] });
+      void queryClient.invalidateQueries({ queryKey: ['permissions'] });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Thêm khu vực thất bại');
     } finally {
@@ -133,6 +146,8 @@ export function PersonAccessPanel() {
       await deletePermission(permissionId);
       setNotice('Đã gỡ khu vực');
       await loadSummary(selectedUserId);
+      void queryClient.invalidateQueries({ queryKey: ['accessControl'] });
+      void queryClient.invalidateQueries({ queryKey: ['permissions'] });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Gỡ khu vực thất bại');
     } finally {
@@ -301,28 +316,39 @@ export function PersonAccessPanel() {
                 </div>
 
                 {availableZones.length > 0 && (
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Select
-                      value={addZoneId}
-                      onChange={(e) => setAddZoneId(e.target.value)}
-                      className="h-9 w-48"
-                    >
-                      <option value="">Chọn khu vực...</option>
-                      {availableZones.map((z) => (
-                        <option key={z.zoneId} value={z.zoneId}>
-                          {z.zoneName}
-                        </option>
-                      ))}
-                    </Select>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={!addZoneId || busy}
-                      onClick={() => void handleAddZone()}
-                    >
-                      <Plus className="mr-1 h-3.5 w-3.5" />
+                  <div className="space-y-1">
+                    <label className="text-xs text-muted-foreground">
                       Thêm khu vực
-                    </Button>
+                      <RequiredMark />
+                    </label>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Select
+                        value={addZoneId}
+                        onChange={(e) => {
+                          setAddZoneId(e.target.value);
+                          setAddZoneError(undefined);
+                        }}
+                        className={cn('h-9 w-48', addZoneError && 'border-destructive')}
+                        aria-invalid={Boolean(addZoneError)}
+                      >
+                        <option value="">Chọn khu vực...</option>
+                        {availableZones.map((z) => (
+                          <option key={z.zoneId} value={z.zoneId}>
+                            {z.zoneName}
+                          </option>
+                        ))}
+                      </Select>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={busy}
+                        onClick={() => void handleAddZone()}
+                      >
+                        <Plus className="mr-1 h-3.5 w-3.5" />
+                        Thêm khu vực
+                      </Button>
+                    </div>
+                    <FieldError message={addZoneError} />
                   </div>
                 )}
 

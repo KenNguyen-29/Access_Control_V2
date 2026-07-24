@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Dialog, ConfirmDialog } from '@/components/ui/dialog';
+import { FieldError, RequiredMark } from '@/components/ui/field-error';
 import { Badge } from '@/components/ui/badge';
 import { Collapsible } from '@/components/ui/collapsible';
 import { QueryBoundary } from '@/components/ui/query-states';
@@ -27,9 +28,20 @@ import {
   getWorkShifts,
   setDefaultShift,
   updateWorkShift,
+  type EmployeeShift,
   type User,
   type WorkShift,
 } from '@/lib/api';
+import {
+  clearFieldError,
+  hasFormErrors,
+  validateAssignShiftForm,
+  validateWorkShiftForm,
+  type AssignShiftMode,
+  type FieldErrors,
+} from '@/lib/formValidation';
+import { cn } from '@/lib/utils';
+import type { EmployeeShiftAssignType } from '@/lib/api';
 
 const EMPTY_SHIFT = {
   name: '',
@@ -41,6 +53,23 @@ const EMPTY_SHIFT = {
   isOvernight: false,
 };
 
+function todayDateOnly(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function dateOnly(raw: string | Date | null | undefined): string | null {
+  if (!raw) return null;
+  return String(raw).slice(0, 10);
+}
+
+/** Còn hiệu lực nếu chưa có ngày kết thúc hoặc kết thúc >= hôm nay. */
+function isAssignmentActive(a: EmployeeShift): boolean {
+  const end = dateOnly(a.endDate);
+  if (!end) return true;
+  return end >= todayDateOnly();
+}
+
 export default function ShiftsPage() {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState('');
@@ -49,17 +78,25 @@ export default function ShiftsPage() {
   const [assignOpen, setAssignOpen] = useState(false);
   const [editing, setEditing] = useState<WorkShift | null>(null);
   const [form, setForm] = useState(EMPTY_SHIFT);
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors<keyof typeof EMPTY_SHIFT>>({});
   const [assignForm, setAssignForm] = useState({
+    mode: 'RANGED' as AssignShiftMode,
     workShiftId: '',
-    startDate: new Date().toISOString().slice(0, 10),
+    startDate: todayDateOnly(),
     endDate: '',
   });
+  const [assignFieldErrors, setAssignFieldErrors] = useState<
+    FieldErrors<'workShiftId' | 'startDate' | 'endDate' | 'selectedUserIds' | 'mode'>
+  >({});
   const [selectedUserIds, setSelectedUserIds] = useState<Set<string>>(new Set());
   const [assignSearch, setAssignSearch] = useState('');
   const debouncedAssignSearch = useDebouncedValue(assignSearch);
   const [assignDept, setAssignDept] = useState('');
   const [assignResult, setAssignResult] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<WorkShift | null>(null);
+  const [endAssignmentTarget, setEndAssignmentTarget] = useState<EmployeeShift | null>(null);
+  const [deleteAssignmentTarget, setDeleteAssignmentTarget] = useState<EmployeeShift | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const shiftsQuery = useQuery({
     queryKey: queryKeys.workShifts(),
@@ -126,6 +163,7 @@ export default function ShiftsPage() {
       else next.add(id);
       return next;
     });
+    setAssignFieldErrors((prev) => clearFieldError(prev, 'selectedUserIds'));
   }
 
   function toggleAllFiltered() {
@@ -138,11 +176,13 @@ export default function ShiftsPage() {
       }
       return next;
     });
+    setAssignFieldErrors((prev) => clearFieldError(prev, 'selectedUserIds'));
   }
 
   function openCreate() {
     setEditing(null);
     setForm(EMPTY_SHIFT);
+    setFieldErrors({});
     setOpen(true);
   }
 
@@ -157,7 +197,25 @@ export default function ShiftsPage() {
       salaryCoefficient: shift.salaryCoefficient ?? 1,
       isOvernight: shift.isOvernight,
     });
+    setFieldErrors({});
     setOpen(true);
+  }
+
+  function patchForm(patch: Partial<typeof EMPTY_SHIFT>) {
+    setForm((prev) => ({ ...prev, ...patch }));
+    setFieldErrors((prev) =>
+      clearFieldError(prev, Object.keys(patch) as (keyof typeof EMPTY_SHIFT)[]),
+    );
+  }
+
+  function patchAssignForm(patch: Partial<typeof assignForm>) {
+    setAssignForm((prev) => ({ ...prev, ...patch }));
+    setAssignFieldErrors((prev) =>
+      clearFieldError(
+        prev,
+        Object.keys(patch) as ('workShiftId' | 'startDate' | 'endDate' | 'mode')[],
+      ),
+    );
   }
 
   const saveMutation = useMutation({
@@ -168,6 +226,7 @@ export default function ShiftsPage() {
     },
     onSuccess: () => {
       setError(null);
+      setNotice(editing ? 'Đã cập nhật ca làm việc' : 'Đã tạo ca làm việc');
       setOpen(false);
       void queryClient.invalidateQueries({ queryKey: queryKeys.workShifts() });
     },
@@ -186,6 +245,16 @@ export default function ShiftsPage() {
   const deleting = deleteMutation.isPending;
 
   function onSave() {
+    const errors = validateWorkShiftForm(form, {
+      existingShifts: shifts,
+      excludeId: editing?.id,
+    });
+    setFieldErrors(errors);
+    if (hasFormErrors(errors)) {
+      setError('Vui lòng kiểm tra lại thông tin đã nhập');
+      return;
+    }
+    setError(null);
     saveMutation.mutate();
   }
 
@@ -193,6 +262,28 @@ export default function ShiftsPage() {
     if (!deleteTarget) return;
     deleteMutation.mutate(deleteTarget);
   }
+
+  const endAssignmentMutation = useMutation({
+    mutationFn: (target: EmployeeShift) => endEmployeeShift(target.id, todayDateOnly()),
+    onSuccess: () => {
+      setEndAssignmentTarget(null);
+      setNotice('Đã kết thúc phân ca');
+      setError(null);
+      void queryClient.invalidateQueries({ queryKey: queryKeys.employeeShifts() });
+    },
+    onError: (e) => setError(e instanceof ApiError ? e.message : 'Kết thúc ca thất bại'),
+  });
+
+  const deleteAssignmentMutation = useMutation({
+    mutationFn: (target: EmployeeShift) => deleteEmployeeShift(target.id),
+    onSuccess: () => {
+      setDeleteAssignmentTarget(null);
+      setNotice('Đã xóa phân ca');
+      setError(null);
+      void queryClient.invalidateQueries({ queryKey: queryKeys.employeeShifts() });
+    },
+    onError: (e) => setError(e instanceof ApiError ? e.message : 'Xóa phân ca thất bại'),
+  });
 
   async function onDefault(shift: WorkShift) {
     try {
@@ -205,10 +296,12 @@ export default function ShiftsPage() {
 
   function openAssign() {
     setAssignForm({
+      mode: 'RANGED',
       workShiftId: '',
-      startDate: new Date().toISOString().slice(0, 10),
+      startDate: todayDateOnly(),
       endDate: '',
     });
+    setAssignFieldErrors({});
     setSelectedUserIds(new Set());
     setAssignSearch('');
     setAssignDept('');
@@ -221,22 +314,37 @@ export default function ShiftsPage() {
       bulkAssignEmployeeShift({
         userIds: Array.from(selectedUserIds),
         workShiftId: assignForm.workShiftId,
-        startDate: assignForm.startDate,
-        endDate: assignForm.endDate || undefined,
+        mode: assignForm.mode as EmployeeShiftAssignType,
+        ...(assignForm.mode === 'RANGED'
+          ? { startDate: assignForm.startDate, endDate: assignForm.endDate }
+          : {}),
       }),
     onSuccess: (result) => {
+      const modeLabel = result.mode === 'FIXED' ? 'cố định' : 'có thời hạn';
       setAssignResult(
-        `Đã gán ${result.assigned} nhân viên${
+        `Đã gán ${modeLabel} cho ${result.assigned} nhân viên${
           result.skipped > 0 ? `, bỏ qua ${result.skipped} (đã có ca hiệu lực)` : ''
         }.`,
       );
+      setNotice('Gán ca thành công');
       setSelectedUserIds(new Set());
+      // Keep startDate/endDate/mode/workShift as chosen after save
       void queryClient.invalidateQueries({ queryKey: queryKeys.employeeShifts() });
     },
     onError: (e) => setError(e instanceof ApiError ? e.message : 'Gán ca thất bại'),
   });
 
   function onAssign() {
+    const errors = validateAssignShiftForm({
+      ...assignForm,
+      selectedCount: selectedUserIds.size,
+    });
+    setAssignFieldErrors(errors);
+    if (hasFormErrors(errors)) {
+      setError('Vui lòng kiểm tra lại thông tin đã nhập');
+      return;
+    }
+    setError(null);
     setAssignResult(null);
     assignMutation.mutate();
   }
@@ -262,6 +370,12 @@ export default function ShiftsPage() {
         </>
       }
     >
+      {notice && (
+        <p className="rounded-sm border border-primary/20 bg-primary/5 px-3 py-2 text-sm text-foreground">
+          {notice}
+        </p>
+      )}
+
       <DesignCard title="Hướng dẫn sử dụng">
         <Collapsible title="Mở rộng">
           <div className="space-y-2">
@@ -272,7 +386,8 @@ export default function ShiftsPage() {
               <strong>Bước 2:</strong> Đặt một ca làm <em>ca mặc định</em> để áp dụng cho nhân viên chưa gán.
             </p>
             <p>
-              <strong>Bước 3:</strong> Dùng &quot;Gán ca&quot; để phân công nhân viên vào ca theo khoảng thời gian.
+              <strong>Bước 3:</strong> Dùng &quot;Gán ca&quot; — chọn <em>Cố định</em> (lặp đến khi kết thúc)
+              hoặc <em>Có thời hạn</em> (Từ–Đến ngày).
             </p>
           </div>
         </Collapsible>
@@ -387,6 +502,7 @@ export default function ShiftsPage() {
                 <tr className="border-b border-border bg-muted/30 text-left">
                   <th className="p-2 font-semibold">Nhân viên</th>
                   <th className="p-2 font-semibold">Ca</th>
+                  <th className="p-2 font-semibold">Kiểu</th>
                   <th className="p-2 font-semibold">Từ ngày</th>
                   <th className="p-2 font-semibold">Đến ngày</th>
                   <th className="p-2 text-right font-semibold">Thao tác</th>
@@ -404,28 +520,49 @@ export default function ShiftsPage() {
                       )}
                     </td>
                     <td className="p-2">{a.workShift?.name || a.workShiftId}</td>
+                    <td className="p-2">
+                      <Badge variant="outline" className="text-xs font-normal">
+                        {(a.assignmentType ?? (a.endDate ? 'RANGED' : 'FIXED')) === 'FIXED'
+                          ? 'Cố định'
+                          : 'Có thời hạn'}
+                      </Badge>
+                    </td>
                     <td className="p-2 font-mono text-xs text-muted-foreground">
                       {String(a.startDate).slice(0, 10)}
                     </td>
                     <td className="p-2 font-mono text-xs text-muted-foreground">
-                      {a.endDate ? String(a.endDate).slice(0, 10) : '—'}
+                      {a.endDate ? String(a.endDate).slice(0, 10) : 'Không giới hạn'}
                     </td>
                     <td className="p-2">
                       <div className="flex justify-end gap-1">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="h-8 gap-1"
-                          onClick={() => void endEmployeeShift(a.id).then(() => load())}
-                        >
-                          <StopCircle className="h-3.5 w-3.5" />
-                          Kết thúc
-                        </Button>
+                        {isAssignmentActive(a) && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-8 gap-1"
+                            onClick={() => {
+                              setError(null);
+                              setEndAssignmentTarget(a);
+                            }}
+                          >
+                            <StopCircle className="h-3.5 w-3.5" />
+                            Kết thúc
+                          </Button>
+                        )}
+                        {!isAssignmentActive(a) && (
+                          <Badge variant="secondary" className="h-8 px-2 text-xs font-normal">
+                            Đã kết thúc
+                          </Badge>
+                        )}
                         <Button
                           variant="ghost"
                           size="icon"
                           className="h-8 w-8"
-                          onClick={() => void deleteEmployeeShift(a.id).then(() => load())}
+                          onClick={() => {
+                            setError(null);
+                            setDeleteAssignmentTarget(a);
+                          }}
+                          title="Xóa phân ca"
                         >
                           <Trash2 className="h-4 w-4 text-destructive" />
                         </Button>
@@ -448,42 +585,74 @@ export default function ShiftsPage() {
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="mb-1 block text-xs text-muted-foreground">Tên ca</label>
+              <label className="mb-1 block text-xs text-muted-foreground">
+                Tên ca
+                <RequiredMark />
+              </label>
               <Input
                 placeholder="Ca hành chính"
-                className="input-design h-10"
+                className={cn('input-design h-10', fieldErrors.name && 'border-destructive')}
                 value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                onChange={(e) => patchForm({ name: e.target.value })}
+                aria-invalid={Boolean(fieldErrors.name)}
               />
+              <FieldError message={fieldErrors.name} />
             </div>
             <div>
-              <label className="mb-1 block text-xs text-muted-foreground">Mã ca</label>
+              <label className="mb-1 block text-xs text-muted-foreground">
+                Mã ca
+                <RequiredMark />
+              </label>
               <Input
                 placeholder="HC"
-                className="input-design h-10"
+                className={cn('input-design h-10', fieldErrors.code && 'border-destructive')}
                 value={form.code}
-                onChange={(e) => setForm({ ...form, code: e.target.value })}
+                onChange={(e) => patchForm({ code: e.target.value })}
+                aria-invalid={Boolean(fieldErrors.code)}
               />
+              <FieldError message={fieldErrors.code} />
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="mb-1 block text-xs text-muted-foreground">Giờ vào</label>
+              <label className="mb-1 block text-xs text-muted-foreground">
+                Giờ vào
+                <RequiredMark />
+              </label>
               <Input
                 type="time"
-                className="input-design h-10"
+                className={cn('input-design h-10', fieldErrors.startTime && 'border-destructive')}
                 value={form.startTime}
-                onChange={(e) => setForm({ ...form, startTime: e.target.value })}
+                onChange={(e) => {
+                const startTime = e.target.value;
+                patchForm({
+                  startTime,
+                  ...(form.endTime && form.endTime <= startTime ? { isOvernight: true } : {}),
+                });
+              }}
+                aria-invalid={Boolean(fieldErrors.startTime)}
               />
+              <FieldError message={fieldErrors.startTime} />
             </div>
             <div>
-              <label className="mb-1 block text-xs text-muted-foreground">Giờ ra</label>
+              <label className="mb-1 block text-xs text-muted-foreground">
+                Giờ ra
+                <RequiredMark />
+              </label>
               <Input
                 type="time"
-                className="input-design h-10"
+                className={cn('input-design h-10', fieldErrors.endTime && 'border-destructive')}
                 value={form.endTime}
-                onChange={(e) => setForm({ ...form, endTime: e.target.value })}
+                onChange={(e) => {
+                const endTime = e.target.value;
+                patchForm({
+                  endTime,
+                  ...(form.startTime && endTime <= form.startTime ? { isOvernight: true } : {}),
+                });
+              }}
+                aria-invalid={Boolean(fieldErrors.endTime)}
               />
+              <FieldError message={fieldErrors.endTime} />
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -491,10 +660,15 @@ export default function ShiftsPage() {
               <label className="mb-1 block text-xs text-muted-foreground">Giờ nghỉ (phút)</label>
               <Input
                 type="number"
-                className="input-design h-10"
+                className={cn(
+                  'input-design h-10',
+                  fieldErrors.breakMinutes && 'border-destructive',
+                )}
                 value={form.breakMinutes}
-                onChange={(e) => setForm({ ...form, breakMinutes: Number(e.target.value) })}
+                onChange={(e) => patchForm({ breakMinutes: Number(e.target.value) })}
+                aria-invalid={Boolean(fieldErrors.breakMinutes)}
               />
+              <FieldError message={fieldErrors.breakMinutes} />
             </div>
             <div>
               <label className="mb-1 block text-xs text-muted-foreground">Hệ số lương</label>
@@ -502,17 +676,22 @@ export default function ShiftsPage() {
                 type="number"
                 step="0.1"
                 min="0"
-                className="input-design h-10"
+                className={cn(
+                  'input-design h-10',
+                  fieldErrors.salaryCoefficient && 'border-destructive',
+                )}
                 value={form.salaryCoefficient}
-                onChange={(e) => setForm({ ...form, salaryCoefficient: Number(e.target.value) })}
+                onChange={(e) => patchForm({ salaryCoefficient: Number(e.target.value) })}
+                aria-invalid={Boolean(fieldErrors.salaryCoefficient)}
               />
+              <FieldError message={fieldErrors.salaryCoefficient} />
             </div>
           </div>
           <label className="flex items-center gap-2 text-sm">
             <input
               type="checkbox"
               checked={form.isOvernight}
-              onChange={(e) => setForm({ ...form, isOvernight: e.target.checked })}
+              onChange={(e) => patchForm({ isOvernight: e.target.checked })}
             />
             Ca qua đêm
           </label>
@@ -520,12 +699,7 @@ export default function ShiftsPage() {
             <Button variant="outline" size="sm" onClick={() => setOpen(false)}>
               Hủy
             </Button>
-            <Button
-              variant="accent"
-              size="sm"
-              disabled={saving || !form.name || !form.code}
-              onClick={() => onSave()}
-            >
+            <Button variant="accent" size="sm" disabled={saving} onClick={() => onSave()}>
               {saving ? 'Đang lưu...' : 'Lưu'}
             </Button>
           </div>
@@ -536,16 +710,65 @@ export default function ShiftsPage() {
         open={assignOpen}
         onClose={() => setAssignOpen(false)}
         title="Gán ca cho nhân viên"
-        description="Chọn ca, khoảng thời gian và tích chọn nhiều nhân viên để gán cùng lúc."
+        description="Chọn kiểu gán, ca làm việc và nhân viên."
         className="max-w-2xl"
       >
         <div className="space-y-3">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <div>
+            <label className="mb-1.5 block text-xs text-muted-foreground">
+              Kiểu gán
+              <RequiredMark />
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                className={cn(
+                  'rounded-sm border px-3 py-2 text-left text-sm transition-colors',
+                  assignForm.mode === 'FIXED'
+                    ? 'border-primary bg-primary/5 font-semibold text-foreground'
+                    : 'border-border hover:bg-muted/40',
+                )}
+                onClick={() => patchAssignForm({ mode: 'FIXED' })}
+              >
+                <span className="block">Cố định</span>
+                <span className="mt-0.5 block text-xs font-normal text-muted-foreground">
+                  Lặp mỗi ngày đến khi kết thúc / gán lại
+                </span>
+              </button>
+              <button
+                type="button"
+                className={cn(
+                  'rounded-sm border px-3 py-2 text-left text-sm transition-colors',
+                  assignForm.mode === 'RANGED'
+                    ? 'border-primary bg-primary/5 font-semibold text-foreground'
+                    : 'border-border hover:bg-muted/40',
+                )}
+                onClick={() => patchAssignForm({ mode: 'RANGED' })}
+              >
+                <span className="block">Có thời hạn</span>
+                <span className="mt-0.5 block text-xs font-normal text-muted-foreground">
+                  Chỉ áp dụng trong khoảng Từ–Đến ngày
+                </span>
+              </button>
+            </div>
+          </div>
+
+          <div
+            className={cn(
+              'grid grid-cols-1 gap-3',
+              assignForm.mode === 'RANGED' ? 'sm:grid-cols-3' : 'sm:grid-cols-1',
+            )}
+          >
             <div>
-              <label className="mb-1 block text-xs text-muted-foreground">Ca</label>
+              <label className="mb-1 block text-xs text-muted-foreground">
+                Ca
+                <RequiredMark />
+              </label>
               <Select
                 value={assignForm.workShiftId}
-                onChange={(e) => setAssignForm({ ...assignForm, workShiftId: e.target.value })}
+                onChange={(e) => patchAssignForm({ workShiftId: e.target.value })}
+                className={cn(assignFieldErrors.workShiftId && 'border-destructive')}
+                aria-invalid={Boolean(assignFieldErrors.workShiftId)}
               >
                 <option value="">— Chọn ca —</option>
                 {shifts.map((s) => (
@@ -554,29 +777,66 @@ export default function ShiftsPage() {
                   </option>
                 ))}
               </Select>
+              <FieldError message={assignFieldErrors.workShiftId} />
             </div>
-            <div>
-              <label className="mb-1 block text-xs text-muted-foreground">Từ ngày</label>
-              <Input
-                type="date"
-                className="input-design h-10"
-                value={assignForm.startDate}
-                onChange={(e) => setAssignForm({ ...assignForm, startDate: e.target.value })}
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs text-muted-foreground">Đến ngày</label>
-              <Input
-                type="date"
-                className="input-design h-10"
-                value={assignForm.endDate}
-                onChange={(e) => setAssignForm({ ...assignForm, endDate: e.target.value })}
-              />
-            </div>
+            {assignForm.mode === 'RANGED' && (
+              <>
+                <div>
+                  <label className="mb-1 block text-xs text-muted-foreground">
+                    Từ ngày
+                    <RequiredMark />
+                  </label>
+                  <Input
+                    type="date"
+                    className={cn(
+                      'input-design h-10',
+                      assignFieldErrors.startDate && 'border-destructive',
+                    )}
+                    value={assignForm.startDate}
+                    max={assignForm.endDate || undefined}
+                    onChange={(e) => {
+                      const startDate = e.target.value;
+                      const patch: Partial<typeof assignForm> = { startDate };
+                      if (
+                        assignForm.endDate &&
+                        startDate &&
+                        assignForm.endDate < startDate
+                      ) {
+                        patch.endDate = '';
+                      }
+                      patchAssignForm(patch);
+                    }}
+                    aria-invalid={Boolean(assignFieldErrors.startDate)}
+                  />
+                  <FieldError message={assignFieldErrors.startDate} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-muted-foreground">
+                    Đến ngày
+                    <RequiredMark />
+                  </label>
+                  <Input
+                    type="date"
+                    className={cn(
+                      'input-design h-10',
+                      assignFieldErrors.endDate && 'border-destructive',
+                    )}
+                    value={assignForm.endDate}
+                    min={assignForm.startDate || undefined}
+                    onChange={(e) => patchAssignForm({ endDate: e.target.value })}
+                    aria-invalid={Boolean(assignFieldErrors.endDate)}
+                  />
+                  <FieldError message={assignFieldErrors.endDate} />
+                </div>
+              </>
+            )}
           </div>
 
           <div className="border-t border-border pt-3">
-            <label className="mb-1 block text-xs text-muted-foreground">Nhân viên</label>
+            <label className="mb-1 block text-xs text-muted-foreground">
+              Nhân viên
+              <RequiredMark />
+            </label>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_200px]">
               <div className="relative">
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -611,7 +871,12 @@ export default function ShiftsPage() {
                 Đã chọn <strong className="text-foreground">{selectedUserIds.size}</strong>
               </span>
             </div>
-            <div className="max-h-72 overflow-y-auto rounded-b-sm border border-t-0 border-border">
+            <div
+              className={cn(
+                'max-h-72 overflow-y-auto rounded-b-sm border border-t-0 border-border',
+                assignFieldErrors.selectedUserIds && 'border-destructive',
+              )}
+            >
               <UserInfiniteList
                 enabled={assignOpen}
                 search={debouncedAssignSearch}
@@ -636,6 +901,7 @@ export default function ShiftsPage() {
                 )}
               />
             </div>
+            <FieldError message={assignFieldErrors.selectedUserIds} />
           </div>
 
           {assignResult && (
@@ -646,7 +912,9 @@ export default function ShiftsPage() {
 
           <div className="flex items-center justify-between gap-2 pt-2">
             <span className="text-xs text-muted-foreground">
-              Người đã có ca đang hiệu lực sẽ được bỏ qua.
+              {assignForm.mode === 'FIXED'
+                ? 'Gán cố định sẽ thay ca cố định cũ (nếu có) và áp dụng từ hôm nay.'
+                : 'Người đã có ca đang hiệu lực sẽ được bỏ qua.'}
             </span>
             <div className="flex gap-2">
               <Button variant="outline" size="sm" onClick={() => setAssignOpen(false)}>
@@ -655,9 +923,7 @@ export default function ShiftsPage() {
               <Button
                 variant="accent"
                 size="sm"
-                disabled={
-                  assignMutation.isPending || selectedUserIds.size === 0 || !assignForm.workShiftId
-                }
+                disabled={assignMutation.isPending}
                 onClick={() => onAssign()}
               >
                 {assignMutation.isPending
@@ -677,6 +943,32 @@ export default function ShiftsPage() {
         message={`Bạn có chắc muốn xóa ca ${deleteTarget?.name ?? ''}?`}
         confirmLabel="Xóa"
         loading={deleting}
+      />
+
+      <ConfirmDialog
+        open={!!endAssignmentTarget}
+        onClose={() => setEndAssignmentTarget(null)}
+        onConfirm={() => {
+          if (!endAssignmentTarget) return;
+          endAssignmentMutation.mutate(endAssignmentTarget);
+        }}
+        title="Kết thúc phân ca"
+        message={`Kết thúc ca "${endAssignmentTarget?.workShift?.name ?? ''}" của ${endAssignmentTarget?.user?.fullName ?? 'nhân viên'} vào hôm nay (${todayDateOnly()})?`}
+        confirmLabel="Kết thúc"
+        loading={endAssignmentMutation.isPending}
+      />
+
+      <ConfirmDialog
+        open={!!deleteAssignmentTarget}
+        onClose={() => setDeleteAssignmentTarget(null)}
+        onConfirm={() => {
+          if (!deleteAssignmentTarget) return;
+          deleteAssignmentMutation.mutate(deleteAssignmentTarget);
+        }}
+        title="Xóa phân ca"
+        message={`Xóa phân ca "${deleteAssignmentTarget?.workShift?.name ?? ''}" của ${deleteAssignmentTarget?.user?.fullName ?? 'nhân viên'}? Hành động này không thể hoàn tác.`}
+        confirmLabel="Xóa"
+        loading={deleteAssignmentMutation.isPending}
       />
     </PageShell>
   );

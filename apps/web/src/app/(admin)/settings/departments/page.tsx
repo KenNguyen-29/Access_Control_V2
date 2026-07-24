@@ -6,6 +6,7 @@ import { Plus, Pencil, Trash2, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Dialog, ConfirmDialog } from '@/components/ui/dialog';
+import { FieldError, RequiredMark } from '@/components/ui/field-error';
 import { PageShell, DesignCard } from '@/components/design/PageShell';
 import { QueryBoundary } from '@/components/ui/query-states';
 import { queryKeys } from '@/lib/queryKeys';
@@ -17,8 +18,16 @@ import {
   updateDepartment,
   type Department,
 } from '@/lib/api';
+import {
+  clearFieldError,
+  hasFormErrors,
+  validateDepartmentForm,
+  type FieldErrors,
+} from '@/lib/formValidation';
+import { cn } from '@/lib/utils';
 
 const EMPTY = { name: '', code: '', description: '' };
+type DeptFieldErrors = FieldErrors<keyof typeof EMPTY>;
 
 export default function DepartmentsSettingsPage() {
   const queryClient = useQueryClient();
@@ -26,6 +35,7 @@ export default function DepartmentsSettingsPage() {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Department | null>(null);
   const [form, setForm] = useState(EMPTY);
+  const [fieldErrors, setFieldErrors] = useState<DeptFieldErrors>({});
   const [deleteTarget, setDeleteTarget] = useState<Department | null>(null);
 
   const departmentsQuery = useQuery({
@@ -50,13 +60,22 @@ export default function DepartmentsSettingsPage() {
   function openCreate() {
     setEditing(null);
     setForm(EMPTY);
+    setFieldErrors({});
     setOpen(true);
   }
 
   function openEdit(dept: Department) {
     setEditing(dept);
     setForm({ name: dept.name, code: dept.code, description: '' });
+    setFieldErrors({});
     setOpen(true);
+  }
+
+  function patchForm(patch: Partial<typeof EMPTY>) {
+    setForm((prev) => ({ ...prev, ...patch }));
+    setFieldErrors((prev) =>
+      clearFieldError(prev, Object.keys(patch) as (keyof typeof EMPTY)[]),
+    );
   }
 
   const saveMutation = useMutation({
@@ -88,7 +107,13 @@ export default function DepartmentsSettingsPage() {
   const deleting = deleteMutation.isPending;
 
   function handleSave() {
-    if (!form.name.trim() || !form.code.trim()) return;
+    const errors = validateDepartmentForm(form);
+    setFieldErrors(errors);
+    if (hasFormErrors(errors)) {
+      setError('Vui lòng kiểm tra lại thông tin đã nhập');
+      return;
+    }
+    setError(null);
     saveMutation.mutate();
   }
 
@@ -166,28 +191,43 @@ export default function DepartmentsSettingsPage() {
       >
         <div className="space-y-3">
           <div>
-            <label className="mb-1 block text-xs text-muted-foreground">Mã</label>
+            <label className="mb-1 block text-xs text-muted-foreground">
+              Mã
+              <RequiredMark />
+            </label>
             <Input
               value={form.code}
-              onChange={(e) => setForm((f) => ({ ...f, code: e.target.value }))}
+              onChange={(e) => patchForm({ code: e.target.value })}
               placeholder="VD: HR"
+              className={cn(fieldErrors.code && 'border-destructive')}
+              aria-invalid={Boolean(fieldErrors.code)}
             />
+            <FieldError message={fieldErrors.code} />
           </div>
           <div>
-            <label className="mb-1 block text-xs text-muted-foreground">Tên</label>
+            <label className="mb-1 block text-xs text-muted-foreground">
+              Tên
+              <RequiredMark />
+            </label>
             <Input
               value={form.name}
-              onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+              onChange={(e) => patchForm({ name: e.target.value })}
               placeholder="VD: Nhân sự"
+              className={cn(fieldErrors.name && 'border-destructive')}
+              aria-invalid={Boolean(fieldErrors.name)}
             />
+            <FieldError message={fieldErrors.name} />
           </div>
           <div>
             <label className="mb-1 block text-xs text-muted-foreground">Mô tả</label>
             <Input
               value={form.description}
-              onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+              onChange={(e) => patchForm({ description: e.target.value })}
               placeholder="Tùy chọn"
+              className={cn(fieldErrors.description && 'border-destructive')}
+              aria-invalid={Boolean(fieldErrors.description)}
             />
+            <FieldError message={fieldErrors.description} />
           </div>
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="outline" onClick={() => setOpen(false)}>
