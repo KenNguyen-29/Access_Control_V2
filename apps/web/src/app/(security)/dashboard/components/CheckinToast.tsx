@@ -5,9 +5,13 @@ import { AccessAction, CheckinEvent } from '@acv2/shared';
 import { AlertTriangle, LogOut, UserCheck, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-const AUTO_HIDE_MS = 6000;
-
-export default function CheckinToast({ event }: { event: CheckinEvent | null }) {
+export default function CheckinToast({
+  event,
+  autoHideMs = 6000,
+}: {
+  event: CheckinEvent | null;
+  autoHideMs?: number;
+}) {
   const [visible, setVisible] = useState(false);
   const [shown, setShown] = useState<CheckinEvent | null>(null);
 
@@ -18,9 +22,9 @@ export default function CheckinToast({ event }: { event: CheckinEvent | null }) 
     setShown(event);
     setVisible(true);
 
-    const timer = window.setTimeout(() => setVisible(false), AUTO_HIDE_MS);
+    const timer = window.setTimeout(() => setVisible(false), autoHideMs);
     return () => window.clearTimeout(timer);
-  }, [event?.id, event?.warningMessage, event?.action]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [event?.id, event?.warningMessage, event?.action, autoHideMs]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!shown || !visible) return null;
 

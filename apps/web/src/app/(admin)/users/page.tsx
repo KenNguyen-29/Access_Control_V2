@@ -1,8 +1,19 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, Pencil, Trash2, Search, X, RefreshCw, ChevronLeft, ChevronRight } from 'lucide-react';
+import {
+  Plus,
+  Pencil,
+  Trash2,
+  Search,
+  X,
+  RefreshCw,
+  ChevronLeft,
+  ChevronRight,
+  Download,
+  Upload,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
@@ -16,10 +27,12 @@ import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import {
   createUser,
   deleteUser,
+  downloadUsersImportTemplate,
   enrollFace,
   getAccessZones,
   getDepartments,
   getUsers,
+  importUsers,
   provisionUser,
   updateUser,
   type Department,
@@ -33,6 +46,15 @@ import {
 } from '@/lib/formValidation';
 import { FieldError, RequiredMark } from '@/components/ui/field-error';
 import { cn } from '@/lib/utils';
+
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
 const EMPTY_FORM = {
   employeeCode: '',
@@ -142,6 +164,9 @@ export default function UsersPage() {
   const [form, setForm] = useState(EMPTY_FORM);
   const [fieldErrors, setFieldErrors] = useState<UserFormFieldErrors>({});
   const [deleteTarget, setDeleteTarget] = useState<User | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [importErrors, setImportErrors] = useState<string | null>(null);
+  const importInputRef = useRef<HTMLInputElement>(null);
 
   const departmentId = deptFilter === 'all' ? undefined : deptFilter;
 
@@ -360,6 +385,51 @@ export default function UsersPage() {
     deleteMutation.mutate(deleteTarget);
   }
 
+  async function onDownloadTemplate() {
+    setError(null);
+    try {
+      const blob = await downloadUsersImportTemplate();
+      downloadBlob(blob, 'mau-nhan-su.xlsx');
+      setNotice('Đã tải mẫu Excel nhân sự');
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Tải mẫu thất bại');
+    }
+  }
+
+  async function onImportFile(file: File | undefined) {
+    if (!file) return;
+    setImporting(true);
+    setError(null);
+    setImportErrors(null);
+    setNotice(null);
+    try {
+      const result = await importUsers(file);
+      const facePart =
+        result.facesEnrolled != null ? `, FaceID ${result.facesEnrolled}` : '';
+      const zonePart =
+        result.zonesAssigned != null ? `, khu vực ${result.zonesAssigned}` : '';
+      const errPart = result.errors.length > 0 ? `, ${result.errors.length} lỗi` : '';
+      setNotice(
+        `Import xong: tạo ${result.created}, cập nhật ${result.updated}, bỏ qua ${result.skipped}${facePart}${zonePart}${errPart}.`,
+      );
+      if (result.errors.length > 0) {
+        setImportErrors(
+          result.errors
+            .slice(0, 20)
+            .map((e) => `Dòng ${e.row}: ${e.message}`)
+            .join('\n') + (result.errors.length > 20 ? '\n…' : ''),
+        );
+      }
+      void queryClient.invalidateQueries({ queryKey: ['users'] });
+      setPage(1);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Nhập Excel thất bại');
+    } finally {
+      setImporting(false);
+      if (importInputRef.current) importInputRef.current.value = '';
+    }
+  }
+
   return (
     <PageShell
       badge="Quản trị"
@@ -367,6 +437,33 @@ export default function UsersPage() {
       subtitle="Danh sách nhân viên, phòng ban và thông tin liên hệ."
       actions={
         <>
+          <input
+            ref={importInputRef}
+            type="file"
+            accept=".xlsx,.xls,.zip"
+            className="hidden"
+            onChange={(e) => void onImportFile(e.target.files?.[0])}
+          />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void onDownloadTemplate()}
+            disabled={loading || importing}
+            title="Mẫu: dán ảnh vào cột Ảnh; khu vực nhiều tên cách nhau bởi ;. ZIP = Excel + ảnh."
+          >
+            <Download className="h-4 w-4" />
+            Tải mẫu Excel
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => importInputRef.current?.click()}
+            disabled={loading || importing}
+            title="Nhận .xlsx (ảnh dán trong file) hoặc .zip (Excel + ảnh)"
+          >
+            <Upload className="h-4 w-4" />
+            {importing ? 'Đang import...' : 'Import Excel'}
+          </Button>
           <Button variant="outline" size="sm" onClick={() => load()} disabled={loading}>
             <RefreshCw className={loading ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
             Làm mới
@@ -382,6 +479,11 @@ export default function UsersPage() {
         <p className="mb-4 rounded-sm border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
           {notice}
         </p>
+      )}
+      {importErrors && (
+        <pre className="mb-4 max-h-40 overflow-y-auto whitespace-pre-wrap rounded-sm border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+          {importErrors}
+        </pre>
       )}
       <DesignCard title="Tìm kiếm & bộ lọc">
         <div className="grid grid-cols-1 items-end gap-4 sm:grid-cols-2 lg:grid-cols-[1fr_200px_auto]">

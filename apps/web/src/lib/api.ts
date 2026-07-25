@@ -325,6 +325,28 @@ export async function createUser(data: Partial<User> & { employeeCode?: string; 
   return apiRequest<User>('/users', { method: 'POST', body: JSON.stringify(data) });
 }
 
+export type UsersImportResult = {
+  created: number;
+  updated: number;
+  skipped: number;
+  facesEnrolled?: number;
+  zonesAssigned?: number;
+  errors: Array<{ row: number; message: string }>;
+};
+
+export async function downloadUsersImportTemplate() {
+  return apiRequest<Blob>('/users/import-template');
+}
+
+export async function importUsers(file: File) {
+  const form = new FormData();
+  form.append('file', file);
+  return apiRequest<UsersImportResult>('/users/import', {
+    method: 'POST',
+    body: form,
+  });
+}
+
 export type UserProvisionResult = {
   userId: string;
   zoneIds: string[];
@@ -758,7 +780,7 @@ export type UserAccessSummary = {
   }>;
 };
 
-export type SystemSetting = { id: string; key: string; value: string };
+export type SystemSetting = { id: string; key: string; value: string; isMasked?: boolean };
 
 export type CredentialRow = {
   id: string;
@@ -878,6 +900,83 @@ export async function upsertSystemSetting(key: string, value: string) {
     method: 'PUT',
     body: JSON.stringify({ value }),
   });
+}
+
+export type AuditLogRow = {
+  id: string;
+  action: string;
+  entity: string;
+  entityId?: string | null;
+  actorId?: string | null;
+  metadata?: unknown;
+  createdAt: string;
+};
+
+export async function getAuditLogs(params?: {
+  page?: number;
+  pageSize?: number;
+  from?: string;
+  to?: string;
+  actorId?: string;
+  entity?: string;
+  action?: string;
+}) {
+  const q = new URLSearchParams();
+  if (params?.page) q.set('page', String(params.page));
+  if (params?.pageSize) q.set('pageSize', String(params.pageSize));
+  if (params?.from) q.set('from', params.from);
+  if (params?.to) q.set('to', params.to);
+  if (params?.actorId) q.set('actorId', params.actorId);
+  if (params?.entity) q.set('entity', params.entity);
+  if (params?.action) q.set('action', params.action);
+  const qs = q.toString();
+  return apiRequest<PaginatedData<AuditLogRow>>(`/audit-logs${qs ? `?${qs}` : ''}`);
+}
+
+export type IntegrationStatus = {
+  akuvox: {
+    webhookUrl: string;
+    tokenConfigured: boolean;
+    allowedIps: string;
+    mockMode: boolean;
+    source: { token: string; ips: string };
+  };
+  redis: {
+    enabled: boolean;
+    status: boolean | 'skipped';
+    host: string;
+    port: string;
+    note: string;
+  };
+  queue: unknown;
+};
+
+export async function getIntegrationStatus() {
+  return apiRequest<IntegrationStatus>('/integration/status');
+}
+
+export type BackupStatus = {
+  enabled: boolean;
+  cron: string;
+  retentionDays: number;
+  backupDir: string;
+  files: Array<{ name: string; size: number; mtime: string }>;
+};
+
+export async function getBackupStatus() {
+  return apiRequest<BackupStatus>('/backup/status');
+}
+
+export async function runBackupNow() {
+  return apiRequest<unknown>('/backup/run', { method: 'POST' });
+}
+
+export async function rescheduleBackup() {
+  return apiRequest<BackupStatus>('/backup/reschedule', { method: 'POST' });
+}
+
+export async function runRetentionNow() {
+  return apiRequest<unknown>('/retention/run', { method: 'POST' });
 }
 
 export async function getCredentialsList(status?: 'active' | 'revoked') {

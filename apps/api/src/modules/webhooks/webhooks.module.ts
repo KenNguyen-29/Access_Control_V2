@@ -7,6 +7,7 @@ import { AkuvoxWebhookSecurityService } from './akuvox-webhook-security.service'
 import { AKUVOX_QUEUE } from '../queue/queue.constants';
 import { QueueModule } from '../queue/queue.module';
 import { EventsModule } from '../events/events.module';
+import { SystemSettingsModule } from '../system-settings/system-settings.module';
 import { isRedisEnabled } from '../../common/utils/redis.util';
 
 const redisImports = isRedisEnabled()
@@ -18,7 +19,7 @@ const redisImports = isRedisEnabled()
   : [];
 
 @Module({
-  imports: [QueueModule, EventsModule, ...redisImports],
+  imports: [QueueModule, EventsModule, SystemSettingsModule, ...redisImports],
   controllers: [WebhooksController, AkuvoxDoorLogController],
   providers: [WebhooksService, AkuvoxWebhookSecurityService],
   exports: [WebhooksService, AkuvoxWebhookSecurityService],

@@ -69,7 +69,7 @@ export class AkuvoxDoorLogController {
     queryToken: string | undefined,
     isProbe: boolean,
   ) {
-    const clientIp = this.security.assertRequestAllowed({
+    const clientIp = await this.security.assertRequestAllowed({
       remoteAddress: req.socket.remoteAddress,
       forwardedFor: req.headers['x-forwarded-for'],
       headerToken,

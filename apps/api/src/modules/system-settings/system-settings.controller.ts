@@ -31,7 +31,10 @@ export class SystemSettingsController {
   }
 
   @Put('groups/access-zone-schedules')
-  async putSchedules(@Body() dto: AccessZoneSchedulesDto, @Req() req: { user?: { userId?: string } }) {
+  async putSchedules(
+    @Body() dto: AccessZoneSchedulesDto,
+    @Req() req: { user?: { userId?: string } },
+  ) {
     return successResponse(
       await this.service.putAccessZoneSchedules(dto.schedules, req.user?.userId),
       'Schedules updated',

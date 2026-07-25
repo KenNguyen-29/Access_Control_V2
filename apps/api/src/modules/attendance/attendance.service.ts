@@ -4,6 +4,8 @@ import { AccessAction, AttendanceRecord, AttendanceStatus, WorkShift } from '@pr
 import * as ExcelJS from 'exceljs';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginationDto } from '../../common/dto/pagination.dto';
+import { SystemSettingsService } from '../system-settings/system-settings.service';
+import { SETTING_KEY } from '../system-settings/system-setting-keys';
 import { AttendanceCalculationService } from './attendance-calculation.service';
 import {
   ATTENDANCE_HEADER_ALIASES,
@@ -41,18 +43,17 @@ const VALID_STATUSES = new Set<string>(Object.values(AttendanceStatus));
 
 @Injectable()
 export class AttendanceService {
-  private readonly punchCooldownMinutes: number;
-
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     private readonly calc: AttendanceCalculationService,
-  ) {
-    this.punchCooldownMinutes = Number(this.config.get<string>('PUNCH_COOLDOWN_MINUTES', '5'));
-  }
+    private readonly settings: SystemSettingsService,
+  ) {}
 
-  private punchCooldownMs(): number {
-    return this.punchCooldownMinutes * 60 * 1000;
+  private async punchCooldownMinutes(): Promise<number> {
+    const fromDb = await this.settings.getNumber(SETTING_KEY.PUNCH_COOLDOWN_MINUTES, NaN);
+    if (Number.isFinite(fromDb)) return Math.max(0, fromDb);
+    return Number(this.config.get<string>('PUNCH_COOLDOWN_MINUTES', '5'));
   }
 
   private utcDateOnly(d: Date): Date {
@@ -91,7 +92,8 @@ export class AttendanceService {
   }
 
   async processPunch(userId: string, eventTime: Date): Promise<PunchResult> {
-    const cooldownMinutes = this.punchCooldownMinutes;
+    const cooldownMinutes = await this.punchCooldownMinutes();
+    const policy = await this.calc.getPolicyOptions();
     // Resolve shift using calendar day first, then overnight-aware work date.
     const provisionalShift = await this.resolveShiftForUser(userId, eventTime);
     const workDate = this.calc.resolveWorkDateForPunch(provisionalShift, eventTime);
@@ -101,12 +103,17 @@ export class AttendanceService {
         userId,
         new Date(workDate.getUTCFullYear(), workDate.getUTCMonth(), workDate.getUTCDate(), 12),
       ));
+    const effectiveShift = shift
+      ? this.calc.applyLateGraceFloor(shift, policy.lateGraceFloor)
+      : null;
     const existing = await this.prisma.attendanceRecord.findUnique({
       where: { userId_date: { userId, date: workDate } },
     });
 
     if (!existing?.checkInAt) {
-      const lateMinutes = shift ? this.calc.computeLateMinutes(shift, eventTime) : 0;
+      const lateMinutes = effectiveShift
+        ? this.calc.computeLateMinutes(effectiveShift, eventTime)
+        : 0;
 
       const record = await this.prisma.attendanceRecord.upsert({
         where: { userId_date: { userId, date: workDate } },
@@ -143,7 +150,7 @@ export class AttendanceService {
     }
 
     const elapsedMs = eventTime.getTime() - existing.checkInAt.getTime();
-    if (elapsedMs < this.punchCooldownMs()) {
+    if (elapsedMs < cooldownMinutes * 60 * 1000) {
       return {
         outcome: 'IGNORED',
         record: existing,
@@ -153,8 +160,11 @@ export class AttendanceService {
       };
     }
 
-    const { earlyLeaveMinutes, otMinutes } = shift
-      ? this.calc.computeEarlyLeaveAndOt(shift, eventTime)
+    const { earlyLeaveMinutes, otMinutes } = effectiveShift
+      ? this.calc.computeEarlyLeaveAndOt(effectiveShift, eventTime, {
+          earlyLeaveGraceMinutes: policy.earlyLeaveGraceMinutes,
+          otAfterMinutes: policy.otAfterMinutes,
+        })
       : { earlyLeaveMinutes: 0, otMinutes: 0 };
 
     const lateMinutes = existing.lateMinutes ?? 0;

@@ -28,6 +28,10 @@ export const queryKeys = {
   userAccessSummary: (userId: string) => ['userAccessSummary', userId] as const,
   accessZoneSchedules: () => ['accessZoneSchedules'] as const,
   systemSettings: () => ['systemSettings'] as const,
+  integrationStatus: () => ['integrationStatus'] as const,
+  backupStatus: () => ['backupStatus'] as const,
+  auditLogs: (params?: Record<string, unknown>) =>
+    params ? (['auditLogs', params] as const) : (['auditLogs'] as const),
   credentials: (status?: string) =>
     status ? (['credentials', status] as const) : (['credentials'] as const),
   emergencyDashboard: (eventId?: string) =>

@@ -16,14 +16,25 @@ import {
   upsertSystemSetting,
   type SystemSetting,
 } from '@/lib/api';
-import { validateRetentionDays } from '@/lib/formValidation';
+import { validateAttendanceRetentionDays, validateRetentionDays } from '@/lib/formValidation';
 import { cn } from '@/lib/utils';
 
-const STORAGE_KEYS = [SETTING_KEYS.LOG_RETENTION_DAYS, SETTING_KEYS.STORAGE_RETENTION_DAYS] as const;
+const STORAGE_KEYS = [
+  SETTING_KEYS.LOG_RETENTION_DAYS,
+  SETTING_KEYS.STORAGE_RETENTION_DAYS,
+  SETTING_KEYS.ATTENDANCE_RETENTION_DAYS,
+] as const;
 
 const LABELS: Record<string, string> = {
   [SETTING_KEYS.LOG_RETENTION_DAYS]: 'Giữ access log (ngày)',
   [SETTING_KEYS.STORAGE_RETENTION_DAYS]: 'Giữ snapshot / lưu trữ (ngày)',
+  [SETTING_KEYS.ATTENDANCE_RETENTION_DAYS]: 'Giữ lịch sử chấm công (ngày)',
+};
+
+const DEFAULTS: Record<string, string> = {
+  [SETTING_KEYS.LOG_RETENTION_DAYS]: '90',
+  [SETTING_KEYS.STORAGE_RETENTION_DAYS]: '30',
+  [SETTING_KEYS.ATTENDANCE_RETENTION_DAYS]: '90',
 };
 
 export default function StorageSettingsPage() {
@@ -38,6 +49,7 @@ export default function StorageSettingsPage() {
     queryKey: queryKeys.systemSettings(),
     queryFn: () => getSystemSettings(),
   });
+
   const loading = settingsQuery.isLoading;
   const displayError =
     error ??
@@ -52,11 +64,10 @@ export default function StorageSettingsPage() {
     const byKey = Object.fromEntries(
       all.filter((s) => (STORAGE_KEYS as readonly string[]).includes(s.key)).map((s) => [s.key, s]),
     );
-    // Ensure both keys appear even if missing from API
     return STORAGE_KEYS.map(
       (key) =>
         byKey[key] ??
-        ({ id: key, key, value: key === SETTING_KEYS.LOG_RETENTION_DAYS ? '90' : '30' } as SystemSetting),
+        ({ id: key, key, value: DEFAULTS[key] ?? '30' } as SystemSetting),
     );
   }, [settingsQuery.data]);
 
@@ -83,7 +94,10 @@ export default function StorageSettingsPage() {
   const saving = saveMutation.isPending;
 
   function saveEdit(key: string) {
-    const err = validateRetentionDays(editValue);
+    const err =
+      key === SETTING_KEYS.ATTENDANCE_RETENTION_DAYS
+        ? validateAttendanceRetentionDays(editValue)
+        : validateRetentionDays(editValue);
     setFieldError(err);
     if (err) {
       setError('Vui lòng kiểm tra lại thông tin đã nhập');
@@ -97,7 +111,7 @@ export default function StorageSettingsPage() {
   return (
     <PageShell
       title="Lưu trữ"
-      subtitle="Thời gian giữ log và dữ liệu snapshot"
+      subtitle="Thời gian giữ access log, snapshot và lịch sử chấm công"
       badge="Settings"
       actions={
         <Button variant="outline" size="sm" onClick={() => load()} disabled={loading}>
@@ -112,12 +126,8 @@ export default function StorageSettingsPage() {
         </p>
       )}
 
-      <QueryBoundary
-        isLoading={loading}
-        error={displayError}
-        onRetry={() => load()}
-      >
-        <div className="grid gap-4 md:grid-cols-2">
+      <QueryBoundary isLoading={loading} error={displayError} onRetry={() => load()}>
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {settings.map((s) => (
             <DesignCard
               key={s.key}
@@ -128,12 +138,10 @@ export default function StorageSettingsPage() {
                 <div>
                   <div className="flex items-center gap-2">
                     <Input
-                      className={cn(
-                        'h-9 max-w-[120px]',
-                        fieldError && 'border-destructive',
-                      )}
+                      className={cn('h-9 max-w-[120px]', fieldError && 'border-destructive')}
                       type="number"
-                      min={1}
+                      min={s.key === SETTING_KEYS.ATTENDANCE_RETENTION_DAYS ? 60 : 1}
+                      max={s.key === SETTING_KEYS.ATTENDANCE_RETENTION_DAYS ? 90 : 3650}
                       value={editValue}
                       onChange={(e) => {
                         setEditValue(e.target.value);
@@ -141,12 +149,7 @@ export default function StorageSettingsPage() {
                       }}
                       aria-invalid={Boolean(fieldError)}
                     />
-                    <Button
-                      size="icon"
-                      disabled={saving}
-                      onClick={() => saveEdit(s.key)}
-                      title="Lưu"
-                    >
+                    <Button size="icon" disabled={saving} onClick={() => saveEdit(s.key)} title="Lưu">
                       <Check className="h-4 w-4" />
                     </Button>
                     <Button
@@ -173,6 +176,12 @@ export default function StorageSettingsPage() {
                 </div>
               )}
               <p className="mt-2 text-xs text-muted-foreground font-mono">{s.key}</p>
+              {s.key === SETTING_KEYS.ATTENDANCE_RETENTION_DAYS && (
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Tự động xoá bản ghi chấm công cũ hơn N ngày (chỉ cho phép 60–90). Job chạy hàng ngày
+                  lúc 03:00.
+                </p>
+              )}
             </DesignCard>
           ))}
         </div>

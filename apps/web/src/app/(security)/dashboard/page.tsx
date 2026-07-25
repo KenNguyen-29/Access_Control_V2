@@ -20,10 +20,12 @@ import {
   getAccessLogs,
   getDevices,
   getEmergencyDashboard,
+  getSystemSettings,
   updateMusterStatus,
   type AccessLog,
   type Device,
 } from '@/lib/api';
+import { SETTING_KEYS } from '@/lib/settingsCatalog';
 import { AccessAction, type CheckinEvent } from '@acv2/shared';
 import EventPopup from './components/EventPopup';
 import CheckinToast from './components/CheckinToast';
@@ -87,10 +89,30 @@ export default function DashboardPage() {
   const [search, setSearch] = useState('');
   const [selectedCode, setSelectedCode] = useState<string>(DEMO_CAMERAS[0]?.code ?? '');
   const [layout, setLayout] = useState<number>(4);
+  const [popupTimeoutMs, setPopupTimeoutMs] = useState(6000);
+  const [alertSoundEnabled, setAlertSoundEnabled] = useState(false);
   const [tab, setTab] = useState('events');
   const [detailCam, setDetailCam] = useState<CameraItem | null>(null);
   const [emergencyOpen, setEmergencyOpen] = useState(false);
   const [emergencyPeople, setEmergencyPeople] = useState<EmergencyOverlayPerson[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    getSystemSettings()
+      .then((rows) => {
+        if (cancelled) return;
+        const map = Object.fromEntries(rows.map((s) => [s.key, s.value]));
+        const layoutVal = Number(map[SETTING_KEYS.CAMERA_DEFAULT_LAYOUT] || 4);
+        if (LAYOUTS.some((l) => l.value === layoutVal)) setLayout(layoutVal);
+        const timeout = Number(map[SETTING_KEYS.CHECKIN_POPUP_TIMEOUT_MS] || 6000);
+        if (Number.isFinite(timeout) && timeout >= 1000) setPopupTimeoutMs(timeout);
+        setAlertSoundEnabled(map[SETTING_KEYS.ALERT_SOUND_ENABLED] === 'true');
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Catch-up: when socket connects, pull recent access logs so we don't miss emits while offline.
   useEffect(() => {
@@ -316,7 +338,7 @@ export default function DashboardPage() {
           )}
         </button>
 
-        <CheckinToast event={lastEvent} />
+        <CheckinToast event={lastEvent} autoHideMs={popupTimeoutMs} />
 
         <div className="min-h-0 flex-1 overflow-y-auto">
           <CameraGrid
@@ -422,6 +444,7 @@ export default function DashboardPage() {
       <EmergencyOverlay
         open={emergencyOpen}
         people={emergencyPeople}
+        alertSoundEnabled={alertSoundEnabled}
         onMarkSafe={(id) => void handleMarkSafe(id)}
         onClose={() => {
           setEmergencyOpen(false);

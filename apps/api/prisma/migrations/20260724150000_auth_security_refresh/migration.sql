@@ -36,6 +36,11 @@ DO $$ BEGIN
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 
+-- Repair legacy bad rows before adding CHECK (endDate must be >= startDate or null)
+UPDATE "employee_shifts"
+SET "endDate" = "startDate"
+WHERE "endDate" IS NOT NULL AND "endDate" < "startDate";
+
 -- Date range integrity for employee shift assignments
 DO $$ BEGIN
   ALTER TABLE "employee_shifts"

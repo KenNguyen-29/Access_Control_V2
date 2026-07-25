@@ -9,6 +9,9 @@ import { SettingsSidebar } from '@/components/settings/SettingsSidebar';
 import { SettingsGeneralPanel } from '@/components/settings/SettingsGeneralPanel';
 import { SettingsLinkGrid } from '@/components/settings/SettingsLinkGrid';
 import { SettingsDataPanel } from '@/components/settings/SettingsDataPanel';
+import { SettingsAttendancePanel } from '@/components/settings/SettingsAttendancePanel';
+import { SettingsMonitoringPanel } from '@/components/settings/SettingsMonitoringPanel';
+import { SettingsIntegrationPanel } from '@/components/settings/SettingsIntegrationPanel';
 import {
   getSectionLinks,
   SETTINGS_NAV,
@@ -18,6 +21,7 @@ import {
 import { queryKeys } from '@/lib/queryKeys';
 import {
   ApiError,
+  getIntegrationStatus,
   getSystemSettings,
   upsertSystemSetting,
 } from '@/lib/api';
@@ -27,6 +31,23 @@ export default function SettingsPage() {
   const [activeSection, setActiveSection] = useState<SettingsSectionId>('general');
   const [dateFormat, setDateFormat] = useState('dd/MM/yyyy');
   const [autoLogout, setAutoLogout] = useState(false);
+  const [attendance, setAttendance] = useState({
+    lateGrace: '5',
+    earlyLeaveGrace: '5',
+    punchCooldown: '5',
+    otAfter: '0',
+    otMultiplier: '1.25',
+  });
+  const [monitoring, setMonitoring] = useState({
+    layout: '4',
+    popupTimeoutMs: '6000',
+    alertSound: false,
+  });
+  const [integration, setIntegration] = useState({
+    webhookToken: '',
+    allowedIps: '',
+    mockMode: false,
+  });
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -34,6 +55,12 @@ export default function SettingsPage() {
     queryKey: queryKeys.systemSettings(),
     queryFn: () => getSystemSettings(),
   });
+  const integrationQuery = useQuery({
+    queryKey: queryKeys.integrationStatus(),
+    queryFn: () => getIntegrationStatus(),
+    enabled: activeSection === 'integration',
+  });
+
   const loading = settingsQuery.isLoading;
   const displayError =
     error ??
@@ -43,12 +70,28 @@ export default function SettingsPage() {
         ? 'Không tải được cài đặt'
         : null);
 
-  // Hydrate the general-panel form once settings arrive.
   useEffect(() => {
     if (!settingsQuery.data) return;
     const map = Object.fromEntries(settingsQuery.data.map((s) => [s.key, s.value]));
     setDateFormat(map[SETTING_KEYS.DATE_FORMAT] || 'dd/MM/yyyy');
     setAutoLogout(map[SETTING_KEYS.AUTO_LOGOUT_ENABLED] === 'true');
+    setAttendance({
+      lateGrace: map[SETTING_KEYS.ATTENDANCE_LATE_GRACE_MINUTES] || '5',
+      earlyLeaveGrace: map[SETTING_KEYS.ATTENDANCE_EARLY_LEAVE_GRACE_MINUTES] || '5',
+      punchCooldown: map[SETTING_KEYS.PUNCH_COOLDOWN_MINUTES] || '5',
+      otAfter: map[SETTING_KEYS.OT_AFTER_MINUTES] || '0',
+      otMultiplier: map[SETTING_KEYS.OT_MULTIPLIER] || '1.25',
+    });
+    setMonitoring({
+      layout: map[SETTING_KEYS.CAMERA_DEFAULT_LAYOUT] || '4',
+      popupTimeoutMs: map[SETTING_KEYS.CHECKIN_POPUP_TIMEOUT_MS] || '6000',
+      alertSound: map[SETTING_KEYS.ALERT_SOUND_ENABLED] === 'true',
+    });
+    setIntegration({
+      webhookToken: map[SETTING_KEYS.AKUVOX_WEBHOOK_TOKEN] || '',
+      allowedIps: map[SETTING_KEYS.AKUVOX_ALLOWED_IPS] || '',
+      mockMode: map[SETTING_KEYS.AKUVOX_MOCK_MODE] === 'true',
+    });
   }, [settingsQuery.data]);
 
   function loadSettings() {
@@ -56,7 +99,7 @@ export default function SettingsPage() {
     void queryClient.invalidateQueries({ queryKey: queryKeys.systemSettings() });
   }
 
-  const saveMutation = useMutation({
+  const saveGeneral = useMutation({
     mutationFn: (vals: { dateFormat: string; autoLogout: boolean }) =>
       Promise.all([
         upsertSystemSetting(SETTING_KEYS.DATE_FORMAT, vals.dateFormat),
@@ -70,13 +113,7 @@ export default function SettingsPage() {
     onError: (e) => setError(e instanceof ApiError ? e.message : 'Lưu thất bại'),
   });
 
-  function handleSave() {
-    setNotice(null);
-    setError(null);
-    saveMutation.mutate({ dateFormat, autoLogout });
-  }
-
-  const resetMutation = useMutation({
+  const resetGeneral = useMutation({
     mutationFn: () =>
       Promise.all([
         upsertSystemSetting(SETTING_KEYS.DATE_FORMAT, 'dd/MM/yyyy'),
@@ -89,15 +126,66 @@ export default function SettingsPage() {
     },
     onError: (e) => setError(e instanceof ApiError ? e.message : 'Khôi phục thất bại'),
   });
-  const saving = saveMutation.isPending || resetMutation.isPending;
 
-  function handleReset() {
-    setDateFormat('dd/MM/yyyy');
-    setAutoLogout(false);
-    setNotice(null);
-    setError(null);
-    resetMutation.mutate();
-  }
+  const saveAttendance = useMutation({
+    mutationFn: () =>
+      Promise.all([
+        upsertSystemSetting(SETTING_KEYS.ATTENDANCE_LATE_GRACE_MINUTES, attendance.lateGrace),
+        upsertSystemSetting(
+          SETTING_KEYS.ATTENDANCE_EARLY_LEAVE_GRACE_MINUTES,
+          attendance.earlyLeaveGrace,
+        ),
+        upsertSystemSetting(SETTING_KEYS.PUNCH_COOLDOWN_MINUTES, attendance.punchCooldown),
+        upsertSystemSetting(SETTING_KEYS.OT_AFTER_MINUTES, attendance.otAfter),
+        upsertSystemSetting(SETTING_KEYS.OT_MULTIPLIER, attendance.otMultiplier),
+      ]),
+    onSuccess: () => {
+      setNotice('Đã lưu quy tắc chấm công');
+      void queryClient.invalidateQueries({ queryKey: queryKeys.systemSettings() });
+    },
+    onError: (e) => setError(e instanceof ApiError ? e.message : 'Lưu thất bại'),
+  });
+
+  const saveMonitoring = useMutation({
+    mutationFn: () =>
+      Promise.all([
+        upsertSystemSetting(SETTING_KEYS.CAMERA_DEFAULT_LAYOUT, monitoring.layout),
+        upsertSystemSetting(SETTING_KEYS.CHECKIN_POPUP_TIMEOUT_MS, monitoring.popupTimeoutMs),
+        upsertSystemSetting(SETTING_KEYS.ALERT_SOUND_ENABLED, String(monitoring.alertSound)),
+      ]),
+    onSuccess: () => {
+      setNotice('Đã lưu cài đặt giám sát');
+      void queryClient.invalidateQueries({ queryKey: queryKeys.systemSettings() });
+    },
+    onError: (e) => setError(e instanceof ApiError ? e.message : 'Lưu thất bại'),
+  });
+
+  const saveIntegration = useMutation({
+    mutationFn: async () => {
+      const ops: Promise<unknown>[] = [
+        upsertSystemSetting(SETTING_KEYS.AKUVOX_ALLOWED_IPS, integration.allowedIps),
+        upsertSystemSetting(SETTING_KEYS.AKUVOX_MOCK_MODE, String(integration.mockMode)),
+      ];
+      const token = integration.webhookToken.trim();
+      if (token && !token.startsWith('****')) {
+        ops.push(upsertSystemSetting(SETTING_KEYS.AKUVOX_WEBHOOK_TOKEN, token));
+      }
+      await Promise.all(ops);
+    },
+    onSuccess: () => {
+      setNotice('Đã lưu cấu hình tích hợp');
+      void queryClient.invalidateQueries({ queryKey: queryKeys.systemSettings() });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.integrationStatus() });
+    },
+    onError: (e) => setError(e instanceof ApiError ? e.message : 'Lưu thất bại'),
+  });
+
+  const saving =
+    saveGeneral.isPending ||
+    resetGeneral.isPending ||
+    saveAttendance.isPending ||
+    saveMonitoring.isPending ||
+    saveIntegration.isPending;
 
   function renderSectionContent() {
     if (activeSection === 'general') {
@@ -115,8 +203,91 @@ export default function SettingsPage() {
             loading={loading}
             onDateFormatChange={setDateFormat}
             onAutoLogoutChange={setAutoLogout}
-            onSave={() => void handleSave()}
-            onReset={() => void handleReset()}
+            onSave={() => {
+              setNotice(null);
+              setError(null);
+              saveGeneral.mutate({ dateFormat, autoLogout });
+            }}
+            onReset={() => {
+              setDateFormat('dd/MM/yyyy');
+              setAutoLogout(false);
+              setNotice(null);
+              setError(null);
+              resetGeneral.mutate();
+            }}
+          />
+        </QueryBoundary>
+      );
+    }
+
+    if (activeSection === 'attendance') {
+      return (
+        <QueryBoundary isLoading={loading} error={displayError} onRetry={() => loadSettings()}>
+          {notice && (
+            <p className="mb-4 rounded-sm border border-primary/20 bg-primary/5 px-3 py-2 text-sm">
+              {notice}
+            </p>
+          )}
+          <SettingsAttendancePanel
+            values={attendance}
+            saving={saving}
+            loading={loading}
+            onChange={(patch) => setAttendance((prev) => ({ ...prev, ...patch }))}
+            onSave={() => {
+              setNotice(null);
+              setError(null);
+              saveAttendance.mutate();
+            }}
+          />
+        </QueryBoundary>
+      );
+    }
+
+    if (activeSection === 'monitoring') {
+      return (
+        <QueryBoundary isLoading={loading} error={displayError} onRetry={() => loadSettings()}>
+          {notice && (
+            <p className="mb-4 rounded-sm border border-primary/20 bg-primary/5 px-3 py-2 text-sm">
+              {notice}
+            </p>
+          )}
+          <SettingsMonitoringPanel
+            values={monitoring}
+            saving={saving}
+            loading={loading}
+            onChange={(patch) => setMonitoring((prev) => ({ ...prev, ...patch }))}
+            onSave={() => {
+              setNotice(null);
+              setError(null);
+              saveMonitoring.mutate();
+            }}
+          />
+        </QueryBoundary>
+      );
+    }
+
+    if (activeSection === 'integration') {
+      return (
+        <QueryBoundary isLoading={loading} error={displayError} onRetry={() => loadSettings()}>
+          {notice && (
+            <p className="mb-4 rounded-sm border border-primary/20 bg-primary/5 px-3 py-2 text-sm">
+              {notice}
+            </p>
+          )}
+          <SettingsIntegrationPanel
+            values={integration}
+            status={integrationQuery.data ?? null}
+            saving={saving}
+            loading={loading || integrationQuery.isLoading}
+            onChange={(patch) => setIntegration((prev) => ({ ...prev, ...patch }))}
+            onSave={() => {
+              setNotice(null);
+              setError(null);
+              saveIntegration.mutate();
+            }}
+            onRefreshStatus={() =>
+              void queryClient.invalidateQueries({ queryKey: queryKeys.integrationStatus() })
+            }
           />
         </QueryBoundary>
       );
@@ -129,13 +300,12 @@ export default function SettingsPage() {
     return <SettingsLinkGrid items={getSectionLinks(activeSection)} />;
   }
 
-  const sectionLabel =
-    SETTINGS_NAV.find((s) => s.id === activeSection)?.label ?? 'Chung';
+  const sectionLabel = SETTINGS_NAV.find((s) => s.id === activeSection)?.label ?? 'Chung';
 
   return (
     <PageShell
       title="Cài đặt"
-      subtitle="Cấu hình hệ thống, nhân sự, ra vào và lưu trữ"
+      subtitle="Cấu hình hệ thống, tích hợp, chấm công, giám sát và lưu trữ"
       badge="Settings"
     >
       <div className="flex h-full min-h-0 flex-col gap-4">

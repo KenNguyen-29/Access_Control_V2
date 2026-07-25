@@ -123,12 +123,13 @@ export function sendXlsx(res: {
   res.send(buffer);
 }
 
-/** Normalize header cell for flexible matching (accents / case). */
+/** Normalize header cell for flexible matching (accents / case / đ). */
 export function normalizeHeader(value: unknown): string {
   return cellToString(value)
     .toLowerCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/g, 'd')
     .replace(/\s+/g, ' ')
     .trim();
 }

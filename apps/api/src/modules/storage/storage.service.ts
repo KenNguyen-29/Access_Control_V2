@@ -6,6 +6,8 @@ import {
   HeadBucketCommand,
   CreateBucketCommand,
   GetObjectCommand,
+  ListObjectsV2Command,
+  DeleteObjectsCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { createReadStream, existsSync, mkdirSync, writeFileSync } from 'fs';
@@ -140,5 +142,39 @@ export class StorageService implements OnModuleInit {
     } catch {
       return false;
     }
+  }
+
+  /** Delete objects under prefix whose LastModified is older than cutoff. */
+  async deleteObjectsOlderThan(prefix: string, cutoff: Date): Promise<number> {
+    let deleted = 0;
+    let continuationToken: string | undefined;
+    do {
+      const listed = await this.client.send(
+        new ListObjectsV2Command({
+          Bucket: this.bucket,
+          Prefix: prefix,
+          ContinuationToken: continuationToken,
+        }),
+      );
+      const stale = (listed.Contents ?? []).filter(
+        (obj) => obj.Key && obj.LastModified && obj.LastModified < cutoff,
+      );
+      for (let i = 0; i < stale.length; i += 1000) {
+        const chunk = stale.slice(i, i + 1000);
+        if (!chunk.length) continue;
+        const res = await this.client.send(
+          new DeleteObjectsCommand({
+            Bucket: this.bucket,
+            Delete: {
+              Objects: chunk.map((o) => ({ Key: o.Key! })),
+              Quiet: true,
+            },
+          }),
+        );
+        deleted += res.Deleted?.length ?? chunk.length;
+      }
+      continuationToken = listed.IsTruncated ? listed.NextContinuationToken : undefined;
+    } while (continuationToken);
+    return deleted;
   }
 }

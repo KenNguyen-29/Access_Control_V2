@@ -22,7 +22,8 @@ export function SettingsDataPanel({ linkItems }: SettingsDataPanelProps) {
           <Download className="mt-0.5 h-4 w-4 shrink-0" />
           <p>
             Để xuất CSV / Excel, mở mục <strong className="text-foreground">Báo cáo</strong>. Thời
-            gian giữ log và snapshot chỉnh tại <strong className="text-foreground">Lưu trữ</strong>.
+            gian giữ log, snapshot và lịch sử chấm công chỉnh tại{' '}
+            <strong className="text-foreground">Lưu trữ</strong>.
           </p>
         </div>
       </DesignCard>

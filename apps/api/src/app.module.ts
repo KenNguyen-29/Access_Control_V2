@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { BullModule } from '@nestjs/bullmq';
+import { ScheduleModule } from '@nestjs/schedule';
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
@@ -21,6 +22,10 @@ import { AccessZonesModule } from './modules/access-zones/access-zones.module';
 import { PermissionsModule } from './modules/permissions/permissions.module';
 import { SystemSettingsModule } from './modules/system-settings/system-settings.module';
 import { EmergencyModule } from './modules/emergency/emergency.module';
+import { AuditLogsModule } from './modules/audit-logs/audit-logs.module';
+import { RetentionModule } from './modules/retention/retention.module';
+import { BackupModule } from './modules/backup/backup.module';
+import { IntegrationModule } from './modules/integration/integration.module';
 import { isRedisEnabled } from './common/utils/redis.util';
 
 const redisModules = isRedisEnabled()
@@ -40,6 +45,7 @@ const redisModules = isRedisEnabled()
       isGlobal: true,
       envFilePath: ['.env', '../../.env'],
     }),
+    ScheduleModule.forRoot(),
     ...redisModules,
     PrismaModule,
     StorageModule,
@@ -61,6 +67,10 @@ const redisModules = isRedisEnabled()
     PermissionsModule,
     SystemSettingsModule,
     EmergencyModule,
+    AuditLogsModule,
+    RetentionModule,
+    BackupModule,
+    IntegrationModule,
   ],
 })
 export class AppModule {}

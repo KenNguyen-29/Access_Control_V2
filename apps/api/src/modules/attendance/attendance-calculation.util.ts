@@ -98,16 +98,34 @@ export function computeEarlyArrivalMinutes(
   return Math.max(0, start - clock);
 }
 
+export type EarlyLeaveOtOptions = {
+  /** Minutes before shift end that still count as on-time leave. */
+  earlyLeaveGraceMinutes?: number;
+  /** Minutes after shift end before OT starts counting. */
+  otAfterMinutes?: number;
+};
+
 export function computeEarlyLeaveAndOt(
   shift: ShiftLike,
   checkOutAt: Date,
+  options: EarlyLeaveOtOptions = {},
 ): { earlyLeaveMinutes: number; otMinutes: number } {
   const end = shiftEndContinuousMinutes(shift);
   const event = eventContinuousMinutes(shift, checkOutAt);
+  const earlyGrace = Math.max(0, options.earlyLeaveGraceMinutes ?? 0);
+  const otAfter = Math.max(0, options.otAfterMinutes ?? 0);
+
   if (event < end) {
-    return { earlyLeaveMinutes: end - event, otMinutes: 0 };
+    return {
+      earlyLeaveMinutes: Math.max(0, end - event - earlyGrace),
+      otMinutes: 0,
+    };
   }
-  return { earlyLeaveMinutes: 0, otMinutes: event - end };
+
+  return {
+    earlyLeaveMinutes: 0,
+    otMinutes: Math.max(0, event - (end + otAfter)),
+  };
 }
 
 export function computeWorkedMinutes(
@@ -162,6 +180,7 @@ export function computeWorkingDayCredit(params: {
   checkInAt: Date | null;
   checkOutAt: Date | null;
   workedMinutes: number;
+  otMultiplier?: number;
 }): { kind: 'sunday' | 'ot' | 'late' | 'onTime' | null; cong: number } {
   const present =
     params.status !== 'ABSENT' &&
@@ -172,8 +191,9 @@ export function computeWorkingDayCredit(params: {
     typeof params.date === 'string'
       ? new Date(`${params.date.slice(0, 10)}T00:00:00`)
       : params.date;
+  const otCong = params.otMultiplier ?? 1.25;
   if (d.getDay() === 0) return { kind: 'sunday', cong: 1.5 };
-  if (params.otMinutes > 0 || params.status === 'OVERTIME') return { kind: 'ot', cong: 1.25 };
+  if (params.otMinutes > 0 || params.status === 'OVERTIME') return { kind: 'ot', cong: otCong };
   if (params.lateMinutes > 0 || params.status === 'LATE') return { kind: 'late', cong: 0.5 };
   return { kind: 'onTime', cong: 1 };
 }
@@ -184,6 +204,7 @@ export function computeMetricsFromTimes(
   checkOutAt: Date | null,
   workDate?: Date,
   asOf: Date = new Date(),
+  options: EarlyLeaveOtOptions = {},
 ): AttendanceMetrics {
   if (!shift) {
     return {
@@ -211,7 +232,7 @@ export function computeMetricsFromTimes(
   const lateMinutes = checkInAt ? computeLateMinutes(shift, checkInAt) : 0;
   const earlyArrivalMinutes = computeEarlyArrivalMinutes(checkInAt, shift);
   const { earlyLeaveMinutes, otMinutes } = checkOutAt
-    ? computeEarlyLeaveAndOt(shift, checkOutAt)
+    ? computeEarlyLeaveAndOt(shift, checkOutAt, options)
     : { earlyLeaveMinutes: 0, otMinutes: 0 };
   const wd =
     workDate ??

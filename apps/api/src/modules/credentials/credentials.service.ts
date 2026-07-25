@@ -1,11 +1,11 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { CredentialType, DeviceSyncStatus } from '@prisma/client';
+import sharp from 'sharp';
 import { PrismaService } from '../../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import { AkuvoxService } from '../devices/akuvox.service';
 import { CreateCredentialDto } from './dto/create-credential.dto';
 
-const FACE_JPEG_MIME = new Set(['image/jpeg', 'image/jpg']);
 const MAX_FACE_BYTES = 10 * 1024 * 1024;
 
 @Injectable()
@@ -64,35 +64,49 @@ export class CredentialsService {
   }
 
   async enrollFace(userId: string, file: Express.Multer.File) {
+    return this.enrollFaceBuffer(userId, file?.buffer, file?.mimetype);
+  }
+
+  /** Enroll face from an in-memory image buffer (import Excel paste / ZIP). Converts to JPEG. */
+  async enrollFaceBuffer(
+    userId: string,
+    buffer: Buffer | undefined,
+    _mimeHint?: string,
+  ) {
     const user = await this.prisma.user.findFirst({
       where: { id: userId, isDeleted: false },
     });
     if (!user) throw new NotFoundException('User not found');
 
-    if (!file?.buffer?.length) {
+    if (!buffer?.length) {
       throw new BadRequestException('Vui lòng chọn ảnh khuôn mặt');
     }
-    if (!FACE_JPEG_MIME.has(file.mimetype)) {
-      throw new BadRequestException('Chỉ hỗ trợ ảnh JPG/JPEG');
-    }
-    if (file.buffer.length < 100) {
+    if (buffer.length < 100) {
       throw new BadRequestException('Ảnh khuôn mặt không hợp lệ');
     }
-    if (file.buffer.length > MAX_FACE_BYTES) {
+    if (buffer.length > MAX_FACE_BYTES) {
       throw new BadRequestException('Ảnh khuôn mặt vượt quá 10MB');
     }
 
-    const key = `face-images/${user.employeeCode || user.id}.jpg`;
+    let jpeg: Buffer;
+    try {
+      jpeg = await sharp(buffer)
+        .rotate()
+        .resize({ width: 1024, height: 1024, fit: 'inside', withoutEnlargement: true })
+        .jpeg({ quality: 88 })
+        .toBuffer();
+    } catch {
+      throw new BadRequestException('Không đọc được ảnh (dán ảnh vào ô Excel hoặc dùng file JPG/PNG)');
+    }
 
-    // JPG trên ổ cứng; PostgreSQL chỉ lưu đường dẫn tương đối
-    this.storage.saveToDisk(key, file.buffer);
+    const key = `face-images/${user.employeeCode || user.id}.jpg`;
+    this.storage.saveToDisk(key, jpeg);
 
     await this.prisma.user.update({
       where: { id: user.id },
       data: { faceImagePath: key },
     });
 
-    // Deactivate previous FACE credentials, then create a fresh one pending sync
     await this.prisma.credential.updateMany({
       where: { userId: user.id, type: CredentialType.FACE, isDeleted: false },
       data: { isActive: false },
@@ -109,8 +123,6 @@ export class CredentialsService {
 
     const photoUrl = this.storage.getFileUrl(key);
 
-    // Only auto-sync if the user already has zone permissions.
-    // New-user flows assign zones via provisionUser *after* enroll — syncing here would race.
     const zoneCount = await this.prisma.userAccessPermission.count({
       where: { userId: user.id, isDeleted: false },
     });

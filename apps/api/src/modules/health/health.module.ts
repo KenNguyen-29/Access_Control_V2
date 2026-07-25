@@ -18,5 +18,6 @@ const redisImports = isRedisEnabled()
   imports: [EventsModule, ...redisImports],
   controllers: [HealthController],
   providers: [HealthService],
+  exports: [HealthService],
 })
 export class HealthModule {}

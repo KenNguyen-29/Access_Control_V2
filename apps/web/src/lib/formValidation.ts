@@ -25,7 +25,7 @@ const IPV4_RE =
 const CODE_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$/;
 const HH_MM_RE = /^([01]\d|2[0-3]):([0-5]\d)$/;
 const RTSP_RE = /^rtsps?:\/\/.+/i;
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
 
 /** Parse YYYY-MM-DD as local calendar date; rejects impossible dates (e.g. 2026-02-31). */
 export function parseIsoDateLocal(raw: string): Date | null {
@@ -423,5 +423,14 @@ export function validateRetentionDays(value: string): string | undefined {
   if (!value.trim() || !Number.isFinite(n)) return 'Vui lòng nhập số ngày';
   if (!Number.isInteger(n) || n < 1) return 'Số ngày phải là số nguyên ≥ 1';
   if (n > 3650) return 'Số ngày tối đa 3650';
+  return undefined;
+}
+
+/** Attendance history retention: clamp 60–90 days per Module 5. */
+export function validateAttendanceRetentionDays(value: string): string | undefined {
+  const n = Number(value);
+  if (!value.trim() || !Number.isFinite(n)) return 'Vui lòng nhập số ngày';
+  if (!Number.isInteger(n)) return 'Số ngày phải là số nguyên';
+  if (n < 60 || n > 90) return 'Giữ lịch sử chấm công trong khoảng 60–90 ngày';
   return undefined;
 }

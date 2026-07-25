@@ -1,11 +1,27 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+  Res,
+  UploadedFile,
+  UseInterceptors,
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { ApiBearerAuth, ApiBody, ApiConsumes, ApiTags } from '@nestjs/swagger';
+import { Response } from 'express';
 import { paginatedResponse, successResponse } from '../../common/utils/response.util';
 import { UsersService } from './users.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { ProvisionUserDto } from './dto/provision-user.dto';
 import { UsersIdsQueryDto, UsersQueryDto } from './dto/users-query.dto';
+import { sendXlsx } from './users-excel.util';
 
 @ApiTags('users')
 @ApiBearerAuth()
@@ -22,6 +38,32 @@ export class UsersController {
   @Get('ids')
   async findIds(@Query() query: UsersIdsQueryDto) {
     const result = await this.usersService.findIds(query);
+    return successResponse(result);
+  }
+
+  @Get('import-template')
+  async importTemplate(@Res() res: Response) {
+    const buffer = await this.usersService.buildImportTemplateBuffer();
+    sendXlsx(res, buffer, 'users-import-template.xlsx');
+  }
+
+  @Post('import')
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        file: { type: 'string', format: 'binary' },
+      },
+      required: ['file'],
+    },
+  })
+  @UseInterceptors(FileInterceptor('file'))
+  async import(@UploadedFile() file?: Express.Multer.File) {
+    if (!file?.buffer?.length) {
+      throw new BadRequestException('Vui lòng chọn file Excel (.xlsx) hoặc ZIP');
+    }
+    const result = await this.usersService.importFromUpload(file);
     return successResponse(result);
   }
 

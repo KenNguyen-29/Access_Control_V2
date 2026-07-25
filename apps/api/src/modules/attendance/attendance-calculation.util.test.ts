@@ -87,4 +87,20 @@ describe('attendance-calculation overnight', () => {
     );
     assert.equal(worked, 480); // 9h - 1h break
   });
+
+  it('early leave grace reduces earlyLeaveMinutes', () => {
+    const r = computeEarlyLeaveAndOt(dayShift, at(2026, 7, 23, 16, 57), {
+      earlyLeaveGraceMinutes: 5,
+    });
+    assert.equal(r.earlyLeaveMinutes, 0);
+    assert.equal(r.otMinutes, 0);
+  });
+
+  it('otAfterMinutes delays OT start', () => {
+    const r = computeEarlyLeaveAndOt(dayShift, at(2026, 7, 23, 17, 20), {
+      otAfterMinutes: 30,
+    });
+    assert.equal(r.earlyLeaveMinutes, 0);
+    assert.equal(r.otMinutes, 0);
+  });
 });

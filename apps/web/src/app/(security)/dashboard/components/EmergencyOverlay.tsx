@@ -18,6 +18,7 @@ interface EmergencyOverlayProps {
   people: EmergencyOverlayPerson[];
   onMarkSafe: (musterId: string) => void;
   onClose: () => void;
+  alertSoundEnabled?: boolean;
 }
 
 export default function EmergencyOverlay({
@@ -25,12 +26,34 @@ export default function EmergencyOverlay({
   people,
   onMarkSafe,
   onClose,
+  alertSoundEnabled = false,
 }: EmergencyOverlayProps) {
   const alarmRef = useRef<OscillatorNode | null>(null);
 
   useEffect(() => {
     if (!open) return;
     document.body.style.overflow = 'hidden';
+
+    if (alertSoundEnabled) {
+      try {
+        const Ctx =
+          window.AudioContext ||
+          (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+        const ctx = new Ctx();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = 540;
+        gain.gain.value = 0.03;
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        alarmRef.current = osc;
+      } catch {
+        /* ignore */
+      }
+    }
+
     return () => {
       try {
         alarmRef.current?.stop();
@@ -40,7 +63,7 @@ export default function EmergencyOverlay({
       alarmRef.current = null;
       document.body.style.overflow = '';
     };
-  }, [open]);
+  }, [open, alertSoundEnabled]);
 
   if (!open) return null;
 

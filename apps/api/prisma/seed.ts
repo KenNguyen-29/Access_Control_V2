@@ -145,6 +145,21 @@ async function main() {
     { key: 'AUTO_LOGOUT_ENABLED', value: 'false' },
     { key: 'LOG_RETENTION_DAYS', value: '90' },
     { key: 'STORAGE_RETENTION_DAYS', value: '30' },
+    { key: 'ATTENDANCE_RETENTION_DAYS', value: '90' },
+    { key: 'ATTENDANCE_LATE_GRACE_MINUTES', value: '5' },
+    { key: 'ATTENDANCE_EARLY_LEAVE_GRACE_MINUTES', value: '5' },
+    { key: 'PUNCH_COOLDOWN_MINUTES', value: '5' },
+    { key: 'OT_AFTER_MINUTES', value: '0' },
+    { key: 'OT_MULTIPLIER', value: '1.25' },
+    { key: 'CAMERA_DEFAULT_LAYOUT', value: '4' },
+    { key: 'CHECKIN_POPUP_TIMEOUT_MS', value: '6000' },
+    { key: 'ALERT_SOUND_ENABLED', value: 'false' },
+    { key: 'BACKUP_ENABLED', value: 'false' },
+    { key: 'BACKUP_CRON', value: '0 2 * * *' },
+    { key: 'BACKUP_RETENTION_DAYS', value: '14' },
+    { key: 'AKUVOX_WEBHOOK_TOKEN', value: '' },
+    { key: 'AKUVOX_ALLOWED_IPS', value: '' },
+    { key: 'AKUVOX_MOCK_MODE', value: 'false' },
   ];
   for (const s of settingsSeed) {
     await prisma.systemSetting.upsert({

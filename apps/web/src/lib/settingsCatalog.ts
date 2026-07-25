@@ -6,11 +6,20 @@ import {
   KeyRound,
   LayoutGrid,
   MapPin,
+  ScrollText,
   Shield,
   Users,
 } from 'lucide-react';
 
-export type SettingsSectionId = 'general' | 'hr' | 'access' | 'shifts' | 'data';
+export type SettingsSectionId =
+  | 'general'
+  | 'integration'
+  | 'attendance'
+  | 'monitoring'
+  | 'hr'
+  | 'access'
+  | 'shifts'
+  | 'data';
 
 export interface SettingsLinkItem {
   id: string;
@@ -96,14 +105,21 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   },
   {
     id: 'data',
-    label: 'Dữ liệu',
+    label: 'Bảo mật & dữ liệu',
     items: [
       {
         id: 'storage',
         path: '/settings/storage',
         icon: HardDrive,
         title: 'Lưu trữ',
-        description: 'Thời gian giữ log & snapshot',
+        description: 'Thời gian giữ log, snapshot & chấm công',
+      },
+      {
+        id: 'audit',
+        path: '/settings/audit',
+        icon: ScrollText,
+        title: 'Audit Log',
+        description: 'Nhật ký thao tác hệ thống',
       },
     ],
   },
@@ -111,11 +127,21 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
 
 export const SETTINGS_NAV: Array<{ id: SettingsSectionId; label: string }> = [
   { id: 'general', label: 'Chung' },
+  { id: 'integration', label: 'Tích hợp' },
+  { id: 'attendance', label: 'Chấm công' },
+  { id: 'monitoring', label: 'Giám sát' },
   ...SETTINGS_SECTIONS.map((s) => ({ id: s.id, label: s.label })),
 ];
 
 export function getSectionLinks(sectionId: SettingsSectionId): SettingsLinkItem[] {
-  if (sectionId === 'general') return [];
+  if (
+    sectionId === 'general' ||
+    sectionId === 'integration' ||
+    sectionId === 'attendance' ||
+    sectionId === 'monitoring'
+  ) {
+    return [];
+  }
   return SETTINGS_SECTIONS.find((s) => s.id === sectionId)?.items ?? [];
 }
 
@@ -124,4 +150,19 @@ export const SETTING_KEYS = {
   AUTO_LOGOUT_ENABLED: 'AUTO_LOGOUT_ENABLED',
   LOG_RETENTION_DAYS: 'LOG_RETENTION_DAYS',
   STORAGE_RETENTION_DAYS: 'STORAGE_RETENTION_DAYS',
+  ATTENDANCE_RETENTION_DAYS: 'ATTENDANCE_RETENTION_DAYS',
+  ATTENDANCE_LATE_GRACE_MINUTES: 'ATTENDANCE_LATE_GRACE_MINUTES',
+  ATTENDANCE_EARLY_LEAVE_GRACE_MINUTES: 'ATTENDANCE_EARLY_LEAVE_GRACE_MINUTES',
+  PUNCH_COOLDOWN_MINUTES: 'PUNCH_COOLDOWN_MINUTES',
+  OT_AFTER_MINUTES: 'OT_AFTER_MINUTES',
+  OT_MULTIPLIER: 'OT_MULTIPLIER',
+  CAMERA_DEFAULT_LAYOUT: 'CAMERA_DEFAULT_LAYOUT',
+  CHECKIN_POPUP_TIMEOUT_MS: 'CHECKIN_POPUP_TIMEOUT_MS',
+  ALERT_SOUND_ENABLED: 'ALERT_SOUND_ENABLED',
+  BACKUP_ENABLED: 'BACKUP_ENABLED',
+  BACKUP_CRON: 'BACKUP_CRON',
+  BACKUP_RETENTION_DAYS: 'BACKUP_RETENTION_DAYS',
+  AKUVOX_WEBHOOK_TOKEN: 'AKUVOX_WEBHOOK_TOKEN',
+  AKUVOX_ALLOWED_IPS: 'AKUVOX_ALLOWED_IPS',
+  AKUVOX_MOCK_MODE: 'AKUVOX_MOCK_MODE',
 } as const;

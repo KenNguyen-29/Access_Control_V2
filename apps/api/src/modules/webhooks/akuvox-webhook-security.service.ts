@@ -1,42 +1,85 @@
 import { ForbiddenException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { SystemSettingsService } from '../system-settings/system-settings.service';
+import { SETTING_KEY } from '../system-settings/system-setting-keys';
 import { extractClientIp } from './akuvox-door-log.util';
 
 @Injectable()
 export class AkuvoxWebhookSecurityService {
-  constructor(private readonly config: ConfigService) {}
+  constructor(
+    private readonly config: ConfigService,
+    private readonly settings: SystemSettingsService,
+  ) {}
 
-  assertRequestAllowed(params: {
+  async assertRequestAllowed(params: {
     remoteAddress?: string;
     forwardedFor?: string | string[];
     headerToken?: string;
     queryToken?: string;
-  }): string {
+  }): Promise<string> {
     const clientIp = extractClientIp(params.remoteAddress, params.forwardedFor);
-    this.assertIpAllowed(clientIp);
-    this.assertTokenAllowed(params.headerToken, params.queryToken);
+    await this.assertIpAllowed(clientIp);
+    await this.assertTokenAllowed(params.headerToken, params.queryToken);
     return clientIp;
   }
 
   getWebhookUrl(): string {
-    const base = this.config.get<string>('API_PUBLIC_URL', 'http://localhost:8080').replace(/\/$/, '');
+    const base = this.config
+      .get<string>('API_PUBLIC_URL', 'http://localhost:8080')
+      .replace(/\/$/, '');
     return `${base}/api/akuvox/door_log`;
   }
 
-  private assertIpAllowed(clientIp: string) {
-    const raw = this.config.get<string>('AKUVOX_ALLOWED_IPS', '');
-    const allowed = raw
+  async getIntegrationInfo() {
+    const [token, allowedIps, mockMode] = await Promise.all([
+      this.settings.getRaw(SETTING_KEY.AKUVOX_WEBHOOK_TOKEN),
+      this.settings.getRaw(SETTING_KEY.AKUVOX_ALLOWED_IPS),
+      this.settings.getBoolean(SETTING_KEY.AKUVOX_MOCK_MODE, false),
+    ]);
+    const envToken = this.config.get<string>('AKUVOX_WEBHOOK_TOKEN', '').trim();
+    const envIps = this.config.get<string>('AKUVOX_ALLOWED_IPS', '');
+    const envMock = this.config.get<string>('AKUVOX_MOCK_MODE', 'false') === 'true';
+
+    return {
+      webhookUrl: this.getWebhookUrl(),
+      tokenConfigured: Boolean((token && token.trim()) || envToken),
+      allowedIps: (allowedIps ?? envIps) || '',
+      mockMode: mockMode || envMock,
+      source: {
+        token: token && token.trim() ? 'db' : envToken ? 'env' : 'none',
+        ips: allowedIps != null && allowedIps !== '' ? 'db' : envIps ? 'env' : 'none',
+      },
+    };
+  }
+
+  private async resolveAllowedIps(): Promise<string[]> {
+    const fromDb = await this.settings.getRaw(SETTING_KEY.AKUVOX_ALLOWED_IPS);
+    const raw =
+      fromDb != null && fromDb !== ''
+        ? fromDb
+        : this.config.get<string>('AKUVOX_ALLOWED_IPS', '');
+    return raw
       .split(',')
       .map((value) => value.trim())
       .filter(Boolean);
+  }
+
+  private async resolveToken(): Promise<string> {
+    const fromDb = await this.settings.getRaw(SETTING_KEY.AKUVOX_WEBHOOK_TOKEN);
+    if (fromDb != null && fromDb.trim()) return fromDb.trim();
+    return this.config.get<string>('AKUVOX_WEBHOOK_TOKEN', '').trim();
+  }
+
+  private async assertIpAllowed(clientIp: string) {
+    const allowed = await this.resolveAllowedIps();
     if (allowed.length === 0) return;
     if (!allowed.includes(clientIp)) {
       throw new ForbiddenException('Forbidden source IP');
     }
   }
 
-  private assertTokenAllowed(headerToken?: string, queryToken?: string) {
-    const configured = this.config.get<string>('AKUVOX_WEBHOOK_TOKEN', '').trim();
+  private async assertTokenAllowed(headerToken?: string, queryToken?: string) {
+    const configured = await this.resolveToken();
     if (!configured) return;
     const provided = (headerToken || queryToken || '').trim();
     if (provided !== configured) {

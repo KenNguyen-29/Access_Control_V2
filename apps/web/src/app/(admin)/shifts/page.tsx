@@ -128,13 +128,12 @@ export default function ShiftsPage() {
   const filterTotal = filterIdsQuery.data?.total ?? 0;
   const loading = shiftsQuery.isLoading || assignmentsQuery.isLoading;
   const queryError = shiftsQuery.error ?? assignmentsQuery.error;
-  const displayError =
-    error ??
-    (queryError instanceof ApiError
+  const listError =
+    queryError instanceof ApiError
       ? queryError.message
       : queryError
         ? 'Không tải được ca làm việc'
-        : null);
+        : null;
 
   function load() {
     setError(null);
@@ -251,7 +250,6 @@ export default function ShiftsPage() {
     });
     setFieldErrors(errors);
     if (hasFormErrors(errors)) {
-      setError('Vui lòng kiểm tra lại thông tin đã nhập');
       return;
     }
     setError(null);
@@ -341,7 +339,6 @@ export default function ShiftsPage() {
     });
     setAssignFieldErrors(errors);
     if (hasFormErrors(errors)) {
-      setError('Vui lòng kiểm tra lại thông tin đã nhập');
       return;
     }
     setError(null);
@@ -375,6 +372,11 @@ export default function ShiftsPage() {
           {notice}
         </p>
       )}
+      {error && (
+        <p className="rounded-sm border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+          {error}
+        </p>
+      )}
 
       <DesignCard title="Hướng dẫn sử dụng">
         <Collapsible title="Mở rộng">
@@ -396,7 +398,7 @@ export default function ShiftsPage() {
       <DesignCard title={`Danh sách ca (${shifts.length})`} description="Các mẫu ca làm việc trong hệ thống.">
         <QueryBoundary
           isLoading={loading}
-          error={displayError}
+          error={listError}
           isEmpty={shifts.length === 0}
           onRetry={() => load()}
           emptyTitle="Chưa có ca làm việc"
@@ -907,6 +909,11 @@ export default function ShiftsPage() {
           {assignResult && (
             <p className="rounded-sm bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
               {assignResult}
+            </p>
+          )}
+          {error && assignOpen && (
+            <p className="rounded-sm border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+              {error}
             </p>
           )}
 

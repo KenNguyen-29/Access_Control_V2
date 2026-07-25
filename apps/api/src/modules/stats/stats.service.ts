@@ -181,14 +181,22 @@ export class StatsService {
     };
 
     const byUser = new Map<string, TimesheetRow>();
+    const policy = await this.calc.getPolicyOptions();
 
     for (const r of records) {
+      const effective = r.workShift
+        ? this.calc.applyLateGraceFloor(r.workShift, policy.lateGraceFloor)
+        : null;
       const metrics = this.calc.computeMetricsFromTimes(
-        r.workShift,
+        effective,
         r.checkInAt,
         r.checkOutAt,
         r.date,
         asOf,
+        {
+          earlyLeaveGraceMinutes: policy.earlyLeaveGraceMinutes,
+          otAfterMinutes: policy.otAfterMinutes,
+        },
       );
       // Prefer recomputed early/late/ot from shared calc; fall back to stored if no shift.
       const lateMinutes = r.workShift ? metrics.lateMinutes : r.lateMinutes;
@@ -277,13 +285,21 @@ export class StatsService {
       orderBy: [{ userId: 'asc' }, { date: 'asc' }],
     });
 
+    const policy = await this.calc.getPolicyOptions();
     const rows: WeeklyRow[] = records.map((r) => {
+      const effective = r.workShift
+        ? this.calc.applyLateGraceFloor(r.workShift, policy.lateGraceFloor)
+        : null;
       const metrics = this.calc.computeMetricsFromTimes(
-        r.workShift,
+        effective,
         r.checkInAt,
         r.checkOutAt,
         r.date,
         asOf,
+        {
+          earlyLeaveGraceMinutes: policy.earlyLeaveGraceMinutes,
+          otAfterMinutes: policy.otAfterMinutes,
+        },
       );
       return {
         userId: r.userId,
