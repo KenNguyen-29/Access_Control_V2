@@ -63,11 +63,12 @@ function dateOnly(raw: string | Date | null | undefined): string | null {
   return String(raw).slice(0, 10);
 }
 
-/** Còn hiệu lực nếu chưa có ngày kết thúc hoặc kết thúc >= hôm nay. */
+/** Còn hiệu lực nếu chưa có ngày kết thúc, hoặc ngày kết thúc vẫn ở tương lai.
+ *  endDate === hôm nay → Đã kết thúc (vừa bấm Kết thúc / hết hạn trong ngày). */
 function isAssignmentActive(a: EmployeeShift): boolean {
   const end = dateOnly(a.endDate);
   if (!end) return true;
-  return end >= todayDateOnly();
+  return end > todayDateOnly();
 }
 
 export default function ShiftsPage() {
@@ -885,10 +886,7 @@ export default function ShiftsPage() {
                 departmentId={assignDept || undefined}
                 emptyText="Không có nhân viên phù hợp."
                 renderItem={(u: User) => (
-                  <label
-                    key={u.id}
-                    className="flex cursor-pointer items-center gap-3 border-b border-border px-3 py-2 text-sm last:border-b-0 hover:bg-muted/20"
-                  >
+                  <label className="flex cursor-pointer items-center gap-3 border-b border-border px-3 py-2 text-sm last:border-b-0 hover:bg-muted/20">
                     <input
                       type="checkbox"
                       checked={selectedUserIds.has(u.id)}
@@ -960,7 +958,7 @@ export default function ShiftsPage() {
           endAssignmentMutation.mutate(endAssignmentTarget);
         }}
         title="Kết thúc phân ca"
-        message={`Kết thúc ca "${endAssignmentTarget?.workShift?.name ?? ''}" của ${endAssignmentTarget?.user?.fullName ?? 'nhân viên'} vào hôm nay (${todayDateOnly()})?`}
+        message={`Kết thúc ca "${endAssignmentTarget?.workShift?.name ?? ''}" của ${endAssignmentTarget?.user?.fullName ?? 'nhân viên'} vào hôm nay (${todayDateOnly()})? Trạng thái sẽ chuyển sang "Đã kết thúc".`}
         confirmLabel="Kết thúc"
         loading={endAssignmentMutation.isPending}
       />

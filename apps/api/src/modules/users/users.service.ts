@@ -87,7 +87,8 @@ export class UsersService {
         include: { department: true },
         skip: (page - 1) * pageSize,
         take: pageSize,
-        orderBy: { createdAt: 'desc' },
+        // Secondary id keeps offset pagination stable when createdAt ties (bulk seed).
+        orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
       }),
       this.prisma.user.count({ where }),
     ]);
@@ -102,7 +103,7 @@ export class UsersService {
       this.prisma.user.findMany({
         where,
         select: { id: true },
-        orderBy: { createdAt: 'desc' },
+        orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
       }),
       this.prisma.user.count({ where }),
     ]);

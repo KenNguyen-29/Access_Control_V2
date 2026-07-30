@@ -359,18 +359,30 @@ export class ShiftsService {
     if (!existing) throw new NotFoundException('Employee shift not found');
 
     // Use calendar date (YYYY-MM-DD) to avoid UTC timezone shifting @db.Date.
-    const today = new Date();
-    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-    const startStr = existing.startDate.toISOString().slice(0, 10);
+    const todayStr = todayDateOnlyLocal();
+    const startStr = dateOnlyUtc(existing.startDate);
     const endStrRaw = endDate?.trim() || todayStr;
-    // If ending before start (ca chưa tới ngày), treat as cancel-on-start-day.
-    const endStr = endStrRaw < startStr ? startStr : endStrRaw;
 
     if (existing.endDate) {
-      const currentEnd = existing.endDate.toISOString().slice(0, 10);
+      const currentEnd = dateOnlyUtc(existing.endDate);
+      // Already past last day (UI treats endDate === today as ended).
       if (currentEnd < todayStr) {
         throw new BadRequestException('Ca này đã kết thúc trước đó');
       }
+      if (currentEnd === todayStr) {
+        throw new BadRequestException('Ca này đã kết thúc trước đó');
+      }
+    }
+
+    // Immediate end (omit / hôm nay): mark last day = today so row stays with "Đã kết thúc".
+    // Do not soft-delete — only Xóa removes the record from the list.
+    let endStr: string;
+    if (!endDate?.trim() || endStrRaw === todayStr) {
+      endStr = todayStr < startStr ? startStr : todayStr;
+    } else if (endStrRaw < startStr) {
+      endStr = startStr;
+    } else {
+      endStr = endStrRaw;
     }
 
     assertEndOnOrAfterStart(startStr, endStr);

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { Fragment, useEffect, useMemo, useRef } from 'react';
 import { RefreshCw } from 'lucide-react';
 import type { User } from '@/lib/api';
 import { useUsersInfinite, type UsersInfiniteParams } from '@/hooks/useUsersInfinite';
@@ -11,6 +11,17 @@ type UserInfiniteListProps = UsersInfiniteParams & {
   className?: string;
 };
 
+function dedupeUsersById(items: User[]): User[] {
+  const seen = new Set<string>();
+  const out: User[] = [];
+  for (const user of items) {
+    if (seen.has(user.id)) continue;
+    seen.add(user.id);
+    out.push(user);
+  }
+  return out;
+}
+
 export function UserInfiniteList({
   renderItem,
   emptyText = 'Không có dữ liệu',
@@ -20,7 +31,10 @@ export function UserInfiniteList({
   const sentinelRef = useRef<HTMLDivElement>(null);
   const query = useUsersInfinite(params);
 
-  const users = query.data?.pages.flatMap((p) => p.items) ?? [];
+  const users = useMemo(
+    () => dedupeUsersById(query.data?.pages.flatMap((p) => p.items) ?? []),
+    [query.data?.pages],
+  );
   const hasMore = query.hasNextPage ?? false;
 
   useEffect(() => {
@@ -63,7 +77,9 @@ export function UserInfiniteList({
 
   return (
     <div className={className}>
-      {users.map((user) => renderItem(user))}
+      {users.map((user) => (
+        <Fragment key={user.id}>{renderItem(user)}</Fragment>
+      ))}
       <div ref={sentinelRef} className="h-1" aria-hidden />
       {query.isFetchingNextPage && (
         <div className="flex items-center justify-center py-2 text-xs text-muted-foreground">
