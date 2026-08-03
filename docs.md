@@ -98,6 +98,39 @@ docker compose -f docker-compose.prod.yml up -d --build
 
 Builds `apps/api` and `apps/web` images and wires them to postgres, redis, minio. Camera live view still relies on go2rtc running on the host.
 
+## Multi-site / VPN deploy
+
+Kiến trúc theo sơ đồ khách: **máy Face tại công trường chỉ gửi sự kiện**; toàn bộ xử lý chấm công chạy tại server trung tâm. Không dựng server local tại công trường.
+
+| Khái niệm | Trong soft |
+|-----------|------------|
+| Công trường | `AccessZone` (Settings → Zones) |
+| Máy nhận diện | Device `AKUVOX` gắn `zoneId` của công trường (1 Face / zone) |
+| Tripod / cổng xoay | Thiết bị vật lý do **relay** của máy Face điều khiển — không có device type riêng |
+| VPN nội bộ | Hạ tầng mạng (site ↔ trung tâm). Soft chỉ cần API reachable và webhook trỏ đúng IP server |
+
+### Checklist mỗi công trường mới
+
+1. Tạo zone (tên công trường) trên UI **Settings → Zones**.
+2. Đăng ký Device Akuvox: IP trên LAN/VPN, `code`, `zoneId`, username/password HTTP API.
+3. Trên web Akuvox → **Setting → Action URL** (Door / Relay Triggered), bật và dán:
+
+```text
+http://<IP_SERVER_VPN>:8080/api/webhooks/akuvox?ip=$ip&active_user=$active_user&relay1status=$relay1status
+```
+
+4. Trên server trung tâm (`.env` / `apps/api/.env`):
+   - `API_PUBLIC_URL=http://<IP_SERVER_VPN>:8080` (máy Face tải ảnh mặt từ URL này)
+   - `AKUVOX_MOCK_MODE=false`
+   - Firewall / Windows Firewall: mở **inbound TCP 8080** từ dải VPN của công trường
+5. Gán quyền zone cho nhân viên (provision) → sync face xuống máy thuộc zone đó.
+6. (Tuỳ chọn) Thêm Camera + mapping Akuvox↔Camera nếu cần live view trên màn Giám sát.
+
+### Lưu ý báo cáo
+
+- **Sự kiện ra vào** (`AccessLog`) gắn `deviceId` + `zoneId` → lọc theo công trường trên Giám sát / nhật ký.
+- **Chấm công ngày** (`AttendanceRecord`) vẫn theo nhân viên / ngày tại trung tâm (không tách giờ công theo site) — đúng mô hình “xử lý tại server tập trung”.
+
 ## API smoke tests
 
 ```bash

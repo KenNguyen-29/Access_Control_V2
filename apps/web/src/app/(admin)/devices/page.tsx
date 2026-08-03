@@ -72,6 +72,7 @@ export default function DevicesPage() {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
+  const [zoneFilter, setZoneFilter] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
@@ -119,21 +120,23 @@ export default function DevicesPage() {
   const akuvoxDevices = useMemo(() => items.filter((d) => d.deviceType === 'AKUVOX'), [items]);
   const cameras = useMemo(() => items.filter((d) => d.deviceType === 'CAMERA'), [items]);
 
-  const hasActiveFilters = search.trim() !== '' || typeFilter !== 'all';
+  const hasActiveFilters = search.trim() !== '' || typeFilter !== 'all' || zoneFilter !== '';
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return items.filter((d) => {
       if (typeFilter !== 'all' && d.deviceType !== typeFilter) return false;
+      if (zoneFilter && d.zoneId !== zoneFilter) return false;
       if (!q) return true;
       return (
         d.name.toLowerCase().includes(q) ||
         d.code.toLowerCase().includes(q) ||
         (d.ipAddress || '').toLowerCase().includes(q) ||
-        (d.location || '').toLowerCase().includes(q)
+        (d.location || '').toLowerCase().includes(q) ||
+        (d.zone?.name || '').toLowerCase().includes(q)
       );
     });
-  }, [items, search, typeFilter]);
+  }, [items, search, typeFilter, zoneFilter]);
 
   function load() {
     setError(null);
@@ -406,7 +409,7 @@ export default function DevicesPage() {
       )}
 
       <DesignCard title="Tìm kiếm & bộ lọc">
-        <div className="grid grid-cols-1 items-end gap-4 sm:grid-cols-2 lg:grid-cols-[1fr_200px_auto]">
+        <div className="grid grid-cols-1 items-end gap-4 sm:grid-cols-2 lg:grid-cols-[1fr_160px_1fr_auto]">
           <div>
             <label htmlFor="device-search" className="mb-1 block text-xs text-muted-foreground">
               Tìm kiếm
@@ -432,6 +435,19 @@ export default function DevicesPage() {
               <option value="CAMERA">CAMERA</option>
             </Select>
           </div>
+          <div>
+            <label htmlFor="device-zone" className="mb-1 block text-xs text-muted-foreground">
+              Công trường / khu vực
+            </label>
+            <Select id="device-zone" value={zoneFilter} onChange={(e) => setZoneFilter(e.target.value)}>
+              <option value="">Tất cả công trường</option>
+              {zones.map((z) => (
+                <option key={z.id} value={z.id}>
+                  {z.name}
+                </option>
+              ))}
+            </Select>
+          </div>
           {hasActiveFilters && (
             <Button
               variant="ghost"
@@ -440,6 +456,7 @@ export default function DevicesPage() {
               onClick={() => {
                 setSearch('');
                 setTypeFilter('all');
+                setZoneFilter('');
               }}
             >
               <X className="h-4 w-4" />

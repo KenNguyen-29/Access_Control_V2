@@ -280,6 +280,7 @@ export class AttendanceService {
   findAccessLogs(query: {
     limit?: number;
     deviceId?: string;
+    zoneId?: string;
     action?: AccessAction;
     isValid?: boolean;
     unknownOnly?: boolean;
@@ -288,6 +289,7 @@ export class AttendanceService {
     return this.prisma.accessLog.findMany({
       where: {
         ...(query.deviceId ? { deviceId: query.deviceId } : {}),
+        ...(query.zoneId ? { zoneId: query.zoneId } : {}),
         ...(query.action ? { action: query.action } : {}),
         ...(query.isValid !== undefined ? { isValid: query.isValid } : {}),
         ...(query.unknownOnly ? { userId: null } : {}),
@@ -297,6 +299,7 @@ export class AttendanceService {
       include: {
         user: { include: { department: true } },
         device: true,
+        zone: { select: { id: true, name: true } },
       },
     });
   }

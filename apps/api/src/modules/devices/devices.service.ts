@@ -87,11 +87,12 @@ export class DevicesService {
     };
   }
 
-  async findAll(query: PaginationDto) {
+  async findAll(query: PaginationDto & { zoneId?: string }) {
     const page = query.page ?? 1;
     const pageSize = query.pageSize ?? 20;
     const where = {
       isDeleted: false,
+      ...(query.zoneId ? { zoneId: query.zoneId } : {}),
       ...(query.search
         ? {
             OR: [

@@ -17,6 +17,11 @@ export class AccessLogsQueryDto {
   @IsString()
   deviceId?: string;
 
+  @ApiPropertyOptional({ description: 'Filter by access zone (construction site)' })
+  @IsOptional()
+  @IsString()
+  zoneId?: string;
+
   @ApiPropertyOptional({
     enum: AccessAction,
     description: 'CHECK_IN | CHECK_OUT | DENIED | UNKNOWN. Use UNKNOWN for strangers if needed.',

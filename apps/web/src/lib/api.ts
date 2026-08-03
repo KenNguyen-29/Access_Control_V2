@@ -282,8 +282,10 @@ export type AccessLog = {
   action?: string;
   isValid?: boolean;
   warningMessage?: string | null;
+  zoneId?: string | null;
   user?: { fullName: string; employeeCode: string; department?: Department | null } | null;
   device: { id: string; name: string; code: string };
+  zone?: { id: string; name: string } | null;
 };
 
 export type DeviceMapping = {
@@ -404,11 +406,17 @@ export async function enrollFace(userId: string, imageFile: File) {
   });
 }
 
-export async function getDevices(params?: { page?: number; pageSize?: number; search?: string }) {
+export async function getDevices(params?: {
+  page?: number;
+  pageSize?: number;
+  search?: string;
+  zoneId?: string;
+}) {
   const q = new URLSearchParams();
   if (params?.page) q.set('page', String(params.page));
   if (params?.pageSize) q.set('pageSize', String(params.pageSize));
   if (params?.search) q.set('search', params.search);
+  if (params?.zoneId) q.set('zoneId', params.zoneId);
   const qs = q.toString();
   return apiRequest<PaginatedData<Device>>(`/devices${qs ? `?${qs}` : ''}`);
 }
@@ -601,6 +609,7 @@ export async function getAccessLogs(
     | {
         limit?: number;
         deviceId?: string;
+        zoneId?: string;
         action?: string;
         isValid?: boolean;
         unknownOnly?: boolean;
@@ -610,6 +619,7 @@ export async function getAccessLogs(
   const q = new URLSearchParams();
   q.set('limit', String(opts.limit ?? 50));
   if (opts.deviceId) q.set('deviceId', opts.deviceId);
+  if (opts.zoneId) q.set('zoneId', opts.zoneId);
   if (opts.action) q.set('action', opts.action);
   if (opts.isValid !== undefined) q.set('isValid', String(opts.isValid));
   if (opts.unknownOnly) q.set('unknownOnly', 'true');

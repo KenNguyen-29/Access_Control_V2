@@ -1,8 +1,14 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CheckinEvent } from '@acv2/shared';
-import { getAccessLogs, getDevices, type AccessLog, type Device } from '@/lib/api';
+import {
+  getAccessLogs,
+  getAccessZones,
+  getDevices,
+  type AccessLog,
+  type Device,
+} from '@/lib/api';
 import { Select } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
 
@@ -54,8 +60,11 @@ function checkinEventToAccessLog(event: CheckinEvent): AccessLog {
 
 function matchesFilters(
   log: AccessLog,
-  filters: { deviceId: string; action: string; validity: string },
+  filters: { zoneId: string; deviceId: string; action: string; validity: string },
 ): boolean {
+  if (filters.zoneId && log.zoneId !== filters.zoneId && log.zone?.id !== filters.zoneId) {
+    return false;
+  }
   if (filters.deviceId && log.device?.id !== filters.deviceId) return false;
   if (filters.action === 'UNKNOWN') {
     if (log.user) return false;
@@ -75,6 +84,8 @@ type Props = {
 export default function MiniAccessLog({ lastEvent }: Props) {
   const [logs, setLogs] = useState<AccessLog[]>([]);
   const [devices, setDevices] = useState<Device[]>([]);
+  const [zones, setZones] = useState<Array<{ id: string; name: string }>>([]);
+  const [zoneId, setZoneId] = useState('');
   const [deviceId, setDeviceId] = useState('');
   const [action, setAction] = useState('');
   const [validity, setValidity] = useState('');
@@ -83,6 +94,9 @@ export default function MiniAccessLog({ lastEvent }: Props) {
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
+    getAccessZones()
+      .then((list) => setZones(list.map((z) => ({ id: z.id, name: z.name }))))
+      .catch(() => {});
     getDevices({ page: 1, pageSize: 100 })
       .then((res) => {
         setDevices(res.items.filter((d) => d.deviceType === 'AKUVOX'));
@@ -90,10 +104,22 @@ export default function MiniAccessLog({ lastEvent }: Props) {
       .catch(() => {});
   }, []);
 
+  const devicesInZone = useMemo(() => {
+    if (!zoneId) return devices;
+    return devices.filter((d) => d.zoneId === zoneId);
+  }, [devices, zoneId]);
+
+  useEffect(() => {
+    if (deviceId && zoneId && !devicesInZone.some((d) => d.id === deviceId)) {
+      setDeviceId('');
+    }
+  }, [deviceId, zoneId, devicesInZone]);
+
   const load = useCallback(() => {
     const unknownOnly = action === 'UNKNOWN';
     getAccessLogs({
       limit: 50,
+      zoneId: zoneId || undefined,
       deviceId: deviceId || undefined,
       action: unknownOnly ? undefined : action || undefined,
       unknownOnly: unknownOnly || undefined,
@@ -108,7 +134,7 @@ export default function MiniAccessLog({ lastEvent }: Props) {
       )
       .catch(() => setLogs([]))
       .finally(() => setLoading(false));
-  }, [deviceId, action, validity]);
+  }, [zoneId, deviceId, action, validity]);
 
   const loadDebounced = useCallback(() => {
     if (debounceTimer.current) clearTimeout(debounceTimer.current);
@@ -125,7 +151,6 @@ export default function MiniAccessLog({ lastEvent }: Props) {
     };
   }, [load]);
 
-  // Socket-driven refresh: optimistic prepend + debounced API sync.
   useEffect(() => {
     if (!lastEvent?.id) return;
     const eventKey = `${lastEvent.id}:${lastEvent.timestamp}`;
@@ -134,7 +159,7 @@ export default function MiniAccessLog({ lastEvent }: Props) {
 
     const optimistic = checkinEventToAccessLog(lastEvent);
     if ((optimistic.warningMessage || '').toLowerCase().includes('chưa tính chấm công')) return;
-    const filters = { deviceId, action, validity };
+    const filters = { zoneId, deviceId, action, validity };
     if (matchesFilters(optimistic, filters)) {
       setLogs((prev) => {
         const without = prev.filter((l) => l.id !== optimistic.id);
@@ -142,7 +167,7 @@ export default function MiniAccessLog({ lastEvent }: Props) {
       });
     }
     loadDebounced();
-  }, [lastEvent, deviceId, action, validity, loadDebounced]);
+  }, [lastEvent, zoneId, deviceId, action, validity, loadDebounced]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -152,12 +177,24 @@ export default function MiniAccessLog({ lastEvent }: Props) {
         </p>
         <div className="space-y-1.5">
           <Select
+            value={zoneId}
+            onChange={(e) => setZoneId(e.target.value)}
+            className="h-8 border-slate-200 bg-white px-2 text-xs"
+          >
+            <option value="">Tất cả công trường</option>
+            {zones.map((z) => (
+              <option key={z.id} value={z.id}>
+                {z.name}
+              </option>
+            ))}
+          </Select>
+          <Select
             value={deviceId}
             onChange={(e) => setDeviceId(e.target.value)}
             className="h-8 border-slate-200 bg-white px-2 text-xs"
           >
             <option value="">Tất cả thiết bị</option>
-            {devices.map((d) => (
+            {devicesInZone.map((d) => (
               <option key={d.id} value={d.id}>
                 {d.name}
               </option>
@@ -210,8 +247,11 @@ export default function MiniAccessLog({ lastEvent }: Props) {
                 {log.user?.fullName ?? 'Không xác định'}
               </p>
               <p className="truncate text-xs text-muted-foreground">
+                {log.zone?.name ? `${log.zone.name} · ` : ''}
                 {log.device?.name ?? '—'}
-                {log.action ? ` · ${log.action === 'CHECK_IN' ? 'Check-in' : log.action === 'CHECK_OUT' ? 'Check-out' : log.action}` : ''}
+                {log.action
+                  ? ` · ${log.action === 'CHECK_IN' ? 'Check-in' : log.action === 'CHECK_OUT' ? 'Check-out' : log.action}`
+                  : ''}
               </p>
             </div>
             <span className="ml-2 shrink-0 text-right text-xs text-muted-foreground">

@@ -1,12 +1,12 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { paginatedResponse, successResponse } from '../../common/utils/response.util';
-import { PaginationDto } from '../../common/dto/pagination.dto';
 import { DevicesService } from './devices.service';
 import { AkuvoxService } from './akuvox.service';
 import { DeviceWebRtcService } from './device-webrtc.service';
 import { CreateDeviceDto } from './dto/create-device.dto';
 import { UpdateDeviceDto } from './dto/update-device.dto';
+import { DevicesQueryDto } from './dto/devices-query.dto';
 import { WebRtcOfferDto } from './dto/webrtc-offer.dto';
 import { AkuvoxWebhookSecurityService } from '../webhooks/akuvox-webhook-security.service';
 import { WebhooksService } from '../webhooks/webhooks.service';
@@ -55,7 +55,7 @@ export class DevicesController {
   }
 
   @Get()
-  async findAll(@Query() query: PaginationDto) {
+  async findAll(@Query() query: DevicesQueryDto) {
     const result = await this.service.findAll(query);
     return paginatedResponse(result.items, result.total, result.page, result.pageSize);
   }
