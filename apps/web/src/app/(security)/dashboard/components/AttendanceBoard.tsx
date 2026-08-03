@@ -31,7 +31,6 @@ function formatAttendanceDate(dateStr: string): string {
 const STATUS_OPTIONS = [
   { value: '', label: 'Tất cả trạng thái' },
   { value: 'LATE', label: 'Đi muộn' },
-  { value: 'EARLY_LEAVE', label: 'Về sớm' },
   { value: 'ON_TIME', label: 'Đúng giờ' },
   { value: 'OVERTIME', label: 'Tăng ca' },
   { value: 'ABSENT', label: 'Vắng' },

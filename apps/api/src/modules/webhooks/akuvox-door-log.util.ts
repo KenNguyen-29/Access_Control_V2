@@ -1,3 +1,5 @@
+import { parseVietnamWallClock } from '../../common/utils/vn-time.util';
+
 export type AkuvoxDoorLogPayload = {
   Type?: string;
   UserID?: string;
@@ -96,12 +98,12 @@ export function buildDoorLogEventTime(dto: AkuvoxDoorLogPayload): Date {
   const date = trim(dto.Date);
   const time = trim(dto.Time);
   if (date && time) {
-    const parsed = new Date(`${date}T${time}`);
-    if (!Number.isNaN(parsed.getTime())) return parsed;
+    const parsed = parseVietnamWallClock(date, time);
+    if (parsed) return parsed;
   }
   if (date) {
-    const parsed = new Date(date);
-    if (!Number.isNaN(parsed.getTime())) return parsed;
+    const parsed = parseVietnamWallClock(date);
+    if (parsed) return parsed;
   }
   return new Date();
 }

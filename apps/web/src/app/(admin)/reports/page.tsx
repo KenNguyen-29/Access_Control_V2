@@ -12,7 +12,6 @@ import {
   AlertTriangle,
   Users,
   FileText,
-  LogOut,
   ChevronLeft,
   ChevronRight,
   Upload,
@@ -133,42 +132,36 @@ const ATTENDANCE_STATUS_OPTIONS = [
   { value: '', label: 'Tất cả trạng thái' },
   { value: 'ON_TIME', label: 'Đúng giờ' },
   { value: 'LATE', label: 'Đi muộn' },
-  { value: 'EARLY_LEAVE', label: 'Về sớm' },
   { value: 'OVERTIME', label: 'Tăng ca' },
   { value: 'ABSENT', label: 'Vắng' },
 ] as const;
 
-function TriSelect({
+/** Checked = chỉ hiện bản ghi có cờ đó; bỏ chọn = không lọc. */
+function FlagCheckbox({
   id,
   label,
   value,
   onChange,
-  yesLabel = 'Có',
-  noLabel = 'Không',
 }: {
   id: string;
   label: string;
   value: TriFilter;
   onChange: (v: TriFilter) => void;
-  yesLabel?: string;
-  noLabel?: string;
 }) {
   return (
-    <div>
-      <label htmlFor={id} className="mb-1 block text-xs text-muted-foreground">
-        {label}
-      </label>
-      <Select
+    <label
+      htmlFor={id}
+      className="flex h-10 cursor-pointer items-center gap-2 rounded-sm border border-border px-3 text-sm hover:bg-muted/30"
+    >
+      <input
         id={id}
-        className="h-10"
-        value={value}
-        onChange={(e) => onChange(e.target.value as TriFilter)}
-      >
-        <option value="">Tất cả</option>
-        <option value="yes">{yesLabel}</option>
-        <option value="no">{noLabel}</option>
-      </Select>
-    </div>
+        type="checkbox"
+        className="h-4 w-4 accent-primary"
+        checked={value === 'yes'}
+        onChange={(e) => onChange(e.target.checked ? 'yes' : '')}
+      />
+      <span>{label}</span>
+    </label>
   );
 }
 
@@ -198,18 +191,15 @@ export default function ReportsPage() {
   const [timesheetSearch, setTimesheetSearch] = useState('');
   const [timesheetLate, setTimesheetLate] = useState<TriFilter>('');
   const [timesheetEarlyArrival, setTimesheetEarlyArrival] = useState<TriFilter>('');
-  const [timesheetEarlyLeave, setTimesheetEarlyLeave] = useState<TriFilter>('');
   const [timesheetOt, setTimesheetOt] = useState<TriFilter>('');
   const [weeklySearch, setWeeklySearch] = useState('');
   const [weeklyStatus, setWeeklyStatus] = useState('');
   const [weeklyLate, setWeeklyLate] = useState<TriFilter>('');
   const [weeklyEarlyArrival, setWeeklyEarlyArrival] = useState<TriFilter>('');
-  const [weeklyEarlyLeave, setWeeklyEarlyLeave] = useState<TriFilter>('');
   const [weeklyOt, setWeeklyOt] = useState<TriFilter>('');
   const [recordsSearch, setRecordsSearch] = useState('');
   const [recordsStatus, setRecordsStatus] = useState('');
   const [recordsLate, setRecordsLate] = useState<TriFilter>('');
-  const [recordsEarlyLeave, setRecordsEarlyLeave] = useState<TriFilter>('');
   const [recordsOt, setRecordsOt] = useState<TriFilter>('');
   const debouncedRecordsSearch = useDebouncedValue(recordsSearch, 300);
   const [exporting, setExporting] = useState(false);
@@ -271,7 +261,6 @@ export default function ReportsPage() {
       search: debouncedRecordsSearch.trim() || undefined,
       status: recordsStatus || undefined,
       hasLate: triToBool(recordsLate),
-      hasEarlyLeave: triToBool(recordsEarlyLeave),
       hasOt: triToBool(recordsOt),
     }),
     queryFn: () =>
@@ -284,7 +273,6 @@ export default function ReportsPage() {
         search: debouncedRecordsSearch.trim() || undefined,
         status: recordsStatus || undefined,
         hasLate: triToBool(recordsLate),
-        hasEarlyLeave: triToBool(recordsEarlyLeave),
         hasOt: triToBool(recordsOt),
       }),
     enabled: tab === 'detail',
@@ -432,7 +420,6 @@ export default function ReportsPage() {
       { icon: Users, label: 'Nhân sự', value: s?.staffCount ?? 0, tone: 'text-sky-600' },
       { icon: CheckCircle2, label: 'Có mặt', value: s?.presentCount ?? 0, tone: 'text-emerald-600' },
       { icon: Clock3, label: 'Đi muộn', value: s?.lateCount ?? 0, tone: 'text-orange-600' },
-      { icon: LogOut, label: 'Về sớm', value: s?.earlyLeaveCount ?? 0, tone: 'text-orange-600' },
       {
         icon: TrendingUp,
         label: 'Giờ làm',
@@ -458,7 +445,6 @@ export default function ReportsPage() {
       if (weeklyStatus && row.status !== weeklyStatus) return false;
       if (!matchesTri(weeklyLate, row.lateMinutes > 0)) return false;
       if (!matchesTri(weeklyEarlyArrival, (row.earlyArrivalMinutes ?? 0) > 0)) return false;
-      if (!matchesTri(weeklyEarlyLeave, row.earlyLeaveMinutes > 0)) return false;
       if (!matchesTri(weeklyOt, row.otMinutes > 0)) return false;
       return true;
     });
@@ -479,7 +465,6 @@ export default function ReportsPage() {
     weeklyStatus,
     weeklyLate,
     weeklyEarlyArrival,
-    weeklyEarlyLeave,
     weeklyOt,
   ]);
 
@@ -497,7 +482,6 @@ export default function ReportsPage() {
       }
       if (!matchesTri(timesheetLate, t.lateCount > 0)) return false;
       if (!matchesTri(timesheetEarlyArrival, (t.earlyArrivalCount ?? 0) > 0)) return false;
-      if (!matchesTri(timesheetEarlyLeave, t.earlyCount > 0)) return false;
       if (!matchesTri(timesheetOt, t.otMinutes > 0)) return false;
       return true;
     });
@@ -513,7 +497,6 @@ export default function ReportsPage() {
     timesheetSearch,
     timesheetLate,
     timesheetEarlyArrival,
-    timesheetEarlyLeave,
     timesheetOt,
   ]);
 
@@ -664,30 +647,26 @@ export default function ReportsPage() {
                   />
                 </div>
               </div>
-              <TriSelect
-                id="timesheet-late"
-                label="Đi muộn"
-                value={timesheetLate}
-                onChange={setTimesheetLate}
-              />
-              <TriSelect
-                id="timesheet-early-arrival"
-                label="Đi sớm"
-                value={timesheetEarlyArrival}
-                onChange={setTimesheetEarlyArrival}
-              />
-              <TriSelect
-                id="timesheet-early-leave"
-                label="Về sớm"
-                value={timesheetEarlyLeave}
-                onChange={setTimesheetEarlyLeave}
-              />
-              <TriSelect
-                id="timesheet-ot"
-                label="Tăng ca"
-                value={timesheetOt}
-                onChange={setTimesheetOt}
-              />
+              <div className="flex flex-wrap items-end gap-2 sm:col-span-2 lg:col-span-3 xl:col-span-4">
+                <FlagCheckbox
+                  id="timesheet-late"
+                  label="Đi muộn"
+                  value={timesheetLate}
+                  onChange={setTimesheetLate}
+                />
+                <FlagCheckbox
+                  id="timesheet-early-arrival"
+                  label="Đi sớm"
+                  value={timesheetEarlyArrival}
+                  onChange={setTimesheetEarlyArrival}
+                />
+                <FlagCheckbox
+                  id="timesheet-ot"
+                  label="Tăng ca"
+                  value={timesheetOt}
+                  onChange={setTimesheetOt}
+                />
+              </div>
             </div>
             <QueryBoundary
               isLoading={statsLoading}
@@ -707,7 +686,6 @@ export default function ReportsPage() {
                       <th className="p-2 text-right font-semibold">Giờ làm</th>
                       <th className="p-2 text-right font-semibold">Đi muộn</th>
                       <th className="p-2 text-right font-semibold">Đi sớm</th>
-                      <th className="p-2 text-right font-semibold">Về sớm</th>
                       <th className="p-2 text-right font-semibold">OT</th>
                     </tr>
                   </thead>
@@ -736,9 +714,6 @@ export default function ReportsPage() {
                           )}
                         >
                           {t.earlyArrivalCount ?? 0}
-                        </td>
-                        <td className={cn('p-2 text-right', t.earlyCount > 0 && 'text-orange-600')}>
-                          {t.earlyCount}
                         </td>
                         <td className={cn('p-2 text-right', t.otMinutes > 0 && 'text-emerald-600')}>
                           {formatMinutes(t.otMinutes)}
@@ -806,20 +781,21 @@ export default function ReportsPage() {
                   ))}
                 </Select>
               </div>
-              <TriSelect id="weekly-late" label="Đi muộn" value={weeklyLate} onChange={setWeeklyLate} />
-              <TriSelect
-                id="weekly-early-arrival"
-                label="Đi sớm"
-                value={weeklyEarlyArrival}
-                onChange={setWeeklyEarlyArrival}
-              />
-              <TriSelect
-                id="weekly-early-leave"
-                label="Về sớm"
-                value={weeklyEarlyLeave}
-                onChange={setWeeklyEarlyLeave}
-              />
-              <TriSelect id="weekly-ot" label="Tăng ca" value={weeklyOt} onChange={setWeeklyOt} />
+              <div className="flex flex-wrap items-end gap-2 sm:col-span-2 lg:col-span-4">
+                <FlagCheckbox
+                  id="weekly-late"
+                  label="Đi muộn"
+                  value={weeklyLate}
+                  onChange={setWeeklyLate}
+                />
+                <FlagCheckbox
+                  id="weekly-early-arrival"
+                  label="Đi sớm"
+                  value={weeklyEarlyArrival}
+                  onChange={setWeeklyEarlyArrival}
+                />
+                <FlagCheckbox id="weekly-ot" label="Tăng ca" value={weeklyOt} onChange={setWeeklyOt} />
+              </div>
             </div>
             <QueryBoundary
               isLoading={weeklyLoading}
@@ -841,7 +817,6 @@ export default function ReportsPage() {
                       <th className="p-2 text-right font-semibold">Giờ làm</th>
                       <th className="p-2 text-right font-semibold">Đi muộn</th>
                       <th className="p-2 text-right font-semibold">Đi sớm</th>
-                      <th className="p-2 text-right font-semibold">Về sớm</th>
                       <th className="p-2 text-right font-semibold">OT</th>
                       <th className="p-2 text-right font-semibold">Hệ số</th>
                       <th className="p-2 font-semibold">Trạng thái</th>
@@ -906,14 +881,6 @@ export default function ReportsPage() {
                             {(r.earlyArrivalMinutes ?? 0) > 0
                               ? formatMinutes(r.earlyArrivalMinutes)
                               : '—'}
-                          </td>
-                          <td
-                            className={cn(
-                              'p-2 text-right',
-                              r.earlyLeaveMinutes > 0 && 'text-orange-600',
-                            )}
-                          >
-                            {r.earlyLeaveMinutes > 0 ? formatMinutes(r.earlyLeaveMinutes) : '—'}
                           </td>
                           <td className={cn('p-2 text-right', r.otMinutes > 0 && 'text-emerald-600')}>
                             {r.otMinutes > 0 ? formatMinutes(r.otMinutes) : '—'}
@@ -1035,33 +1002,26 @@ export default function ReportsPage() {
                   ))}
                 </Select>
               </div>
-              <TriSelect
-                id="records-late"
-                label="Đi muộn"
-                value={recordsLate}
-                onChange={(v) => {
-                  setRecordsLate(v);
-                  setRecordsPage(1);
-                }}
-              />
-              <TriSelect
-                id="records-early-leave"
-                label="Về sớm"
-                value={recordsEarlyLeave}
-                onChange={(v) => {
-                  setRecordsEarlyLeave(v);
-                  setRecordsPage(1);
-                }}
-              />
-              <TriSelect
-                id="records-ot"
-                label="Tăng ca"
-                value={recordsOt}
-                onChange={(v) => {
-                  setRecordsOt(v);
-                  setRecordsPage(1);
-                }}
-              />
+              <div className="flex flex-wrap items-end gap-2 sm:col-span-2 lg:col-span-3">
+                <FlagCheckbox
+                  id="records-late"
+                  label="Đi muộn"
+                  value={recordsLate}
+                  onChange={(v) => {
+                    setRecordsLate(v);
+                    setRecordsPage(1);
+                  }}
+                />
+                <FlagCheckbox
+                  id="records-ot"
+                  label="Tăng ca"
+                  value={recordsOt}
+                  onChange={(v) => {
+                    setRecordsOt(v);
+                    setRecordsPage(1);
+                  }}
+                />
+              </div>
             </div>
             <QueryBoundary
               isLoading={detailLoading}
@@ -1083,7 +1043,6 @@ export default function ReportsPage() {
                       <th className="p-2 font-semibold">Ra</th>
                       <th className="p-2 font-semibold">Trạng thái</th>
                       <th className="p-2 text-right font-semibold">Muộn</th>
-                      <th className="p-2 text-right font-semibold">Về sớm</th>
                       <th className="p-2 text-right font-semibold">OT</th>
                     </tr>
                   </thead>
@@ -1117,16 +1076,6 @@ export default function ReportsPage() {
                           )}
                         >
                           {r.lateMinutes ?? 0}p
-                        </td>
-                        <td
-                          className={cn(
-                            'p-2 text-right text-xs',
-                            (r.earlyLeaveMinutes ?? 0) > 0
-                              ? 'text-orange-600'
-                              : 'text-muted-foreground',
-                          )}
-                        >
-                          {r.earlyLeaveMinutes ?? 0}p
                         </td>
                         <td
                           className={cn(

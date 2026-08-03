@@ -7,6 +7,7 @@ import { UpdateWorkShiftDto } from './dto/update-work-shift.dto';
 import { UpdateEmployeeShiftDto } from './dto/update-employee-shift.dto';
 import { parseIsoDateLocal } from '../../common/validators/date-range.validator';
 import { findOverlappingShift, normalizeHhMm } from './shift-time.util';
+import { vietnamDateOnlyString } from '../../common/utils/vn-time.util';
 
 const DEFAULT_SHIFT_KEY = 'default_work_shift_id';
 const ASSIGN_FIXED = 'FIXED' as const;
@@ -24,8 +25,7 @@ function assertEndOnOrAfterStart(startRaw: string, endRaw: string) {
 }
 
 function todayDateOnlyLocal(): string {
-  const today = new Date();
-  return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  return vietnamDateOnlyString(new Date());
 }
 
 function dateOnlyUtc(d: Date): string {

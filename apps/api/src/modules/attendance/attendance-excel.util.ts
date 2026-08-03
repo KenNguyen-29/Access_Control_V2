@@ -1,4 +1,9 @@
 import * as ExcelJS from 'exceljs';
+import {
+  parseVietnamWallClock,
+  vietnamDateOnlyString,
+  zonedPartsInVietnam,
+} from '../../common/utils/vn-time.util';
 
 /** Shared Excel columns for attendance export / template / import. */
 export const ATTENDANCE_EXCEL_COLUMNS = [
@@ -17,29 +22,23 @@ export const ATTENDANCE_EXCEL_COLUMNS = [
 export type AttendanceExcelColumnKey = (typeof ATTENDANCE_EXCEL_COLUMNS)[number]['key'];
 
 export function formatLocalDate(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
+  return vietnamDateOnlyString(d);
 }
 
 export function formatLocalDateTime(d: Date): string {
-  const date = formatLocalDate(d);
-  const hh = String(d.getHours()).padStart(2, '0');
-  const mm = String(d.getMinutes()).padStart(2, '0');
+  const p = zonedPartsInVietnam(d);
+  const date = `${p.year}-${String(p.month).padStart(2, '0')}-${String(p.day).padStart(2, '0')}`;
+  const hh = String(p.hour).padStart(2, '0');
+  const mm = String(p.minute).padStart(2, '0');
   return `${date} ${hh}:${mm}`;
 }
 
-/** Parse YYYY-MM-DD as local calendar date at midnight. */
+/** Parse YYYY-MM-DD as Vietnam calendar date at midnight (+07). */
 export function parseLocalDateOnly(value: string): Date | null {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
-  if (!match) return null;
-  const d = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
-  d.setHours(0, 0, 0, 0);
-  return Number.isNaN(d.getTime()) ? null : d;
+  return parseVietnamWallClock(value.trim());
 }
 
-/** Parse "YYYY-MM-DD HH:mm", "YYYY-MM-DDTHH:mm", or Date-like Excel values. */
+/** Parse "YYYY-MM-DD HH:mm", "YYYY-MM-DDTHH:mm", or Date-like Excel values as VN wall clock. */
 export function parseLocalDateTime(value: unknown): Date | null {
   if (value == null || value === '') return null;
   if (value instanceof Date && !Number.isNaN(value.getTime())) return value;
@@ -55,15 +54,10 @@ export function parseLocalDateTime(value: unknown): Date | null {
 
   const isoLocal = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{1,2}):(\d{2})(?::(\d{2}))?/.exec(s);
   if (isoLocal) {
-    const d = new Date(
-      Number(isoLocal[1]),
-      Number(isoLocal[2]) - 1,
-      Number(isoLocal[3]),
-      Number(isoLocal[4]),
-      Number(isoLocal[5]),
-      isoLocal[6] ? Number(isoLocal[6]) : 0,
-    );
-    return Number.isNaN(d.getTime()) ? null : d;
+    const pad = (n: string) => n.padStart(2, '0');
+    const date = `${isoLocal[1]}-${isoLocal[2]}-${isoLocal[3]}`;
+    const time = `${pad(isoLocal[4])}:${pad(isoLocal[5])}:${isoLocal[6] ? pad(isoLocal[6]) : '00'}`;
+    return parseVietnamWallClock(date, time);
   }
 
   const dateOnly = parseLocalDateOnly(s);

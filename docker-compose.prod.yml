@@ -116,6 +116,7 @@ services:
       GO2RTC_ENABLED: "true"
       GO2RTC_AUTO_START: "false"
       API_PORT: 8080
+      TZ: Asia/Ho_Chi_Minh
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3003}
       API_PUBLIC_URL: ${API_PUBLIC_URL:-http://localhost:8010}
       REDIS_ENABLED: ${REDIS_ENABLED:-true}

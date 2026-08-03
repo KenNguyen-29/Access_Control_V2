@@ -1,9 +1,16 @@
 /**
  * Single source of truth for attendance time/status math.
  * Shift end is always workDate + endTime (plus +1 day when overnight).
+ * All wall-clock comparisons use Asia/Ho_Chi_Minh (not process TZ / UTC Docker).
  */
 
 import { AttendanceStatus } from '@prisma/client';
+import {
+  vietnamClockMinutes,
+  vietnamDateOnlyString,
+  vietnamDateOnlyUtcMidnight,
+  zonedPartsInVietnam,
+} from '../../common/utils/vn-time.util';
 
 export type ShiftLike = {
   startTime: string;
@@ -27,8 +34,9 @@ export function timeToMinutes(hhmm: string): number {
   return (h || 0) * 60 + (m || 0);
 }
 
+/** Punch clock minutes in Vietnam local time. */
 export function eventClockMinutes(eventTime: Date): number {
-  return eventTime.getHours() * 60 + eventTime.getMinutes();
+  return vietnamClockMinutes(eventTime);
 }
 
 export function isOvernightShift(shift: ShiftLike): boolean {
@@ -59,20 +67,22 @@ export function eventContinuousMinutes(shift: ShiftLike, eventTime: Date): numbe
   return clock;
 }
 
-/** Calendar work date (UTC midnight) for a punch, overnight-aware. */
+/** Calendar work date (UTC midnight of VN calendar day) for a punch, overnight-aware. */
 export function resolveWorkDateForPunch(shift: ShiftLike | null, eventTime: Date): Date {
-  const local = new Date(
-    eventTime.getFullYear(),
-    eventTime.getMonth(),
-    eventTime.getDate(),
-  );
+  const p = zonedPartsInVietnam(eventTime);
+  let y = p.year;
+  let m = p.month;
+  let d = p.day;
   if (shift && isOvernightShift(shift)) {
-    const clock = eventClockMinutes(eventTime);
+    const clock = p.hour * 60 + p.minute;
     if (clock < shiftStartMinutes(shift)) {
-      local.setDate(local.getDate() - 1);
+      const prev = new Date(Date.UTC(y, m - 1, d - 1));
+      y = prev.getUTCFullYear();
+      m = prev.getUTCMonth() + 1;
+      d = prev.getUTCDate();
     }
   }
-  return new Date(Date.UTC(local.getFullYear(), local.getMonth(), local.getDate()));
+  return new Date(Date.UTC(y, m - 1, d));
 }
 
 export function formatDateOnlyUtc(d: Date): string {
@@ -141,11 +151,7 @@ export function computeWorkedMinutes(
     const workDateKey = formatDateOnlyUtc(
       new Date(Date.UTC(workDate.getUTCFullYear(), workDate.getUTCMonth(), workDate.getUTCDate())),
     );
-    const todayKey = [
-      asOf.getFullYear(),
-      String(asOf.getMonth() + 1).padStart(2, '0'),
-      String(asOf.getDate()).padStart(2, '0'),
-    ].join('-');
+    const todayKey = vietnamDateOnlyString(asOf);
     if (workDateKey !== todayKey) return 0;
     const liveRaw = (asOf.getTime() - checkInAt.getTime()) / 60000;
     return liveRaw > 0 ? Math.round(liveRaw) : 0;
@@ -187,12 +193,14 @@ export function computeWorkingDayCredit(params: {
     !!(params.checkInAt || params.checkOutAt || params.workedMinutes > 0);
   if (!present) return { kind: null, cong: 0 };
 
-  const d =
+  const dateKey =
     typeof params.date === 'string'
-      ? new Date(`${params.date.slice(0, 10)}T00:00:00`)
-      : params.date;
+      ? params.date.slice(0, 10)
+      : formatDateOnlyUtc(vietnamDateOnlyUtcMidnight(params.date));
+  // Sunday in Vietnam calendar (UTC noon of that date avoids TZ edge cases).
+  const weekday = new Date(`${dateKey}T12:00:00+07:00`).getUTCDay();
   const otCong = params.otMultiplier ?? 1.25;
-  if (d.getDay() === 0) return { kind: 'sunday', cong: 1.5 };
+  if (weekday === 0) return { kind: 'sunday', cong: 1.5 };
   if (params.otMinutes > 0 || params.status === 'OVERTIME') return { kind: 'ot', cong: otCong };
   if (params.lateMinutes > 0 || params.status === 'LATE') return { kind: 'late', cong: 0.5 };
   return { kind: 'onTime', cong: 1 };

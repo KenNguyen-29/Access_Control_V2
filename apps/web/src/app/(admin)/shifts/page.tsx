@@ -1,8 +1,19 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, Pencil, Trash2, Star, Search, RefreshCw, StopCircle } from 'lucide-react';
+import {
+  Plus,
+  Pencil,
+  Trash2,
+  Star,
+  Search,
+  RefreshCw,
+  StopCircle,
+  AlertTriangle,
+  ChevronLeft,
+  ChevronRight,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
@@ -25,6 +36,7 @@ import {
   getDepartments,
   getEmployeeShifts,
   getUserIds,
+  getUsers,
   getWorkShifts,
   setDefaultShift,
   updateWorkShift,
@@ -71,9 +83,49 @@ function isAssignmentActive(a: EmployeeShift): boolean {
   return end > todayDateOnly();
 }
 
+function assignmentTypeOf(a: EmployeeShift): EmployeeShiftAssignType {
+  return a.assignmentType ?? (a.endDate ? 'RANGED' : 'FIXED');
+}
+
+/** Days left until endDate (calendar). null if unlimited / ended / invalid. */
+function daysUntilEnd(a: EmployeeShift): number | null {
+  const end = dateOnly(a.endDate);
+  if (!end) return null;
+  const today = todayDateOnly();
+  if (end <= today) return null;
+  const endMs = Date.parse(`${end}T00:00:00`);
+  const todayMs = Date.parse(`${today}T00:00:00`);
+  if (Number.isNaN(endMs) || Number.isNaN(todayMs)) return null;
+  return Math.round((endMs - todayMs) / 86_400_000);
+}
+
+const EXPIRING_SOON_DAYS = 7;
+const ASSIGN_PAGE_SIZE = 10;
+
+/** RANGED + còn hạn + còn ≤ 7 ngày. */
+function isExpiringSoon(a: EmployeeShift): boolean {
+  if (!isAssignmentActive(a)) return false;
+  if (assignmentTypeOf(a) !== 'RANGED') return false;
+  const days = daysUntilEnd(a);
+  return days !== null && days <= EXPIRING_SOON_DAYS;
+}
+
+type AssignmentStatus = 'ACTIVE' | 'EXPIRING_SOON' | 'ENDED';
+
+function assignmentStatus(a: EmployeeShift): AssignmentStatus {
+  if (!isAssignmentActive(a)) return 'ENDED';
+  if (isExpiringSoon(a)) return 'EXPIRING_SOON';
+  return 'ACTIVE';
+}
+
+type AssignmentFilter = 'ALL' | 'ACTIVE' | 'EXPIRING_SOON' | 'ENDED' | 'UNASSIGNED';
+
 export default function ShiftsPage() {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState('');
+  const [assignmentFilter, setAssignmentFilter] = useState<AssignmentFilter>('ALL');
+  const [workShiftFilter, setWorkShiftFilter] = useState('');
+  const [listPage, setListPage] = useState(1);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [assignOpen, setAssignOpen] = useState(false);
@@ -107,6 +159,14 @@ export default function ShiftsPage() {
     queryKey: queryKeys.employeeShifts(),
     queryFn: () => getEmployeeShifts(),
   });
+  const allUserIdsQuery = useQuery({
+    queryKey: ['userIds', 'shifts-coverage'],
+    queryFn: () => getUserIds(),
+  });
+  const usersCoverageQuery = useQuery({
+    queryKey: ['users', 'shifts-coverage'],
+    queryFn: () => getUsers({ page: 1, pageSize: 500 }),
+  });
   const departmentsQuery = useQuery({
     queryKey: queryKeys.departments(),
     queryFn: () => getDepartments(),
@@ -136,22 +196,98 @@ export default function ShiftsPage() {
         ? 'Không tải được ca làm việc'
         : null;
 
+  const activeAssignedUserIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const a of assignments) {
+      if (isAssignmentActive(a)) ids.add(a.userId);
+    }
+    return ids;
+  }, [assignments]);
+
+  const unassignedUsers = useMemo(() => {
+    const allIds = allUserIdsQuery.data?.ids ?? [];
+    const usersById = new Map((usersCoverageQuery.data?.items ?? []).map((u) => [u.id, u]));
+    return allIds
+      .filter((id) => !activeAssignedUserIds.has(id))
+      .map((id) => {
+        const u = usersById.get(id);
+        if (u) return u;
+        return {
+          id,
+          fullName: 'Không rõ tên',
+          employeeCode: undefined,
+          department: null,
+        } as unknown as User;
+      })
+      .sort((a, b) => (a.fullName || '').localeCompare(b.fullName || '', 'vi'));
+  }, [allUserIdsQuery.data?.ids, usersCoverageQuery.data?.items, activeAssignedUserIds]);
+
   function load() {
     setError(null);
     void queryClient.invalidateQueries({ queryKey: queryKeys.workShifts() });
+    invalidateAssignmentQueries();
+  }
+
+  function invalidateAssignmentQueries() {
     void queryClient.invalidateQueries({ queryKey: queryKeys.employeeShifts() });
+    void queryClient.invalidateQueries({ queryKey: ['userIds', 'shifts-coverage'] });
+    void queryClient.invalidateQueries({ queryKey: ['users', 'shifts-coverage'] });
   }
 
   const filteredAssignments = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return assignments;
     return assignments.filter((a) => {
+      const status = assignmentStatus(a);
+      if (assignmentFilter === 'ACTIVE' && status !== 'ACTIVE') return false;
+      if (assignmentFilter === 'EXPIRING_SOON' && status !== 'EXPIRING_SOON') return false;
+      if (assignmentFilter === 'ENDED' && status !== 'ENDED') return false;
+      if (assignmentFilter === 'UNASSIGNED') return false;
+      if (workShiftFilter && a.workShiftId !== workShiftFilter) return false;
+      if (!q) return true;
       const name = a.user?.fullName?.toLowerCase() || '';
       const code = a.user?.employeeCode?.toLowerCase() || '';
       const shift = a.workShift?.name?.toLowerCase() || '';
       return name.includes(q) || code.includes(q) || shift.includes(q);
     });
-  }, [assignments, search]);
+  }, [assignments, search, assignmentFilter, workShiftFilter]);
+
+  const filteredUnassigned = useMemo(() => {
+    if (assignmentFilter !== 'UNASSIGNED') return [];
+    const q = search.trim().toLowerCase();
+    if (!q) return unassignedUsers;
+    return unassignedUsers.filter((u) => {
+      const name = u.fullName?.toLowerCase() || '';
+      const code = (u.employeeCode || '').toLowerCase();
+      const dept = u.department?.name?.toLowerCase() || '';
+      return name.includes(q) || code.includes(q) || dept.includes(q);
+    });
+  }, [unassignedUsers, search, assignmentFilter]);
+
+  const listTotal =
+    assignmentFilter === 'UNASSIGNED' ? filteredUnassigned.length : filteredAssignments.length;
+
+  useEffect(() => {
+    setListPage(1);
+  }, [search, assignmentFilter, workShiftFilter]);
+
+  const listTotalPages = Math.max(1, Math.ceil(listTotal / ASSIGN_PAGE_SIZE));
+  const listCurrentPage = Math.min(listPage, listTotalPages);
+  const pagedAssignments = useMemo(
+    () =>
+      filteredAssignments.slice(
+        (listCurrentPage - 1) * ASSIGN_PAGE_SIZE,
+        listCurrentPage * ASSIGN_PAGE_SIZE,
+      ),
+    [filteredAssignments, listCurrentPage],
+  );
+  const pagedUnassigned = useMemo(
+    () =>
+      filteredUnassigned.slice(
+        (listCurrentPage - 1) * ASSIGN_PAGE_SIZE,
+        listCurrentPage * ASSIGN_PAGE_SIZE,
+      ),
+    [filteredUnassigned, listCurrentPage],
+  );
 
   const allFilteredSelected =
     filterIds.length > 0 && filterIds.every((id) => selectedUserIds.has(id));
@@ -268,7 +404,7 @@ export default function ShiftsPage() {
       setEndAssignmentTarget(null);
       setNotice('Đã kết thúc phân ca');
       setError(null);
-      void queryClient.invalidateQueries({ queryKey: queryKeys.employeeShifts() });
+      invalidateAssignmentQueries();
     },
     onError: (e) => setError(e instanceof ApiError ? e.message : 'Kết thúc ca thất bại'),
   });
@@ -279,7 +415,7 @@ export default function ShiftsPage() {
       setDeleteAssignmentTarget(null);
       setNotice('Đã xóa phân ca');
       setError(null);
-      void queryClient.invalidateQueries({ queryKey: queryKeys.employeeShifts() });
+      invalidateAssignmentQueries();
     },
     onError: (e) => setError(e instanceof ApiError ? e.message : 'Xóa phân ca thất bại'),
   });
@@ -328,7 +464,7 @@ export default function ShiftsPage() {
       setNotice('Gán ca thành công');
       setSelectedUserIds(new Set());
       // Keep startDate/endDate/mode/workShift as chosen after save
-      void queryClient.invalidateQueries({ queryKey: queryKeys.employeeShifts() });
+      invalidateAssignmentQueries();
     },
     onError: (e) => setError(e instanceof ApiError ? e.message : 'Gán ca thất bại'),
   });
@@ -390,7 +526,8 @@ export default function ShiftsPage() {
             </p>
             <p>
               <strong>Bước 3:</strong> Dùng &quot;Gán ca&quot; — chọn <em>Cố định</em> (lặp đến khi kết thúc)
-              hoặc <em>Có thời hạn</em> (Từ–Đến ngày).
+              hoặc <em>Có thời hạn</em> (Từ–Đến ngày). Hệ thống cảnh báo nhân viên chưa gán ca và ca sắp hết
+              hạn (≤ {EXPIRING_SOON_DAYS} ngày).
             </p>
           </div>
         </Collapsible>
@@ -479,11 +616,11 @@ export default function ShiftsPage() {
       </DesignCard>
 
       <DesignCard
-        title={`Phân ca nhân viên (${filteredAssignments.length})`}
-        description="Danh sách nhân viên đã được gán vào ca theo khoảng thời gian."
+        title={`Phân ca nhân viên (${listTotal})`}
+        description="Theo dõi trạng thái gán ca: chưa gán, đang hiệu lực, sắp hết hạn, đã kết thúc."
       >
-        <div className="mb-4 max-w-md">
-          <div className="relative">
+        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center">
+          <div className="relative max-w-md flex-1">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               placeholder="Tìm nhân viên hoặc tên ca..."
@@ -492,12 +629,45 @@ export default function ShiftsPage() {
               onChange={(e) => setSearch(e.target.value)}
             />
           </div>
+          <Select
+            value={workShiftFilter}
+            onChange={(e) => setWorkShiftFilter(e.target.value)}
+            className="h-10 w-full sm:w-48"
+            disabled={assignmentFilter === 'UNASSIGNED'}
+          >
+            <option value="">Tất cả ca</option>
+            {shifts.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </Select>
+          <Select
+            value={assignmentFilter}
+            onChange={(e) => setAssignmentFilter(e.target.value as AssignmentFilter)}
+            className="h-10 w-full sm:w-52"
+          >
+            <option value="ALL">Tất cả trạng thái</option>
+            <option value="ACTIVE">Đang hiệu lực</option>
+            <option value="EXPIRING_SOON">Sắp kết thúc</option>
+            <option value="ENDED">Đã kết thúc</option>
+            <option value="UNASSIGNED">Chưa gán ca</option>
+          </Select>
         </div>
+
         <QueryBoundary
-          isLoading={loading}
-          isEmpty={filteredAssignments.length === 0}
-          emptyTitle="Chưa có phân ca"
-          emptyDescription="Dùng nút Gán ca để phân công nhân viên."
+          isLoading={loading || (assignmentFilter === 'UNASSIGNED' && allUserIdsQuery.isLoading)}
+          isEmpty={listTotal === 0}
+          emptyTitle={
+            assignmentFilter === 'UNASSIGNED'
+              ? 'Không có nhân viên chưa gán ca'
+              : 'Không có phân ca phù hợp'
+          }
+          emptyDescription={
+            assignmentFilter === 'UNASSIGNED'
+              ? 'Tất cả nhân viên đã được gán ca đang hiệu lực.'
+              : 'Thử đổi bộ lọc hoặc dùng nút Gán ca để phân công nhân viên.'
+          }
         >
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -508,73 +678,164 @@ export default function ShiftsPage() {
                   <th className="p-2 font-semibold">Kiểu</th>
                   <th className="p-2 font-semibold">Từ ngày</th>
                   <th className="p-2 font-semibold">Đến ngày</th>
+                  <th className="p-2 font-semibold">Trạng thái</th>
                   <th className="p-2 text-right font-semibold">Thao tác</th>
                 </tr>
               </thead>
               <tbody>
-                {filteredAssignments.map((a) => (
-                  <tr key={a.id} className="border-t border-border hover:bg-muted/20">
-                    <td className="p-2">
-                      <span className="font-semibold">{a.user?.fullName || a.userId}</span>
-                      {a.user?.employeeCode && (
-                        <span className="ml-1 font-mono text-xs text-muted-foreground">
-                          ({a.user.employeeCode})
-                        </span>
-                      )}
-                    </td>
-                    <td className="p-2">{a.workShift?.name || a.workShiftId}</td>
-                    <td className="p-2">
-                      <Badge variant="outline" className="text-xs font-normal">
-                        {(a.assignmentType ?? (a.endDate ? 'RANGED' : 'FIXED')) === 'FIXED'
-                          ? 'Cố định'
-                          : 'Có thời hạn'}
-                      </Badge>
-                    </td>
-                    <td className="p-2 font-mono text-xs text-muted-foreground">
-                      {String(a.startDate).slice(0, 10)}
-                    </td>
-                    <td className="p-2 font-mono text-xs text-muted-foreground">
-                      {a.endDate ? String(a.endDate).slice(0, 10) : 'Không giới hạn'}
-                    </td>
-                    <td className="p-2">
-                      <div className="flex justify-end gap-1">
-                        {isAssignmentActive(a) && (
+                {assignmentFilter === 'UNASSIGNED'
+                  ? pagedUnassigned.map((u) => (
+                      <tr key={u.id} className="border-t border-border hover:bg-muted/20">
+                        <td className="p-2">
+                          <span className="font-semibold">{u.fullName}</span>
+                          {u.employeeCode && (
+                            <span className="ml-1 font-mono text-xs text-muted-foreground">
+                              ({u.employeeCode})
+                            </span>
+                          )}
+                        </td>
+                        <td className="p-2 text-xs text-muted-foreground">—</td>
+                        <td className="p-2 text-xs text-muted-foreground">—</td>
+                        <td className="p-2 text-xs text-muted-foreground">—</td>
+                        <td className="p-2 text-xs text-muted-foreground">—</td>
+                        <td className="p-2">
+                          <Badge
+                            variant="outline"
+                            className="border-amber-300 bg-amber-50 text-xs font-normal text-amber-800"
+                          >
+                            Chưa gán ca
+                          </Badge>
+                        </td>
+                        <td className="p-2 text-right">
                           <Button
                             variant="outline"
                             size="sm"
-                            className="h-8 gap-1"
+                            className="h-8"
                             onClick={() => {
+                              setSelectedUserIds(new Set([u.id]));
+                              setAssignOpen(true);
+                              setAssignResult(null);
                               setError(null);
-                              setEndAssignmentTarget(a);
                             }}
                           >
-                            <StopCircle className="h-3.5 w-3.5" />
-                            Kết thúc
+                            Gán ca
                           </Button>
-                        )}
-                        {!isAssignmentActive(a) && (
-                          <Badge variant="secondary" className="h-8 px-2 text-xs font-normal">
-                            Đã kết thúc
-                          </Badge>
-                        )}
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8"
-                          onClick={() => {
-                            setError(null);
-                            setDeleteAssignmentTarget(a);
-                          }}
-                          title="Xóa phân ca"
+                        </td>
+                      </tr>
+                    ))
+                  : pagedAssignments.map((a) => {
+                      const status = assignmentStatus(a);
+                      const daysLeft = daysUntilEnd(a);
+                      return (
+                        <tr
+                          key={a.id}
+                          className={cn(
+                            'border-t border-border hover:bg-muted/20',
+                            status === 'EXPIRING_SOON' && 'bg-orange-50/60',
+                          )}
                         >
-                          <Trash2 className="h-4 w-4 text-destructive" />
-                        </Button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                          <td className="p-2">
+                            <span className="font-semibold">{a.user?.fullName || a.userId}</span>
+                            {a.user?.employeeCode && (
+                              <span className="ml-1 font-mono text-xs text-muted-foreground">
+                                ({a.user.employeeCode})
+                              </span>
+                            )}
+                          </td>
+                          <td className="p-2">{a.workShift?.name || a.workShiftId}</td>
+                          <td className="p-2">
+                            <Badge variant="outline" className="text-xs font-normal">
+                              {assignmentTypeOf(a) === 'FIXED' ? 'Cố định' : 'Có thời hạn'}
+                            </Badge>
+                          </td>
+                          <td className="p-2 font-mono text-xs text-muted-foreground">
+                            {String(a.startDate).slice(0, 10)}
+                          </td>
+                          <td className="p-2 font-mono text-xs text-muted-foreground">
+                            {a.endDate ? String(a.endDate).slice(0, 10) : 'Không giới hạn'}
+                          </td>
+                          <td className="p-2">
+                            {status === 'EXPIRING_SOON' && (
+                              <Badge className="gap-1 border-transparent bg-orange-100 text-xs font-medium text-orange-800">
+                                <AlertTriangle className="h-3 w-3" />
+                                Sắp kết thúc
+                                {daysLeft !== null ? ` · còn ${daysLeft} ngày` : ''}
+                              </Badge>
+                            )}
+                            {status === 'ACTIVE' && (
+                              <Badge className="border-transparent bg-emerald-100 text-xs font-medium text-emerald-700">
+                                Đang hiệu lực
+                              </Badge>
+                            )}
+                            {status === 'ENDED' && (
+                              <Badge variant="secondary" className="text-xs font-normal">
+                                Đã kết thúc
+                              </Badge>
+                            )}
+                          </td>
+                          <td className="p-2">
+                            <div className="flex justify-end gap-1">
+                              {isAssignmentActive(a) && (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-8 gap-1"
+                                  onClick={() => {
+                                    setError(null);
+                                    setEndAssignmentTarget(a);
+                                  }}
+                                >
+                                  <StopCircle className="h-3.5 w-3.5" />
+                                  Kết thúc
+                                </Button>
+                              )}
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8"
+                                onClick={() => {
+                                  setError(null);
+                                  setDeleteAssignmentTarget(a);
+                                }}
+                                title="Xóa phân ca"
+                              >
+                                <Trash2 className="h-4 w-4 text-destructive" />
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
               </tbody>
             </table>
+            {listTotalPages > 1 && (
+              <div className="mt-4 flex items-center justify-between border-t border-border pt-4">
+                <p className="text-xs text-muted-foreground">
+                  Trang {listCurrentPage} / {listTotalPages} · {listTotal}{' '}
+                  {assignmentFilter === 'UNASSIGNED' ? 'nhân viên' : 'phân ca'}
+                </p>
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-8 w-8"
+                    disabled={listCurrentPage <= 1}
+                    onClick={() => setListPage((p) => Math.max(1, p - 1))}
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-8 w-8"
+                    disabled={listCurrentPage >= listTotalPages}
+                    onClick={() => setListPage((p) => Math.min(listTotalPages, p + 1))}
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
         </QueryBoundary>
       </DesignCard>
