@@ -17,6 +17,7 @@ import {
   Siren,
   Shield,
   Settings,
+  AlertTriangle,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
@@ -140,6 +141,26 @@ export default function HomePage() {
             </div>
             <ClockCard />
           </div>
+
+          {(stats?.unassignedEmployees ?? 0) > 0 && (
+            <Link
+              href="/shifts"
+              className="flex flex-col gap-2 rounded-sm border border-amber-300 bg-amber-50 px-4 py-3 text-amber-900 transition-colors hover:bg-amber-100 sm:flex-row sm:items-center sm:justify-between"
+            >
+              <div className="flex items-start gap-2 text-sm">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />
+                <p>
+                  Có{' '}
+                  <strong>{stats!.unassignedEmployees.toLocaleString('vi-VN')}</strong> nhân viên
+                  chưa gán ca — quét cửa sẽ không được tính chấm công.
+                </p>
+              </div>
+              <span className="inline-flex shrink-0 items-center gap-1 text-sm font-semibold">
+                Vào phân ca
+                <ChevronRight className="h-4 w-4" />
+              </span>
+            </Link>
+          )}
 
           {/* Stats */}
           <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-5">

@@ -9,6 +9,8 @@ export interface StatsOverview {
   akuvox: number;
   workShifts: number;
   activeAssignments: number;
+  /** Users with no EmployeeShift active today (UI: endDate null or endDate > today). */
+  unassignedEmployees: number;
   todayAttendance: number;
   todayLate: number;
   todayEvents: number;
@@ -108,6 +110,7 @@ export class StatsService {
       akuvox,
       workShifts,
       activeAssignments,
+      assignedUserRows,
       todayAttendance,
       todayLate,
       todayEvents,
@@ -120,15 +123,33 @@ export class StatsService {
       this.prisma.employeeShift.count({
         where: { isDeleted: false, OR: [{ endDate: null }, { endDate: { gte: startOfDay } }] },
       }),
-      this.prisma.attendanceRecord.count({ where: { date: { gte: startOfDay, lt: endOfDay } } }),
+      // Match shifts UI isAssignmentActive: endDate null OR endDate > today (ended-on-today = not active).
+      this.prisma.employeeShift.findMany({
+        where: {
+          isDeleted: false,
+          startDate: { lte: startOfDay },
+          OR: [{ endDate: null }, { endDate: { gt: startOfDay } }],
+        },
+        select: { userId: true },
+        distinct: ['userId'],
+      }),
       this.prisma.attendanceRecord.count({
-        where: { date: { gte: startOfDay, lt: endOfDay }, status: 'LATE' },
+        where: { date: { gte: startOfDay, lt: endOfDay }, workShiftId: { not: null } },
+      }),
+      this.prisma.attendanceRecord.count({
+        where: {
+          date: { gte: startOfDay, lt: endOfDay },
+          workShiftId: { not: null },
+          status: 'LATE',
+        },
       }),
       this.prisma.accessLog.count({ where: { eventAt: { gte: startOfDay, lt: endOfDay } } }),
       this.prisma.accessLog.count({
         where: { eventAt: { gte: startOfDay, lt: endOfDay }, isValid: false },
       }),
     ]);
+
+    const unassignedEmployees = Math.max(0, users - assignedUserRows.length);
 
     return {
       users,
@@ -137,6 +158,7 @@ export class StatsService {
       akuvox,
       workShifts,
       activeAssignments,
+      unassignedEmployees,
       todayAttendance,
       todayLate,
       todayEvents,
@@ -159,6 +181,7 @@ export class StatsService {
     const asOf = new Date();
     const records = await this.prisma.attendanceRecord.findMany({
       where: {
+        workShiftId: { not: null },
         date: { gte: from, lt: to },
         ...(params.departmentId ? { user: { departmentId: params.departmentId } } : {}),
       },
@@ -198,12 +221,11 @@ export class StatsService {
           otAfterMinutes: policy.otAfterMinutes,
         },
       );
-      // Prefer recomputed early/late/ot from shared calc; fall back to stored if no shift.
-      const lateMinutes = r.workShift ? metrics.lateMinutes : r.lateMinutes;
-      const earlyLeaveMinutes = r.workShift ? metrics.earlyLeaveMinutes : r.earlyLeaveMinutes;
-      const otMinutes = r.workShift ? metrics.otMinutes : r.otMinutes;
+      const lateMinutes = metrics.lateMinutes;
+      const earlyLeaveMinutes = metrics.earlyLeaveMinutes;
+      const otMinutes = metrics.otMinutes;
       const worked = metrics.workedMinutes;
-      const status = r.workShift ? metrics.status : r.status;
+      const status = metrics.status;
 
       if (status !== 'ABSENT') summary.presentCount += 1;
       if (status === 'ABSENT') summary.absentCount += 1;
@@ -275,6 +297,7 @@ export class StatsService {
     const asOf = new Date();
     const records = await this.prisma.attendanceRecord.findMany({
       where: {
+        workShiftId: { not: null },
         date: { gte: rangeStart, lt: rangeEndExclusive },
         ...(params.departmentId ? { user: { departmentId: params.departmentId } } : {}),
       },
@@ -312,13 +335,13 @@ export class StatsService {
         shiftCode: r.workShift?.code ?? null,
         checkInAt: r.checkInAt,
         checkOutAt: r.checkOutAt,
-        lateMinutes: r.workShift ? metrics.lateMinutes : r.lateMinutes,
+        lateMinutes: metrics.lateMinutes,
         earlyArrivalMinutes: metrics.earlyArrivalMinutes,
-        earlyLeaveMinutes: r.workShift ? metrics.earlyLeaveMinutes : r.earlyLeaveMinutes,
-        otMinutes: r.workShift ? metrics.otMinutes : r.otMinutes,
+        earlyLeaveMinutes: metrics.earlyLeaveMinutes,
+        otMinutes: metrics.otMinutes,
         workedMinutes: metrics.workedMinutes,
         salaryCoefficient: r.workShift?.salaryCoefficient ?? 1,
-        status: r.workShift ? metrics.status : r.status,
+        status: metrics.status,
       };
     });
 

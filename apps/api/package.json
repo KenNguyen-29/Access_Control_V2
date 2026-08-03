@@ -11,7 +11,7 @@
     "start": "nest start",
     "start:prod": "node dist/main",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test src/modules/attendance/attendance-calculation.util.test.ts src/modules/shifts/shift-time.util.test.ts src/modules/users/users-excel.util.test.ts",
+    "test": "node --import tsx --test src/modules/attendance/attendance-calculation.util.test.ts src/modules/attendance/attendance.service.punch.test.ts src/modules/shifts/shift-time.util.test.ts src/modules/users/users-excel.util.test.ts",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:seed": "ts-node --project tsconfig.seed.json prisma/seed.ts",

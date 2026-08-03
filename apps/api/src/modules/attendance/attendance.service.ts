@@ -29,7 +29,7 @@ export type AttendanceImportResult = {
 };
 
 export type PunchOutcome = 'CHECK_IN' | 'CHECK_OUT' | 'IGNORED';
-export type PunchIgnoreReason = 'COOLDOWN' | 'ALREADY_COMPLETE';
+export type PunchIgnoreReason = 'COOLDOWN' | 'ALREADY_COMPLETE' | 'NO_SHIFT';
 
 export type PunchResult = {
   outcome: PunchOutcome;
@@ -60,7 +60,8 @@ export class AttendanceService {
     return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
   }
 
-  async resolveShiftForUser(userId: string, at: Date): Promise<WorkShift | null> {
+  /** Personal EmployeeShift only — no default-shift fallback. */
+  async resolveAssignedShiftForUser(userId: string, at: Date): Promise<WorkShift | null> {
     const day = this.calc.resolveWorkDateForPunch(null, at);
     const assignment = await this.prisma.employeeShift.findFirst({
       where: {
@@ -75,6 +76,13 @@ export class AttendanceService {
     if (assignment?.workShift && !assignment.workShift.isDeleted) {
       return assignment.workShift;
     }
+    return null;
+  }
+
+  /** Assigned shift first; falls back to system default / isDefault (non-punch uses). */
+  async resolveShiftForUser(userId: string, at: Date): Promise<WorkShift | null> {
+    const assigned = await this.resolveAssignedShiftForUser(userId, at);
+    if (assigned) return assigned;
 
     const setting = await this.prisma.systemSetting.findUnique({
       where: { key: 'default_work_shift_id' },
@@ -94,32 +102,39 @@ export class AttendanceService {
   async processPunch(userId: string, eventTime: Date): Promise<PunchResult> {
     const cooldownMinutes = await this.punchCooldownMinutes();
     const policy = await this.calc.getPolicyOptions();
-    // Resolve shift using calendar day first, then overnight-aware work date.
-    const provisionalShift = await this.resolveShiftForUser(userId, eventTime);
+    // Personal assignment only — default shift does not count attendance.
+    const provisionalShift = await this.resolveAssignedShiftForUser(userId, eventTime);
     const workDate = this.calc.resolveWorkDateForPunch(provisionalShift, eventTime);
     const shift =
       provisionalShift ??
-      (await this.resolveShiftForUser(
+      (await this.resolveAssignedShiftForUser(
         userId,
         new Date(workDate.getUTCFullYear(), workDate.getUTCMonth(), workDate.getUTCDate(), 12),
       ));
-    const effectiveShift = shift
-      ? this.calc.applyLateGraceFloor(shift, policy.lateGraceFloor)
-      : null;
+
+    if (!shift) {
+      return {
+        outcome: 'IGNORED',
+        record: null,
+        reason: 'NO_SHIFT',
+        cooldownMinutes,
+        message: 'Chưa gán ca — không tính chấm công',
+      };
+    }
+
+    const effectiveShift = this.calc.applyLateGraceFloor(shift, policy.lateGraceFloor);
     const existing = await this.prisma.attendanceRecord.findUnique({
       where: { userId_date: { userId, date: workDate } },
     });
 
     if (!existing?.checkInAt) {
-      const lateMinutes = effectiveShift
-        ? this.calc.computeLateMinutes(effectiveShift, eventTime)
-        : 0;
+      const lateMinutes = this.calc.computeLateMinutes(effectiveShift, eventTime);
 
       const record = await this.prisma.attendanceRecord.upsert({
         where: { userId_date: { userId, date: workDate } },
         create: {
           userId,
-          workShiftId: shift?.id,
+          workShiftId: shift.id,
           date: workDate,
           checkInAt: eventTime,
           lateMinutes,
@@ -127,7 +142,7 @@ export class AttendanceService {
         },
         update: {
           checkInAt: eventTime,
-          workShiftId: shift?.id,
+          workShiftId: shift.id,
           lateMinutes,
           checkOutAt: null,
           earlyLeaveMinutes: 0,
@@ -160,12 +175,14 @@ export class AttendanceService {
       };
     }
 
-    const { earlyLeaveMinutes, otMinutes } = effectiveShift
-      ? this.calc.computeEarlyLeaveAndOt(effectiveShift, eventTime, {
-          earlyLeaveGraceMinutes: policy.earlyLeaveGraceMinutes,
-          otAfterMinutes: policy.otAfterMinutes,
-        })
-      : { earlyLeaveMinutes: 0, otMinutes: 0 };
+    const { earlyLeaveMinutes, otMinutes } = this.calc.computeEarlyLeaveAndOt(
+      effectiveShift,
+      eventTime,
+      {
+        earlyLeaveGraceMinutes: policy.earlyLeaveGraceMinutes,
+        otAfterMinutes: policy.otAfterMinutes,
+      },
+    );
 
     const lateMinutes = existing.lateMinutes ?? 0;
     const status = this.calc.computeStatus({
@@ -180,7 +197,7 @@ export class AttendanceService {
       where: { id: existing.id },
       data: {
         checkOutAt: eventTime,
-        workShiftId: shift?.id ?? existing.workShiftId,
+        workShiftId: shift.id,
         earlyLeaveMinutes,
         otMinutes,
         status,
@@ -223,6 +240,7 @@ export class AttendanceService {
           }
         : {};
     const where = {
+      workShiftId: { not: null },
       ...(query.userId ? { userId: query.userId } : {}),
       ...(query.status ? { status: query.status } : {}),
       ...(query.from || query.to
@@ -429,25 +447,35 @@ export class AttendanceService {
       }
 
       const shiftName = headerMap.shift ? cellToString(row.getCell(headerMap.shift).value) : '';
-      let shift: WorkShift | null = null;
+      const assigned = await this.resolveAssignedShiftForUser(user.id, workDate);
+      if (!assigned) {
+        result.errors.push({
+          row: rowNumber,
+          message: `Nhân viên ${employeeCode} chưa gán ca — bỏ qua`,
+        });
+        result.skipped += 1;
+        continue;
+      }
+
+      let shift: WorkShift = assigned;
       if (shiftName) {
+        let named: WorkShift | null = null;
         if (shiftCache.has(shiftName)) {
-          shift = shiftCache.get(shiftName) ?? null;
+          named = shiftCache.get(shiftName) ?? null;
         } else {
-          shift = await this.prisma.workShift.findFirst({
+          named = await this.prisma.workShift.findFirst({
             where: { name: shiftName, isDeleted: false },
           });
-          shiftCache.set(shiftName, shift);
+          shiftCache.set(shiftName, named);
         }
-        if (!shift) {
+        if (!named) {
           result.errors.push({
             row: rowNumber,
-            message: `Không tìm thấy ca "${shiftName}" — dùng ca gán mặc định`,
+            message: `Không tìm thấy ca "${shiftName}" — dùng ca đã gán`,
           });
+        } else {
+          shift = named;
         }
-      }
-      if (!shift) {
-        shift = await this.resolveShiftForUser(user.id, workDate);
       }
 
       const checkInAt = headerMap.checkIn
@@ -495,7 +523,7 @@ export class AttendanceService {
       });
 
       const data = {
-        workShiftId: shift?.id ?? existing?.workShiftId ?? null,
+        workShiftId: shift.id,
         checkInAt,
         checkOutAt,
         lateMinutes,

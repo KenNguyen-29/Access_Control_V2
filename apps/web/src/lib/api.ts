@@ -142,6 +142,7 @@ export type StatsOverview = {
   akuvox: number;
   workShifts: number;
   activeAssignments: number;
+  unassignedEmployees: number;
   todayAttendance: number;
   todayLate: number;
   todayEvents: number;

@@ -40,6 +40,7 @@ import {
   getWorkShifts,
   setDefaultShift,
   updateWorkShift,
+  getStatsOverview,
   type EmployeeShift,
   type User,
   type WorkShift,
@@ -129,6 +130,8 @@ export default function ShiftsPage() {
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [assignOpen, setAssignOpen] = useState(false);
+  /** When set, dialog is single-employee assign (no multi-select list). */
+  const [assignTargetUser, setAssignTargetUser] = useState<User | null>(null);
   const [editing, setEditing] = useState<WorkShift | null>(null);
   const [form, setForm] = useState(EMPTY_SHIFT);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors<keyof typeof EMPTY_SHIFT>>({});
@@ -171,6 +174,10 @@ export default function ShiftsPage() {
     queryKey: queryKeys.departments(),
     queryFn: () => getDepartments(),
     enabled: assignOpen,
+  });
+  const overviewQuery = useQuery({
+    queryKey: ['stats', 'overview', 'shifts'],
+    queryFn: () => getStatsOverview(),
   });
   const filterIdsQuery = useQuery({
     queryKey: ['userIds', debouncedAssignSearch, assignDept],
@@ -232,6 +239,7 @@ export default function ShiftsPage() {
     void queryClient.invalidateQueries({ queryKey: queryKeys.employeeShifts() });
     void queryClient.invalidateQueries({ queryKey: ['userIds', 'shifts-coverage'] });
     void queryClient.invalidateQueries({ queryKey: ['users', 'shifts-coverage'] });
+    void queryClient.invalidateQueries({ queryKey: ['stats', 'overview'] });
   }
 
   const filteredAssignments = useMemo(() => {
@@ -437,10 +445,29 @@ export default function ShiftsPage() {
       endDate: '',
     });
     setAssignFieldErrors({});
+    setAssignTargetUser(null);
     setSelectedUserIds(new Set());
     setAssignSearch('');
     setAssignDept('');
     setAssignResult(null);
+    setError(null);
+    setAssignOpen(true);
+  }
+
+  function openAssignForUser(user: User) {
+    setAssignForm({
+      mode: 'RANGED',
+      workShiftId: '',
+      startDate: todayDateOnly(),
+      endDate: '',
+    });
+    setAssignFieldErrors({});
+    setAssignTargetUser(user);
+    setSelectedUserIds(new Set([user.id]));
+    setAssignSearch('');
+    setAssignDept('');
+    setAssignResult(null);
+    setError(null);
     setAssignOpen(true);
   }
 
@@ -456,14 +483,24 @@ export default function ShiftsPage() {
       }),
     onSuccess: (result) => {
       const modeLabel = result.mode === 'FIXED' ? 'cố định' : 'có thời hạn';
-      setAssignResult(
-        `Đã gán ${modeLabel} cho ${result.assigned} nhân viên${
-          result.skipped > 0 ? `, bỏ qua ${result.skipped} (đã có ca hiệu lực)` : ''
-        }.`,
-      );
-      setNotice('Gán ca thành công');
-      setSelectedUserIds(new Set());
-      // Keep startDate/endDate/mode/workShift as chosen after save
+      if (assignTargetUser) {
+        setNotice(
+          result.assigned > 0
+            ? `Đã gán ca ${modeLabel} cho ${assignTargetUser.fullName}`
+            : `Không gán được — ${assignTargetUser.fullName} có thể đã có ca hiệu lực`,
+        );
+        setAssignOpen(false);
+        setAssignTargetUser(null);
+        setSelectedUserIds(new Set());
+      } else {
+        setAssignResult(
+          `Đã gán ${modeLabel} cho ${result.assigned} nhân viên${
+            result.skipped > 0 ? `, bỏ qua ${result.skipped} (đã có ca hiệu lực)` : ''
+          }.`,
+        );
+        setNotice('Gán ca thành công');
+        setSelectedUserIds(new Set());
+      }
       invalidateAssignmentQueries();
     },
     onError: (e) => setError(e instanceof ApiError ? e.message : 'Gán ca thất bại'),
@@ -522,12 +559,13 @@ export default function ShiftsPage() {
               <strong>Bước 1:</strong> Tạo các mẫu ca (giờ vào/ra, giờ nghỉ).
             </p>
             <p>
-              <strong>Bước 2:</strong> Đặt một ca làm <em>ca mặc định</em> để áp dụng cho nhân viên chưa gán.
+              <strong>Bước 2:</strong> Dùng &quot;Gán ca&quot; — chọn <em>Cố định</em> (đến khi kết thúc)
+              hoặc <em>Có thời hạn</em> (Từ–Đến ngày). <strong>Nhân viên phải được gán ca</strong> thì
+              quét cửa mới được tính chấm công.
             </p>
             <p>
-              <strong>Bước 3:</strong> Dùng &quot;Gán ca&quot; — chọn <em>Cố định</em> (lặp đến khi kết thúc)
-              hoặc <em>Có thời hạn</em> (Từ–Đến ngày). Hệ thống cảnh báo nhân viên chưa gán ca và ca sắp hết
-              hạn (≤ {EXPIRING_SOON_DAYS} ngày).
+              <strong>Bước 3:</strong> Theo dõi bằng bộ lọc trạng thái — <em>Chưa gán ca</em>,{' '}
+              <em>Sắp kết thúc</em> (≤ {EXPIRING_SOON_DAYS} ngày), <em>Đã kết thúc</em>.
             </p>
           </div>
         </Collapsible>
@@ -619,6 +657,31 @@ export default function ShiftsPage() {
         title={`Phân ca nhân viên (${listTotal})`}
         description="Theo dõi trạng thái gán ca: chưa gán, đang hiệu lực, sắp hết hạn, đã kết thúc."
       >
+        {(overviewQuery.data?.unassignedEmployees ?? 0) > 0 && (
+          <div className="mb-4 flex flex-col gap-3 rounded-sm border border-amber-300 bg-amber-50 px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-start gap-2 text-sm text-amber-900">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />
+              <p>
+                Có{' '}
+                <strong>{overviewQuery.data!.unassignedEmployees.toLocaleString('vi-VN')}</strong>{' '}
+                nhân viên chưa gán ca — quét cửa sẽ không được tính chấm công.
+              </p>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="shrink-0 border-amber-400 bg-white text-amber-900 hover:bg-amber-100"
+              onClick={() => {
+                setAssignmentFilter('UNASSIGNED');
+                setWorkShiftFilter('');
+                setListPage(1);
+              }}
+            >
+              Xem danh sách
+            </Button>
+          </div>
+        )}
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center">
           <div className="relative max-w-md flex-1">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -711,12 +774,7 @@ export default function ShiftsPage() {
                             variant="outline"
                             size="sm"
                             className="h-8"
-                            onClick={() => {
-                              setSelectedUserIds(new Set([u.id]));
-                              setAssignOpen(true);
-                              setAssignResult(null);
-                              setError(null);
-                            }}
+                            onClick={() => openAssignForUser(u)}
                           >
                             Gán ca
                           </Button>
@@ -972,12 +1030,37 @@ export default function ShiftsPage() {
 
       <Dialog
         open={assignOpen}
-        onClose={() => setAssignOpen(false)}
-        title="Gán ca cho nhân viên"
-        description="Chọn kiểu gán, ca làm việc và nhân viên."
-        className="max-w-2xl"
+        onClose={() => {
+          setAssignOpen(false);
+          setAssignTargetUser(null);
+        }}
+        title={
+          assignTargetUser
+            ? `Gán ca — ${assignTargetUser.fullName}`
+            : 'Gán ca cho nhân viên'
+        }
+        description={
+          assignTargetUser
+            ? `Phân ca riêng cho ${assignTargetUser.employeeCode ? `${assignTargetUser.fullName} (${assignTargetUser.employeeCode})` : assignTargetUser.fullName}.`
+            : 'Chọn kiểu gán, ca làm việc và nhân viên.'
+        }
+        className={assignTargetUser ? 'max-w-lg' : 'max-w-2xl'}
       >
         <div className="space-y-3">
+          {assignTargetUser && (
+            <div className="rounded-sm border border-border bg-muted/30 px-3 py-2 text-sm">
+              <p className="font-semibold text-foreground">{assignTargetUser.fullName}</p>
+              <p className="text-xs text-muted-foreground">
+                {[
+                  assignTargetUser.employeeCode,
+                  assignTargetUser.department?.name,
+                ]
+                  .filter(Boolean)
+                  .join(' · ') || '—'}
+              </p>
+            </div>
+          )}
+
           <div>
             <label className="mb-1.5 block text-xs text-muted-foreground">
               Kiểu gán
@@ -1096,76 +1179,78 @@ export default function ShiftsPage() {
             )}
           </div>
 
-          <div className="border-t border-border pt-3">
-            <label className="mb-1 block text-xs text-muted-foreground">
-              Nhân viên
-              <RequiredMark />
-            </label>
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_200px]">
-              <div className="relative">
-                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  placeholder="Tìm theo tên hoặc mã..."
-                  className="input-design h-10 pl-10"
-                  value={assignSearch}
-                  onChange={(e) => setAssignSearch(e.target.value)}
+          {!assignTargetUser && (
+            <div className="border-t border-border pt-3">
+              <label className="mb-1 block text-xs text-muted-foreground">
+                Nhân viên
+                <RequiredMark />
+              </label>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_200px]">
+                <div className="relative">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    placeholder="Tìm theo tên hoặc mã..."
+                    className="input-design h-10 pl-10"
+                    value={assignSearch}
+                    onChange={(e) => setAssignSearch(e.target.value)}
+                  />
+                </div>
+                <Select value={assignDept} onChange={(e) => setAssignDept(e.target.value)}>
+                  <option value="">Tất cả phòng ban</option>
+                  {deptOptions.map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.name}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+
+              <div className="mt-2 flex items-center justify-between rounded-t-sm border border-border bg-muted/30 px-3 py-2">
+                <label className="flex items-center gap-2 text-sm font-medium">
+                  <input
+                    type="checkbox"
+                    checked={allFilteredSelected}
+                    onChange={toggleAllFiltered}
+                    disabled={filterTotal === 0 || filterIdsQuery.isLoading}
+                  />
+                  Chọn tất cả ({filterTotal})
+                </label>
+                <span className="text-xs text-muted-foreground">
+                  Đã chọn <strong className="text-foreground">{selectedUserIds.size}</strong>
+                </span>
+              </div>
+              <div
+                className={cn(
+                  'max-h-72 overflow-y-auto rounded-b-sm border border-t-0 border-border',
+                  assignFieldErrors.selectedUserIds && 'border-destructive',
+                )}
+              >
+                <UserInfiniteList
+                  enabled={assignOpen && !assignTargetUser}
+                  search={debouncedAssignSearch}
+                  departmentId={assignDept || undefined}
+                  emptyText="Không có nhân viên phù hợp."
+                  renderItem={(u: User) => (
+                    <label className="flex cursor-pointer items-center gap-3 border-b border-border px-3 py-2 text-sm last:border-b-0 hover:bg-muted/20">
+                      <input
+                        type="checkbox"
+                        checked={selectedUserIds.has(u.id)}
+                        onChange={() => toggleUser(u.id)}
+                      />
+                      <span className="flex-1 font-medium">{u.fullName}</span>
+                      <span className="font-mono text-xs text-muted-foreground">{u.employeeCode}</span>
+                      <span className="w-32 truncate text-right text-xs text-muted-foreground">
+                        {u.department?.name ?? '—'}
+                      </span>
+                    </label>
+                  )}
                 />
               </div>
-              <Select value={assignDept} onChange={(e) => setAssignDept(e.target.value)}>
-                <option value="">Tất cả phòng ban</option>
-                {deptOptions.map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {d.name}
-                  </option>
-                ))}
-              </Select>
+              <FieldError message={assignFieldErrors.selectedUserIds} />
             </div>
+          )}
 
-            <div className="mt-2 flex items-center justify-between rounded-t-sm border border-border bg-muted/30 px-3 py-2">
-              <label className="flex items-center gap-2 text-sm font-medium">
-                <input
-                  type="checkbox"
-                  checked={allFilteredSelected}
-                  onChange={toggleAllFiltered}
-                  disabled={filterTotal === 0 || filterIdsQuery.isLoading}
-                />
-                Chọn tất cả ({filterTotal})
-              </label>
-              <span className="text-xs text-muted-foreground">
-                Đã chọn <strong className="text-foreground">{selectedUserIds.size}</strong>
-              </span>
-            </div>
-            <div
-              className={cn(
-                'max-h-72 overflow-y-auto rounded-b-sm border border-t-0 border-border',
-                assignFieldErrors.selectedUserIds && 'border-destructive',
-              )}
-            >
-              <UserInfiniteList
-                enabled={assignOpen}
-                search={debouncedAssignSearch}
-                departmentId={assignDept || undefined}
-                emptyText="Không có nhân viên phù hợp."
-                renderItem={(u: User) => (
-                  <label className="flex cursor-pointer items-center gap-3 border-b border-border px-3 py-2 text-sm last:border-b-0 hover:bg-muted/20">
-                    <input
-                      type="checkbox"
-                      checked={selectedUserIds.has(u.id)}
-                      onChange={() => toggleUser(u.id)}
-                    />
-                    <span className="flex-1 font-medium">{u.fullName}</span>
-                    <span className="font-mono text-xs text-muted-foreground">{u.employeeCode}</span>
-                    <span className="w-32 truncate text-right text-xs text-muted-foreground">
-                      {u.department?.name ?? '—'}
-                    </span>
-                  </label>
-                )}
-              />
-            </div>
-            <FieldError message={assignFieldErrors.selectedUserIds} />
-          </div>
-
-          {assignResult && (
+          {assignResult && !assignTargetUser && (
             <p className="rounded-sm bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
               {assignResult}
             </p>
@@ -1180,10 +1265,19 @@ export default function ShiftsPage() {
             <span className="text-xs text-muted-foreground">
               {assignForm.mode === 'FIXED'
                 ? 'Gán cố định sẽ thay ca cố định cũ (nếu có) và áp dụng từ hôm nay.'
-                : 'Người đã có ca đang hiệu lực sẽ được bỏ qua.'}
+                : assignTargetUser
+                  ? 'Nếu đã có ca đang hiệu lực, lần gán có thời hạn có thể bị bỏ qua.'
+                  : 'Người đã có ca đang hiệu lực sẽ được bỏ qua.'}
             </span>
             <div className="flex gap-2">
-              <Button variant="outline" size="sm" onClick={() => setAssignOpen(false)}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setAssignOpen(false);
+                  setAssignTargetUser(null);
+                }}
+              >
                 Đóng
               </Button>
               <Button
@@ -1194,7 +1288,9 @@ export default function ShiftsPage() {
               >
                 {assignMutation.isPending
                   ? 'Đang gán...'
-                  : `Gán ca cho ${selectedUserIds.size} nhân viên`}
+                  : assignTargetUser
+                    ? 'Gán ca'
+                    : `Gán ca cho ${selectedUserIds.size} nhân viên`}
               </Button>
             </div>
           </div>
