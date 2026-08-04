@@ -13,7 +13,6 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiBody, ApiConsumes, ApiTags } from '@nestjs/swagger';
-import { memoryStorage } from 'multer';
 import { successResponse } from '../../common/utils/response.util';
 import { CredentialsService } from './credentials.service';
 import { CreateCredentialDto } from './dto/create-credential.dto';
@@ -49,9 +48,10 @@ export class CredentialsController {
       required: ['userId', 'image'],
     },
   })
+  // FileInterceptor defaults to multer memoryStorage (buffer on file) — do not import multer
+  // directly; pnpm --prod deploy omits transitive-only packages and crashes with MODULE_NOT_FOUND.
   @UseInterceptors(
     FileInterceptor('image', {
-      storage: memoryStorage(),
       limits: { fileSize: 10 * 1024 * 1024 },
     }),
   )
