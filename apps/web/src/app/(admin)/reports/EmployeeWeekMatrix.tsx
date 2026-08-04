@@ -27,7 +27,6 @@ const CONG_META: Record<CongKind, { label: string; colorClass: string; cong: num
 
 type MatrixSort = 'name' | 'least' | 'most';
 type TriFilter = '' | 'yes' | 'no';
-type CongKindFilter = '' | CongKind | 'earlyArrival';
 
 type DayCell = {
   date: string;
@@ -123,14 +122,6 @@ function employeeHasFlag(
 ): boolean {
   for (const day of emp.days.values()) {
     if (isPresent(day) && predicate(day)) return true;
-  }
-  return false;
-}
-
-function employeeHasCongKind(emp: EmployeeWeek, kind: CongKind): boolean {
-  for (const day of emp.days.values()) {
-    const resolved = resolveDayCong(day);
-    if (resolved?.kind === kind) return true;
   }
   return false;
 }
@@ -234,7 +225,6 @@ export default function EmployeeWeekMatrix({
 }: Props) {
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState<MatrixSort>('name');
-  const [congFilter, setCongFilter] = useState<CongKindFilter>('');
   const [earlyArrival, setEarlyArrival] = useState<TriFilter>('');
   const [hasOt, setHasOt] = useState<TriFilter>('');
   const [hasLate, setHasLate] = useState<TriFilter>('');
@@ -254,11 +244,6 @@ export default function EmployeeWeekMatrix({
           e.employeeCode.toLowerCase().includes(q) ||
           (e.departmentName ?? '').toLowerCase().includes(q),
       );
-    }
-    if (congFilter === 'earlyArrival') {
-      list = list.filter((e) => employeeHasFlag(e, (d) => d.earlyArrivalMinutes > 0));
-    } else if (congFilter) {
-      list = list.filter((e) => employeeHasCongKind(e, congFilter));
     }
     list = list.filter((e) => {
       if (!matchesTri(hasLate, employeeHasFlag(e, (d) => d.lateMinutes > 0 || d.status === 'LATE'))) {
@@ -283,15 +268,7 @@ export default function EmployeeWeekMatrix({
       return a.fullName.localeCompare(b.fullName, 'vi');
     });
     return list;
-  }, [
-    rows,
-    debouncedSearch,
-    sort,
-    congFilter,
-    earlyArrival,
-    hasOt,
-    hasLate,
-  ]);
+  }, [rows, debouncedSearch, sort, earlyArrival, hasOt, hasLate]);
 
   const totalPages = Math.max(1, Math.ceil(employees.length / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
@@ -305,7 +282,6 @@ export default function EmployeeWeekMatrix({
     departmentId,
     rangeFrom,
     rangeTo,
-    congFilter,
     earlyArrival,
     hasOt,
     hasLate,
@@ -361,24 +337,6 @@ export default function EmployeeWeekMatrix({
                 {d.name}
               </option>
             ))}
-          </Select>
-        </div>
-        <div>
-          <label htmlFor="matrix-cong" className="mb-1 block text-xs text-muted-foreground">
-            Loại công
-          </label>
-          <Select
-            id="matrix-cong"
-            className="h-10"
-            value={congFilter}
-            onChange={(e) => setCongFilter(e.target.value as CongKindFilter)}
-          >
-            <option value="">Tất cả loại công</option>
-            <option value="late">Đi muộn</option>
-            <option value="onTime">Đúng giờ</option>
-            <option value="ot">Tăng ca</option>
-            <option value="sunday">Làm CN</option>
-            <option value="earlyArrival">Có đi sớm</option>
           </Select>
         </div>
       </div>
