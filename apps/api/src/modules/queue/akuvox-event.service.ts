@@ -332,7 +332,9 @@ export class AkuvoxEventService {
     });
 
     const faceImageUrl = user?.faceImagePath
-      ? await this.storage.getAssetUrl(user.faceImagePath).catch(() => undefined)
+      ? await this.storage
+          .getAssetUrl(user.faceImagePath, { forBrowser: true })
+          .catch(() => undefined)
       : undefined;
 
     const checkinEvent: CheckinEvent = {

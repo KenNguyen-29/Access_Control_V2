@@ -95,8 +95,11 @@ export class CredentialsService {
         .resize({ width: 1024, height: 1024, fit: 'inside', withoutEnlargement: true })
         .jpeg({ quality: 88 })
         .toBuffer();
-    } catch {
-      throw new BadRequestException('Không đọc được ảnh (dán ảnh vào ô Excel hoặc dùng file JPG/PNG)');
+    } catch (err) {
+      this.logger.warn(
+        `face enroll sharp failed user=${userId}: ${(err as Error).message}`,
+      );
+      throw new BadRequestException('Không đọc được ảnh (dùng file JPG/PNG)');
     }
 
     const key = `face-images/${user.employeeCode || user.id}.jpg`;

@@ -103,17 +103,36 @@ export class StorageService implements OnModuleInit {
     return createReadStream(this.resolveLocalPath(relativePath));
   }
 
-  /** Public HTTP URL for FE / Akuvox FaceURL (file is served from disk). */
+  /** Absolute public base used for Akuvox FaceURL (LAN/VPN). */
+  getPublicBaseUrl(): string {
+    return this.publicBaseUrl;
+  }
+
+  /** Public HTTP URL for Akuvox FaceURL (file is served from disk). */
   getFileUrl(relativePath: string): string {
     const cleaned = relativePath.replace(/^[/\\]+/, '').replace(/\\/g, '/');
     return `${this.publicBaseUrl}/api/files/${cleaned}`;
   }
 
+  /**
+   * URL for browser/FE preview. Uses API_BROWSER_URL when set so local UI on
+   * localhost still loads faces while API_PUBLIC_URL stays the LAN IP for devices.
+   */
+  getBrowserFileUrl(relativePath: string): string {
+    const cleaned = relativePath.replace(/^[/\\]+/, '').replace(/\\/g, '/');
+    const apiPort = this.config.get<string>('API_PORT', '8080');
+    const browserBase = (
+      this.config.get<string>('API_BROWSER_URL') ||
+      `http://localhost:${apiPort}`
+    ).replace(/\/$/, '');
+    return `${browserBase}/api/files/${cleaned}`;
+  }
+
   /** FaceID paths use local disk URL; other keys still use MinIO signed URL. */
-  async getAssetUrl(key: string): Promise<string> {
+  async getAssetUrl(key: string, opts?: { forBrowser?: boolean }): Promise<string> {
     const normalized = key.replace(/\\/g, '/');
     if (normalized.startsWith('face-images/')) {
-      return this.getFileUrl(normalized);
+      return opts?.forBrowser ? this.getBrowserFileUrl(normalized) : this.getFileUrl(normalized);
     }
     return this.getSignedUrl(key);
   }

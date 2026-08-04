@@ -1,7 +1,7 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { IsOptional, IsString } from 'class-validator';
 
-/** Multipart field: userId (ảnh JPG gửi qua field `image`). */
+/** Multipart text fields for face enroll (ảnh gửi qua field `image`). */
 export class FaceEnrollDto {
   @ApiPropertyOptional()
   @IsOptional()

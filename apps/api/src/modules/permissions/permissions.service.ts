@@ -100,7 +100,7 @@ export class PermissionsService {
         fullName: user.fullName,
         employeeCode: user.employeeCode,
         photoUrl: user.faceImagePath
-          ? this.storage.getFileUrl(user.faceImagePath)
+          ? this.storage.getBrowserFileUrl(user.faceImagePath)
           : null,
         departmentName: user.department?.name ?? null,
       },

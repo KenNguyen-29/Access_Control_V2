@@ -50,10 +50,16 @@ export async function apiRequest<T>(
   _retried = false,
 ): Promise<T> {
   const token = getToken();
+  const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
   const headers: Record<string, string> = {
-    ...(options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
+    ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
     ...(options.headers as Record<string, string>),
   };
+  // Browser must set multipart boundary itself — never force JSON on FormData.
+  if (isFormData) {
+    delete headers['Content-Type'];
+    delete headers['content-type'];
+  }
 
   if (token) {
     headers.Authorization = `Bearer ${token}`;
@@ -82,7 +88,7 @@ export async function apiRequest<T>(
     return (await res.blob()) as T;
   }
 
-  const json = (await res.json()) as ApiResponse<T>;
+  const json = (await res.json()) as ApiResponse<T> & { error?: string; statusCode?: number };
 
   if (!res.ok || !json.success) {
     throw new ApiError(json.error || json.message || 'Request failed', res.status);
@@ -397,8 +403,14 @@ export type FaceEnrollResult = {
 };
 
 export async function enrollFace(userId: string, imageFile: File) {
+  if (!userId?.trim()) {
+    throw new ApiError('Thiếu userId khi đăng ký FaceID', 400);
+  }
+  if (!imageFile || imageFile.size < 100) {
+    throw new ApiError('Vui lòng chọn ảnh khuôn mặt hợp lệ', 400);
+  }
   const formData = new FormData();
-  formData.append('userId', userId);
+  formData.append('userId', userId.trim());
   formData.append('image', imageFile, imageFile.name || 'face.jpg');
   return apiRequest<FaceEnrollResult>('/credentials/face-enroll', {
     method: 'POST',

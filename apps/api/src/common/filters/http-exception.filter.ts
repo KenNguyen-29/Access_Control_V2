@@ -69,6 +69,8 @@ export class AllExceptionsFilter implements ExceptionFilter {
         `${request.method} ${request.url} -> ${status}: ${message}`,
         exception instanceof Error ? exception.stack : undefined,
       );
+    } else if (status >= 400) {
+      this.logger.warn(`${request.method} ${request.url} -> ${status}: ${message}`);
     }
 
     response.status(status).json({ success: false, message, statusCode: status });

@@ -63,12 +63,16 @@ export class UsersService {
     };
   }
 
-  /** Attach a public URL for the face image stored on disk (path in PostgreSQL). */
+  /** Attach a browser-reachable URL for the face image (skip if file missing on disk). */
   private async withFaceUrl<T extends { faceImagePath: string | null }>(user: T) {
     let faceImageUrl: string | null = null;
     if (user.faceImagePath) {
+      const path = user.faceImagePath.replace(/\\/g, '/');
+      if (path.startsWith('face-images/') && !this.storage.existsOnDisk(path)) {
+        return { ...user, faceImageUrl: null };
+      }
       try {
-        faceImageUrl = await this.storage.getAssetUrl(user.faceImagePath);
+        faceImageUrl = await this.storage.getAssetUrl(path, { forBrowser: true });
       } catch {
         faceImageUrl = null;
       }

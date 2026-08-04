@@ -73,38 +73,37 @@ async function compressImageFile(file: File, maxEdge = 1024, quality = 0.85): Pr
   const dataUrl = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result));
-    reader.onerror = reject;
+    reader.onerror = () => reject(new Error('Không đọc được file ảnh'));
     reader.readAsDataURL(file);
   });
-  try {
-    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-      const image = new Image();
-      image.onload = () => resolve(image);
-      image.onerror = reject;
-      image.src = dataUrl;
-    });
-    const scale = Math.min(1, maxEdge / Math.max(img.width, img.height));
-    const w = Math.round(img.width * scale);
-    const h = Math.round(img.height * scale);
-    const canvas = document.createElement('canvas');
-    canvas.width = w;
-    canvas.height = h;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) {
-      return new File([file], 'face.jpg', { type: 'image/jpeg' });
-    }
-    ctx.drawImage(img, 0, 0, w, h);
-    const blob = await new Promise<Blob>((resolve, reject) => {
-      canvas.toBlob(
-        (b) => (b ? resolve(b) : reject(new Error('Không nén được ảnh'))),
-        'image/jpeg',
-        quality,
-      );
-    });
-    return new File([blob], 'face.jpg', { type: 'image/jpeg' });
-  } catch {
-    return new File([file], 'face.jpg', { type: 'image/jpeg' });
+  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error('File không phải ảnh hợp lệ'));
+    image.src = dataUrl;
+  });
+  const scale = Math.min(1, maxEdge / Math.max(img.width, img.height));
+  const w = Math.max(1, Math.round(img.width * scale));
+  const h = Math.max(1, Math.round(img.height * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    throw new Error('Trình duyệt không hỗ trợ nén ảnh');
   }
+  ctx.drawImage(img, 0, 0, w, h);
+  const blob = await new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob(
+      (b) => (b ? resolve(b) : reject(new Error('Không nén được ảnh'))),
+      'image/jpeg',
+      quality,
+    );
+  });
+  if (blob.size < 100) {
+    throw new Error('Ảnh quá nhỏ hoặc không hợp lệ');
+  }
+  return new File([blob], 'face.jpg', { type: 'image/jpeg' });
 }
 
 function revokePreviewUrl(url: string) {
@@ -329,8 +328,12 @@ export default function UsersPage() {
         ? await updateUser(editing.id, { ...payload, employeeCode: form.employeeCode.trim() })
         : await createUser(payload);
 
+      const userId = saved?.id || editing?.id;
       if (form.faceImageFile) {
-        await enrollFace(saved.id, form.faceImageFile);
+        if (!userId) {
+          throw new ApiError('Không lấy được ID nhân viên sau khi lưu', 500);
+        }
+        await enrollFace(userId, form.faceImageFile);
       }
 
       if (isCreate && form.zoneIds.length > 0) {
