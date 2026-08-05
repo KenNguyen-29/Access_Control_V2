@@ -56,6 +56,9 @@ describe('users-excel util', () => {
     assert.equal(map.faceImage, 6);
     assert.equal(map.zones, 7);
     assert.ok(USER_HEADER_ALIASES.fullName.includes('ho ten'));
-    assert.ok(!USER_EXCEL_COLUMNS.some((c) => c.key === 'employeeCode'));
+    assert.deepEqual(
+      USER_EXCEL_COLUMNS.map((c) => c.key),
+      ['fullName', 'email', 'phone', 'department', 'userType', 'faceImage', 'zones'],
+    );
   });
 });
