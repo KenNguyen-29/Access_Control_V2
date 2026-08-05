@@ -218,13 +218,22 @@ export function validateDeviceForm(form: DeviceFormFields): DeviceFormFieldError
     else if (!isValidRtspUrl(rtsp)) errors.rtspUrl = 'RTSP URL phải bắt đầu bằng rtsp:// hoặc rtsps://';
   }
 
-  if (!form.username.trim()) {
-    errors.username = 'Vui lòng nhập tài khoản';
-  }
-
-  const needsPassword = !form.isEdit || !form.hasExistingPassword;
-  if (needsPassword && !form.password.trim()) {
-    errors.password = 'Vui lòng nhập mật khẩu';
+  if (form.deviceType === 'AKUVOX') {
+    if (!form.username.trim()) {
+      errors.username = 'Vui lòng nhập Username Akuvox';
+    }
+    const needsPassword = !form.isEdit || !form.hasExistingPassword;
+    if (needsPassword && !form.password.trim()) {
+      errors.password = 'Vui lòng nhập Password Akuvox';
+    }
+  } else {
+    if (!form.username.trim()) {
+      errors.username = 'Vui lòng nhập tài khoản';
+    }
+    const needsPassword = !form.isEdit || !form.hasExistingPassword;
+    if (needsPassword && !form.password.trim()) {
+      errors.password = 'Vui lòng nhập mật khẩu';
+    }
   }
 
   return errors;

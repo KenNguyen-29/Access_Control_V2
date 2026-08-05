@@ -121,8 +121,12 @@ services:
       API_PUBLIC_URL: ${API_PUBLIC_URL:-http://localhost:8010}
       REDIS_ENABLED: ${REDIS_ENABLED:-true}
       AKUVOX_MOCK_MODE: ${AKUVOX_MOCK_MODE:-true}
+      FACE_UPLOAD_DIR: /app/uploads
     ports:
       - "${API_HOST_PORT:-8010}:8080"
+    volumes:
+      # Persist FaceID JPGs across redeploys (DB only stores faceImagePath)
+      - face_uploads:/app/uploads
     networks:
       - acv2-net
 
@@ -150,3 +154,4 @@ volumes:
   postgres_data:
   redis_data:
   minio_data:
+  face_uploads:

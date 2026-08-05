@@ -115,15 +115,14 @@ export class StorageService implements OnModuleInit {
   }
 
   /**
-   * URL for browser/FE preview. Uses API_BROWSER_URL when set so local UI on
-   * localhost still loads faces while API_PUBLIC_URL stays the LAN IP for devices.
+   * URL for browser/FE preview.
+   * Prefer API_BROWSER_URL (local FE on localhost while API_PUBLIC_URL is LAN).
+   * Otherwise use API_PUBLIC_URL — never default to localhost (breaks prod LAN UI).
    */
   getBrowserFileUrl(relativePath: string): string {
     const cleaned = relativePath.replace(/^[/\\]+/, '').replace(/\\/g, '/');
-    const apiPort = this.config.get<string>('API_PORT', '8080');
     const browserBase = (
-      this.config.get<string>('API_BROWSER_URL') ||
-      `http://localhost:${apiPort}`
+      this.config.get<string>('API_BROWSER_URL') || this.publicBaseUrl
     ).replace(/\/$/, '');
     return `${browserBase}/api/files/${cleaned}`;
   }

@@ -118,6 +118,8 @@ Mở TCP **3003** (web), **8010** (API) cho LAN — hoặc đúng `WEB_HOST_PORT
 | Missing `.env` | Tạo `~/Access_Control_V2/.env` như bước 2 |
 | CI pass, Deploy skip | Chỉ deploy khi push **main** và CI **success** |
 | Health check fail | `docker compose -f docker-compose.prod.yml logs api` trên server |
+| Ảnh FaceID `localhost:8080` / ERR_CONNECTION_REFUSED | Trong `.env` set `API_PUBLIC_URL=http://<LAN-IP>:8010` (cùng host với `NEXT_PUBLIC_API_URL`). Redeploy API. |
+| Ảnh mất sau rebuild | Volume `face_uploads` giữ `/app/uploads`. Upload lại ảnh nếu volume mới tạo lần đầu. |
 
 ---
 

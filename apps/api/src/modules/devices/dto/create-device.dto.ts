@@ -88,16 +88,23 @@ export class CreateDeviceDto {
   @IsString()
   rtspPassword?: string;
 
-  @ApiPropertyOptional({ description: 'Tài khoản HTTP API của Akuvox' })
+  @ApiPropertyOptional({ description: 'Tài khoản HTTP API của Akuvox (bắt buộc với thiết bị Akuvox)' })
   @Transform(emptyToUndefined)
-  @IsOptional()
-  @IsString()
+  @ValidateIf((o: CreateDeviceDto) => o.deviceType === DeviceType.AKUVOX)
+  @IsString({ message: 'Username Akuvox không hợp lệ' })
+  @IsNotEmpty({ message: 'Vui lòng nhập Username Akuvox' })
+  @MaxLength(100)
   username?: string;
 
-  @ApiPropertyOptional({ description: 'Mật khẩu HTTP API của Akuvox; để trống khi sửa để giữ nguyên' })
+  @ApiPropertyOptional({
+    description:
+      'Mật khẩu HTTP API của Akuvox (bắt buộc khi tạo). Khi sửa: để trống để giữ nguyên mật khẩu cũ',
+  })
   @Transform(emptyToUndefined)
-  @IsOptional()
-  @IsString()
+  @ValidateIf((o: CreateDeviceDto) => o.deviceType === DeviceType.AKUVOX)
+  @IsString({ message: 'Password Akuvox không hợp lệ' })
+  @IsNotEmpty({ message: 'Vui lòng nhập Password Akuvox' })
+  @MaxLength(200)
   password?: string;
 
   @ApiPropertyOptional({ enum: ['http', 'https'], default: 'http' })

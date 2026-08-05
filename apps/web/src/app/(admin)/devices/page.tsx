@@ -773,7 +773,10 @@ export default function DevicesPage() {
             <div>
               <label className="mb-1 block text-xs text-muted-foreground">
                 Mật khẩu
-                {!editing && <RequiredMark />}
+                {(
+                  !editing ||
+                  !(form.deviceType === 'AKUVOX' ? editing.hasAkuvoxPassword : editing.hasRtspPassword)
+                ) && <RequiredMark />}
               </label>
               <Input
                 type="password"

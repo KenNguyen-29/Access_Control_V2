@@ -18,8 +18,6 @@ type AkuvoxConfig = {
 export class AkuvoxService {
   private readonly logger = new Logger(AkuvoxService.name);
   private readonly mockMode: boolean;
-  private readonly defaultUsername: string;
-  private readonly defaultPassword: string;
   private readonly timeoutMs: number;
 
   constructor(
@@ -28,8 +26,6 @@ export class AkuvoxService {
     private readonly storage: StorageService,
   ) {
     this.mockMode = this.config.get<string>('AKUVOX_MOCK_MODE', 'true') === 'true';
-    this.defaultUsername = this.config.get<string>('AKUVOX_DEFAULT_USERNAME', 'admin');
-    this.defaultPassword = this.config.get<string>('AKUVOX_DEFAULT_PASSWORD', 'Admin123');
     this.timeoutMs = Number(this.config.get<string>('AKUVOX_REQUEST_TIMEOUT', '15000'));
   }
 
@@ -63,8 +59,13 @@ export class AkuvoxService {
 
   private authHeader(device: Device) {
     const cfg = this.parseConfig(device);
-    const username = cfg.username || this.defaultUsername;
-    const password = cfg.password || this.defaultPassword;
+    const username = cfg.username?.trim();
+    const password = cfg.password?.trim();
+    if (!username || !password) {
+      throw new BadRequestException(
+        'Thiết bị chưa cấu hình tài khoản Akuvox — nhập Username/Password trên trang Thiết bị',
+      );
+    }
     const token = Buffer.from(`${username}:${password}`).toString('base64');
     return `Basic ${token}`;
   }

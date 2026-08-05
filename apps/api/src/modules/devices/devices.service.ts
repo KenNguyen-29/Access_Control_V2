@@ -1,4 +1,4 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Device, DeviceType, Prisma } from '@prisma/client';
 import { createConnection } from 'net';
@@ -17,6 +17,9 @@ type AkuvoxConfig = {
   apiVersion?: 'modern' | 'legacy';
   scheduleRelay?: string;
 };
+
+const AKUVOX_CREDS_MSG =
+  'Thiết bị chưa cấu hình tài khoản Akuvox — nhập Username/Password trên trang Thiết bị';
 
 @Injectable()
 export class DevicesService {
@@ -39,15 +42,37 @@ export class DevicesService {
     throw err;
   }
 
+  private parseAkuvoxConfig(raw: Prisma.JsonValue | null | undefined): AkuvoxConfig {
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+      return { ...(raw as AkuvoxConfig) };
+    }
+    return {};
+  }
+
+  /** Require per-device Akuvox username/password (no shared env fallback). */
+  private assertAkuvoxCredentials(deviceType: DeviceType, cfg: AkuvoxConfig, isCreate: boolean) {
+    if (deviceType !== DeviceType.AKUVOX) return;
+    const username = cfg.username?.trim();
+    const password = cfg.password?.trim();
+    if (!username) {
+      throw new BadRequestException('Vui lòng nhập Username Akuvox');
+    }
+    if (!password) {
+      throw new BadRequestException(
+        isCreate
+          ? 'Vui lòng nhập Password Akuvox'
+          : AKUVOX_CREDS_MSG,
+      );
+    }
+  }
+
   /** Merge Akuvox credential/config fields (username/password/protocol/relay) into akuvoxConfig JSON. */
   private buildAkuvoxConfig(
     dto: CreateDeviceDto | UpdateDeviceDto,
     existing?: Prisma.JsonValue | null,
   ): AkuvoxConfig | undefined {
     const current: AkuvoxConfig =
-      existing && typeof existing === 'object' && !Array.isArray(existing)
-        ? { ...(existing as AkuvoxConfig) }
-        : {};
+      existing !== undefined ? this.parseAkuvoxConfig(existing) : {};
 
     let touched = false;
     if (dto.username !== undefined) {
@@ -139,6 +164,9 @@ export class DevicesService {
   async create(dto: CreateDeviceDto) {
     const { username: _u, password: _p, protocol: _pr, relay: _r, ...rest } = dto;
     const akuvoxConfig = this.buildAkuvoxConfig(dto);
+    if (dto.deviceType === DeviceType.AKUVOX) {
+      this.assertAkuvoxCredentials(dto.deviceType, akuvoxConfig ?? {}, true);
+    }
     let device: Device;
     try {
       device = await this.prisma.device.create({
@@ -164,13 +192,21 @@ export class DevicesService {
       dto.relay !== undefined;
     const akuvoxConfig = hasAkuvoxFields
       ? this.buildAkuvoxConfig(dto, existing.akuvoxConfig)
-      : undefined;
+      : this.parseAkuvoxConfig(existing.akuvoxConfig);
+
+    const nextType = dto.deviceType ?? existing.deviceType;
+    if (nextType === DeviceType.AKUVOX) {
+      this.assertAkuvoxCredentials(nextType, akuvoxConfig ?? {}, false);
+    }
 
     let device: Device;
     try {
       device = await this.prisma.device.update({
         where: { id },
-        data: { ...rest, ...(akuvoxConfig ? { akuvoxConfig } : {}) },
+        data: {
+          ...rest,
+          ...(hasAkuvoxFields && akuvoxConfig ? { akuvoxConfig } : {}),
+        },
       });
     } catch (err) {
       this.rethrowKnownError(err);
@@ -244,12 +280,12 @@ export class DevicesService {
   }
 
   private buildAkuvoxAuthHeader(device: Device) {
-    const cfg =
-      device.akuvoxConfig && typeof device.akuvoxConfig === 'object' && !Array.isArray(device.akuvoxConfig)
-        ? (device.akuvoxConfig as AkuvoxConfig)
-        : {};
-    const username = cfg.username || this.config.get<string>('AKUVOX_DEFAULT_USERNAME', 'admin');
-    const password = cfg.password || this.config.get<string>('AKUVOX_DEFAULT_PASSWORD', 'Admin123');
+    const cfg = this.parseAkuvoxConfig(device.akuvoxConfig);
+    const username = cfg.username?.trim();
+    const password = cfg.password?.trim();
+    if (!username || !password) {
+      throw new BadRequestException(AKUVOX_CREDS_MSG);
+    }
     return `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`;
   }
 
