@@ -96,10 +96,16 @@ export class CredentialsService {
         .jpeg({ quality: 88 })
         .toBuffer();
     } catch (err) {
-      this.logger.warn(
-        `face enroll sharp failed user=${userId}: ${(err as Error).message}`,
-      );
-      throw new BadRequestException('Không đọc được ảnh (dùng file JPG/PNG)');
+      const msg = (err as Error).message || String(err);
+      this.logger.warn(`face enroll sharp failed user=${userId}: ${msg}`);
+      // FE already compresses to JPEG; if sharp native addon fails (e.g. Alpine), keep valid JPEG as-is.
+      const isJpeg = buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
+      if (isJpeg) {
+        this.logger.warn(`face enroll fallback: saving original JPEG without sharp (${buffer.length} bytes)`);
+        jpeg = buffer;
+      } else {
+        throw new BadRequestException('Không đọc được ảnh (dùng file JPG/PNG)');
+      }
     }
 
     const key = `face-images/${user.employeeCode || user.id}.jpg`;

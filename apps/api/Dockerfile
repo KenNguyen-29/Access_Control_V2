@@ -32,11 +32,13 @@ RUN cp -R /app/apps/api/dist /app/deploy/dist \
   && (pnpm exec prisma generate --schema=./prisma/schema.prisma || npx --yes prisma@6.19.3 generate --schema=./prisma/schema.prisma)
 
 FROM node:20-alpine AS api
+RUN apk add --no-cache libc6-compat
 WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=api-build /app/deploy ./
-RUN npm install -g prisma@6.19.3 \
-  && node -e "require('express'); require('@prisma/client'); console.log('deps ok')" \
+RUN mkdir -p /app/uploads/face-images \
+  && npm install -g prisma@6.19.3 \
+  && node -e "require('express'); require('@prisma/client'); require('sharp'); console.log('deps ok')" \
   && test -f prisma/seed.js && test -f prisma/run-seed.cjs
 EXPOSE 8080
 CMD ["node", "dist/main.js"]
