@@ -8,9 +8,8 @@ import {
 
 export { cellToString, normalizeHeader, sendXlsx, workbookToBuffer };
 
-/** Shared Excel columns for users template / import. */
+/** Shared Excel columns for users template / import. Mã NV is auto-generated — not in template. */
 export const USER_EXCEL_COLUMNS = [
-  { header: 'Mã NV', key: 'employeeCode', width: 14 },
   { header: 'Họ tên', key: 'fullName', width: 24 },
   { header: 'Email', key: 'email', width: 28 },
   { header: 'Số điện thoại', key: 'phone', width: 16 },
@@ -23,7 +22,6 @@ export const USER_EXCEL_COLUMNS = [
 export type UserExcelColumnKey = (typeof USER_EXCEL_COLUMNS)[number]['key'];
 
 export const USER_HEADER_ALIASES: Record<UserExcelColumnKey, string[]> = {
-  employeeCode: ['ma nv', 'employee code', 'employeecode', 'ma nhan vien'],
   fullName: ['ho ten', 'full name', 'fullname', 'name'],
   email: ['email', 'e-mail', 'thu dien tu'],
   phone: ['so dien thoai', 'sdt', 'phone', 'dien thoai', 'mobile'],

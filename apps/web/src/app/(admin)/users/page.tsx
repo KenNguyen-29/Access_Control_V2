@@ -452,7 +452,7 @@ export default function UsersPage() {
             size="sm"
             onClick={() => void onDownloadTemplate()}
             disabled={loading || importing}
-            title="Mẫu: dán ảnh vào cột Ảnh; khu vực nhiều tên cách nhau bởi ;. ZIP = Excel + ảnh."
+            title="Mẫu: mã NV tự sinh; dán ảnh vào cột Ảnh; khu vực nhiều tên cách nhau bởi ;. ZIP = Excel + ảnh."
           >
             <Download className="h-4 w-4" />
             Tải mẫu Excel

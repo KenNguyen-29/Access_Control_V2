@@ -7,6 +7,7 @@ import {
   normalizePhone,
   parseUserType,
   parseZoneNames,
+  USER_EXCEL_COLUMNS,
   USER_HEADER_ALIASES,
 } from './users-excel.util';
 import * as ExcelJS from 'exceljs';
@@ -34,11 +35,10 @@ describe('users-excel util', () => {
     assert.deepEqual(parseZoneNames('  '), []);
   });
 
-  it('maps VN headers including Anh and Khu vuc', () => {
+  it('maps VN headers without Ma NV (auto-generated)', () => {
     const wb = new ExcelJS.Workbook();
     const sheet = wb.addWorksheet('t');
     sheet.addRow([
-      'Mã NV',
       'Họ tên',
       'Email',
       'Số điện thoại',
@@ -48,14 +48,14 @@ describe('users-excel util', () => {
       'Khu vực',
     ]);
     const map = mapUserHeaderRow(sheet.getRow(1));
-    assert.equal(map.employeeCode, 1);
-    assert.equal(map.fullName, 2);
-    assert.equal(map.email, 3);
-    assert.equal(map.phone, 4);
-    assert.equal(map.department, 5);
-    assert.equal(map.userType, 6);
-    assert.equal(map.faceImage, 7);
-    assert.equal(map.zones, 8);
+    assert.equal(map.fullName, 1);
+    assert.equal(map.email, 2);
+    assert.equal(map.phone, 3);
+    assert.equal(map.department, 4);
+    assert.equal(map.userType, 5);
+    assert.equal(map.faceImage, 6);
+    assert.equal(map.zones, 7);
     assert.ok(USER_HEADER_ALIASES.fullName.includes('ho ten'));
+    assert.ok(!USER_EXCEL_COLUMNS.some((c) => c.key === 'employeeCode'));
   });
 });

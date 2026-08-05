@@ -280,7 +280,6 @@ export class UsersService {
   async buildImportTemplateBuffer(): Promise<Buffer> {
     const { workbook, sheet } = createUsersWorkbook();
     sheet.addRow({
-      employeeCode: 'NV-0001',
       fullName: 'Nguyễn Văn A',
       email: 'nguyenvana@example.com',
       phone: '0912345678',
@@ -292,12 +291,14 @@ export class UsersService {
     // Instruction row note in column headers is enough; add a second sheet tip
     const tip = workbook.addWorksheet('Huong_dan');
     tip.getCell('A1').value =
-      'Cột Ảnh: dán (Ctrl+V) ảnh vào ô, hoặc chèn ảnh vào dòng đó. Không dùng URL.';
+      'Mã nhân viên được hệ thống tự sinh (không cần cột Mã NV). Cập nhật nhân viên cũ theo Email.';
     tip.getCell('A2').value =
-      'Hoặc import file ZIP chứa Excel + ảnh JPG/PNG (cột Ảnh ghi tên file, vd. NV-0001.jpg).';
+      'Cột Ảnh: dán (Ctrl+V) ảnh vào ô, hoặc chèn ảnh vào dòng đó. Không dùng URL.';
     tip.getCell('A3').value =
+      'Hoặc import file ZIP chứa Excel + ảnh JPG/PNG (cột Ảnh ghi tên file, vd. anh1.jpg).';
+    tip.getCell('A4').value =
       'Cột Khu vực: nhiều khu vực, phân tách bằng dấu ; hoặc , (đúng tên khu vực trên hệ thống).';
-    tip.getCell('A4').value = 'Phòng ban: chỉ 1 phòng ban / nhân viên.';
+    tip.getCell('A5').value = 'Phòng ban: chỉ 1 phòng ban / nhân viên.';
     tip.getColumn(1).width = 110;
     return workbookToBuffer(workbook);
   }
@@ -396,21 +397,12 @@ export class UsersService {
       const fullName = cell(row, 'fullName');
       const email = cell(row, 'email');
       const phoneRaw = cell(row, 'phone');
-      const employeeCode = cell(row, 'employeeCode');
       const departmentName = cell(row, 'department');
       const userTypeRaw = cell(row, 'userType');
       const faceRaw = cell(row, 'faceImage');
       const zonesRaw = cell(row, 'zones');
 
-      if (
-        !fullName &&
-        !email &&
-        !phoneRaw &&
-        !employeeCode &&
-        !departmentName &&
-        !faceRaw &&
-        !zonesRaw
-      ) {
+      if (!fullName && !email && !phoneRaw && !departmentName && !faceRaw && !zonesRaw) {
         result.skipped += 1;
         continue;
       }
@@ -478,33 +470,19 @@ export class UsersService {
       }
 
       try {
-        const code = employeeCode.trim();
-        const existingByCode = code
-          ? await this.prisma.user.findFirst({
-              where: { employeeCode: code, isDeleted: false },
-            })
-          : null;
-
-        const emailOwner = await this.prisma.user.findFirst({
+        // Match existing staff by email; employee code is always auto-generated on create
+        const existingByEmail = await this.prisma.user.findFirst({
           where: {
             email: { equals: email, mode: 'insensitive' },
             isDeleted: false,
-            ...(existingByCode ? { id: { not: existingByCode.id } } : {}),
           },
           select: { id: true, employeeCode: true },
         });
-        if (emailOwner) {
-          result.errors.push({
-            row: rowNumber,
-            message: `Email đã dùng bởi mã NV ${emailOwner.employeeCode}`,
-          });
-          continue;
-        }
 
         let userId: string;
-        if (existingByCode) {
+        if (existingByEmail) {
           await this.prisma.user.update({
-            where: { id: existingByCode.id },
+            where: { id: existingByEmail.id },
             data: {
               fullName,
               email,
@@ -513,11 +491,10 @@ export class UsersService {
               ...(departmentId ? { departmentId } : {}),
             },
           });
-          userId = existingByCode.id;
+          userId = existingByEmail.id;
           result.updated += 1;
         } else {
           const created = await this.create({
-            ...(code ? { employeeCode: code } : {}),
             fullName,
             email,
             phone,
