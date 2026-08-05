@@ -116,15 +116,17 @@ export class StorageService implements OnModuleInit {
 
   /**
    * URL for browser/FE preview.
-   * Prefer API_BROWSER_URL (local FE on localhost while API_PUBLIC_URL is LAN).
-   * Otherwise use API_PUBLIC_URL — never default to localhost (breaks prod LAN UI).
+   * Optional API_BROWSER_URL for local FE on localhost while API_PUBLIC_URL is LAN.
+   * In production, ignore localhost browser URLs (LAN clients cannot open them).
    */
   getBrowserFileUrl(relativePath: string): string {
     const cleaned = relativePath.replace(/^[/\\]+/, '').replace(/\\/g, '/');
-    const browserBase = (
-      this.config.get<string>('API_BROWSER_URL') || this.publicBaseUrl
-    ).replace(/\/$/, '');
-    return `${browserBase}/api/files/${cleaned}`;
+    const configured = (this.config.get<string>('API_BROWSER_URL') || '').replace(/\/$/, '');
+    const isProd = this.config.get<string>('NODE_ENV') === 'production';
+    const configuredIsLocal = /^(https?:\/\/)?(localhost|127\.0\.0\.1)(:|\/|$)/i.test(configured);
+    const browserBase =
+      configured && !(isProd && configuredIsLocal) ? configured : this.publicBaseUrl;
+    return `${browserBase.replace(/\/$/, '')}/api/files/${cleaned}`;
   }
 
   /** FaceID paths use local disk URL; other keys still use MinIO signed URL. */
