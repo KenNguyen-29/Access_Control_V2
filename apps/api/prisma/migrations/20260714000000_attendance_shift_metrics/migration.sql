@@ -1,7 +1,0 @@
--- AlterTable
-ALTER TABLE "work_shifts" ADD COLUMN IF NOT EXISTS "gracePeriodMinutes" INTEGER NOT NULL DEFAULT 15;
-
--- AlterTable
-ALTER TABLE "attendance_records" ADD COLUMN IF NOT EXISTS "lateMinutes" INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE "attendance_records" ADD COLUMN IF NOT EXISTS "earlyLeaveMinutes" INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE "attendance_records" ADD COLUMN IF NOT EXISTS "otMinutes" INTEGER NOT NULL DEFAULT 0;

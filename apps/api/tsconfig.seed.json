@@ -8,9 +8,9 @@
     "skipLibCheck": true
   },
   "include": [
-    "prisma/ensure-bootstrap.ts",
     "prisma/seed.ts",
     "prisma/seed-attendance-demo.ts",
-    "prisma/seed-bulk-users.ts"
+    "prisma/seed-bulk-users.ts",
+    "prisma/seed-contractor-demo.ts"
   ]
 }

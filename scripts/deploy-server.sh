@@ -46,15 +46,33 @@ for i in $(seq 1 30); do
 done
 
 echo "==> Running database migrations (one-off container)..."
-docker compose -f docker-compose.prod.yml run --rm --no-deps api npx prisma migrate deploy
+set +e
+MIGRATE_LOG="$(docker compose -f docker-compose.prod.yml run --rm --no-deps api npx prisma migrate deploy 2>&1)"
+MIGRATE_EC=$?
+set -e
+echo "$MIGRATE_LOG"
+if [ "$MIGRATE_EC" -ne 0 ]; then
+  if echo "$MIGRATE_LOG" | grep -qE 'P3015|not found in the migrations directory|missing from the local'; then
+    echo "==> Squashed migrations: reset Prisma history and mark baseline applied (schema already exists)."
+    docker compose -f docker-compose.prod.yml exec -T postgres \
+      psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c 'DELETE FROM "_prisma_migrations";'
+    docker compose -f docker-compose.prod.yml run --rm --no-deps api \
+      npx prisma migrate resolve --applied 20260811120000_init
+  else
+    exit "$MIGRATE_EC"
+  fi
+fi
 
-echo "==> Ensuring login roles + first admin (if DB has no account)..."
-docker compose -f docker-compose.prod.yml run --rm --no-deps api node prisma/ensure-bootstrap.js
+echo "==> Seeding roles + default admin..."
+if ! docker compose -f docker-compose.prod.yml run --rm --no-deps api npx prisma db seed; then
+  echo "WARN: seed failed. Check logs above."
+  exit 1
+fi
 
 if [ "${SEED_DB:-false}" = "true" ]; then
-  echo "==> Seeding database..."
-  if ! docker compose -f docker-compose.prod.yml run --rm --no-deps api npx prisma db seed; then
-    echo "WARN: seed failed (often OK if data already exists). Check logs above."
+  echo "==> Seeding demo contractor data..."
+  if ! docker compose -f docker-compose.prod.yml run --rm --no-deps api node prisma/seed-contractor-demo.js; then
+    echo "WARN: demo seed failed (often OK if data already exists). Check logs above."
   fi
 fi
 

@@ -39,6 +39,6 @@ COPY --from=api-build /app/deploy ./
 RUN mkdir -p /app/uploads/face-images \
   && npm install -g prisma@6.19.3 \
   && node -e "require('express'); require('@prisma/client'); require('sharp'); console.log('deps ok')" \
-  && test -f prisma/seed.js && test -f prisma/ensure-bootstrap.js && test -f prisma/run-seed.cjs
+  && test -f prisma/seed.js && test -f prisma/run-seed.cjs
 EXPOSE 8080
 CMD ["node", "dist/main.js"]

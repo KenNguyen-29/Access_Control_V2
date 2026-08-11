@@ -14,6 +14,13 @@ git push main
   → Deploy (self-hosted): checkout → copy .env → docker compose up → migrate → health check
 ```
 
+DB chỉ 2 bước:
+
+1. `prisma/migrations/20260811120000_init` — tạo đủ bảng
+2. `prisma/seed.ts` — 5 vai trò + account `admin` / `admin123`
+
+Server đã có data: deploy đánh dấu baseline đã apply rồi chạy seed (không đè mật khẩu admin cũ).
+
 ---
 
 ## Thiết lập một lần trên máy chủ
