@@ -5,19 +5,20 @@ import Link from 'next/link';
 import type { LucideIcon } from 'lucide-react';
 import {
   Monitor,
-  Activity,
   Users,
   Clock,
   LayoutGrid,
   ShieldCheck,
   UserCheck,
   CalendarClock,
+  HardHat,
   Cpu,
   ChevronRight,
   Siren,
   Shield,
   Settings,
   AlertTriangle,
+  Building2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
@@ -26,6 +27,8 @@ import {
   type AccessLog,
   type StatsOverview,
 } from '@/lib/api';
+import { usePermissions } from '@/hooks/usePermissions';
+import { canAccessRoute } from '@/lib/permissions';
 
 type NavItem = {
   icon: LucideIcon;
@@ -55,16 +58,25 @@ function NavButton({ item }: { item: NavItem }) {
 
 const operations: NavItem[] = [
   { icon: Monitor, label: 'Giám sát', path: '/dashboard', description: 'Camera live & FaceID realtime' },
-  { icon: Activity, label: 'Báo cáo', path: '/reports', description: 'Chấm công & access logs' },
+  { icon: CalendarClock, label: 'Chấm công', path: '/reports', description: 'Bảng công, thống kê IN/OUT' },
+  { icon: HardHat, label: 'BC nhà thầu', path: '/reports/contractors', description: 'Số lượng nhân sự & xuất báo cáo' },
+  { icon: Building2, label: 'Dự án', path: '/projects', description: 'Danh sách dự án công trường' },
   { icon: Siren, label: 'Sơ tán', path: '/muster', description: 'Điểm danh khẩn cấp FACP' },
 ];
 
 const configs: NavItem[] = [
   { icon: Users, label: 'Nhân sự', path: '/users', description: 'Quản lý nhân viên' },
   { icon: Clock, label: 'Ca làm', path: '/shifts', description: 'Cấu hình & gán ca' },
+  { icon: Building2, label: 'Nhà thầu', path: '/settings/contractors', description: 'Nhà thầu & dự án' },
   { icon: LayoutGrid, label: 'Thiết bị', path: '/devices', description: 'Akuvox & Camera' },
   { icon: Shield, label: 'Kiểm soát ra vào', path: '/access-control', description: 'Phân quyền khu vực' },
   { icon: Settings, label: 'Cài đặt', path: '/settings', description: 'Hệ thống & cấu hình' },
+  {
+    icon: ShieldCheck,
+    label: 'Tài khoản',
+    path: '/settings/accounts',
+    description: 'Quản lý tài khoản',
+  },
 ];
 
 type StatItem = { icon: LucideIcon; label: string; value: number; hint?: string };
@@ -106,8 +118,21 @@ function ClockCard() {
 }
 
 export default function HomePage() {
+  const { role } = usePermissions();
   const [stats, setStats] = useState<StatsOverview | null>(null);
   const [logs, setLogs] = useState<AccessLog[]>([]);
+  const [deniedNotice, setDeniedNotice] = useState(false);
+
+  const visibleOperations = operations.filter((item) => canAccessRoute(role, item.path));
+  const visibleConfigs = configs.filter((item) => canAccessRoute(role, item.path));
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('denied') === '1') {
+      setDeniedNotice(true);
+      window.history.replaceState({}, '', '/home');
+    }
+  }, []);
 
   useEffect(() => {
     getStatsOverview().then(setStats).catch(() => {});
@@ -142,7 +167,13 @@ export default function HomePage() {
             <ClockCard />
           </div>
 
-          {(stats?.unassignedEmployees ?? 0) > 0 && (
+          {deniedNotice && (
+            <div className="rounded-sm border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              Bạn không có quyền truy cập trang vừa chọn.
+            </div>
+          )}
+
+          {(stats?.unassignedEmployees ?? 0) > 0 && canAccessRoute(role, '/shifts') && (
             <Link
               href="/shifts"
               className="flex flex-col gap-2 rounded-sm border border-amber-300 bg-amber-50 px-4 py-3 text-amber-900 transition-colors hover:bg-amber-100 sm:flex-row sm:items-center sm:justify-between"
@@ -189,7 +220,7 @@ export default function HomePage() {
               <section className="rounded-sm border border-border bg-surface p-6 lg:p-8">
                 <SectionHeader label="Vận hành" />
                 <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-5">
-                  {operations.map((item) => (
+                  {visibleOperations.map((item) => (
                     <NavButton key={item.path} item={item} />
                   ))}
                 </div>
@@ -198,7 +229,7 @@ export default function HomePage() {
               <section className="rounded-sm border border-border bg-surface p-6 lg:p-8">
                 <SectionHeader label="Cấu hình" />
                 <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-5">
-                  {configs.map((item) => (
+                  {visibleConfigs.map((item) => (
                     <NavButton key={item.path} item={item} />
                   ))}
                 </div>
@@ -242,7 +273,7 @@ export default function HomePage() {
                   href="/reports"
                   className="mt-4 flex items-center justify-center gap-1 rounded-sm border border-primary/20 bg-primary/5 py-2 text-label-caps font-semibold uppercase tracking-wider text-foreground transition-colors hover:bg-primary/10"
                 >
-                  Xem báo cáo
+                  Xem chấm công
                   <ChevronRight className="h-4 w-4" />
                 </Link>
               </div>

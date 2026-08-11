@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Get,
   Post,
   Req,
   Res,
@@ -98,6 +99,13 @@ export class AuthController {
     await this.authService.logout(raw);
     this.clearRefreshCookie(res);
     return successResponse({ ok: true }, 'Đã đăng xuất');
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard('jwt'))
+  @Get('me')
+  async me(@Req() req: { user: { sub: string } }) {
+    return successResponse(await this.authService.me(req.user.sub));
   }
 
   @ApiBearerAuth()

@@ -23,6 +23,9 @@ export const SETTING_KEY = {
   AKUVOX_WEBHOOK_TOKEN: 'AKUVOX_WEBHOOK_TOKEN',
   AKUVOX_ALLOWED_IPS: 'AKUVOX_ALLOWED_IPS',
   AKUVOX_MOCK_MODE: 'AKUVOX_MOCK_MODE',
+  MONITOR_PUSH_URL: 'MONITOR_PUSH_URL',
+  MONITOR_PUSH_SECRET: 'MONITOR_PUSH_SECRET',
+  MONITOR_PUSH_ENABLED: 'MONITOR_PUSH_ENABLED',
 } as const;
 
 export type SettingKey = (typeof SETTING_KEY)[keyof typeof SETTING_KEY];
@@ -89,6 +92,9 @@ export const SETTING_RULES: Record<string, SettingRule> = {
   [SETTING_KEY.AKUVOX_WEBHOOK_TOKEN]: { kind: 'secret', defaultValue: '', secret: true },
   [SETTING_KEY.AKUVOX_ALLOWED_IPS]: { kind: 'string', defaultValue: '' },
   [SETTING_KEY.AKUVOX_MOCK_MODE]: { kind: 'boolean', defaultValue: 'false' },
+  [SETTING_KEY.MONITOR_PUSH_URL]: { kind: 'string', defaultValue: '' },
+  [SETTING_KEY.MONITOR_PUSH_SECRET]: { kind: 'secret', defaultValue: '', secret: true },
+  [SETTING_KEY.MONITOR_PUSH_ENABLED]: { kind: 'boolean', defaultValue: 'false' },
 };
 
 export const ALLOWED_SETTING_KEYS = new Set(Object.keys(SETTING_RULES));
@@ -118,6 +124,9 @@ export const MODULE5_SEED_SETTINGS: Array<{ key: string; value: string }> = [
   { key: SETTING_KEY.AKUVOX_WEBHOOK_TOKEN, value: '' },
   { key: SETTING_KEY.AKUVOX_ALLOWED_IPS, value: '' },
   { key: SETTING_KEY.AKUVOX_MOCK_MODE, value: 'false' },
+  { key: SETTING_KEY.MONITOR_PUSH_URL, value: '' },
+  { key: SETTING_KEY.MONITOR_PUSH_SECRET, value: '' },
+  { key: SETTING_KEY.MONITOR_PUSH_ENABLED, value: 'false' },
 ];
 
 const CRON_RE =

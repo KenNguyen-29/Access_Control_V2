@@ -18,12 +18,24 @@ export class StatsController {
   @ApiQuery({ name: 'from', required: false })
   @ApiQuery({ name: 'to', required: false })
   @ApiQuery({ name: 'departmentId', required: false })
+  @ApiQuery({ name: 'contractorId', required: false })
+  @ApiQuery({ name: 'projectId', required: false })
   async attendanceSummary(
     @Query('from') from?: string,
     @Query('to') to?: string,
     @Query('departmentId') departmentId?: string,
+    @Query('contractorId') contractorId?: string,
+    @Query('projectId') projectId?: string,
   ) {
-    return successResponse(await this.service.attendanceSummary({ from, to, departmentId }));
+    return successResponse(
+      await this.service.attendanceSummary({
+        from,
+        to,
+        departmentId,
+        contractorId,
+        projectId,
+      }),
+    );
   }
 
   @Get('weekly-timesheet')
@@ -31,14 +43,25 @@ export class StatsController {
   @ApiQuery({ name: 'from', required: false })
   @ApiQuery({ name: 'to', required: false })
   @ApiQuery({ name: 'departmentId', required: false })
+  @ApiQuery({ name: 'contractorId', required: false })
+  @ApiQuery({ name: 'projectId', required: false })
   async weeklyTimesheet(
     @Query('weekStart') weekStart?: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
     @Query('departmentId') departmentId?: string,
+    @Query('contractorId') contractorId?: string,
+    @Query('projectId') projectId?: string,
   ) {
     return successResponse(
-      await this.service.weeklyTimesheet({ weekStart, from, to, departmentId }),
+      await this.service.weeklyTimesheet({
+        weekStart,
+        from,
+        to,
+        departmentId,
+        contractorId,
+        projectId,
+      }),
     );
   }
 }

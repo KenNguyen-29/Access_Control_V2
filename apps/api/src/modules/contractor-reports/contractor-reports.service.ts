@@ -1,0 +1,481 @@
+import { Injectable, Logger } from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
+import { HttpService } from '@nestjs/axios';
+import { firstValueFrom } from 'rxjs';
+import { PrismaService } from '../../prisma/prisma.service';
+import { SystemSettingsService } from '../system-settings/system-settings.service';
+import { SETTING_KEY } from '../system-settings/system-setting-keys';
+import * as ExcelJS from 'exceljs';
+
+function startOfLocalDay(d = new Date()): Date {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
+}
+
+function formatDateOnly(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function parseDateOnly(value: string, fallback: Date): Date {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
+  if (!match) return startOfLocalDay(fallback);
+  return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+}
+
+@Injectable()
+export class ContractorReportsService {
+  private readonly logger = new Logger(ContractorReportsService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly http: HttpService,
+    private readonly settings: SystemSettingsService,
+  ) {}
+
+  private projectUserFilter(projectId?: string, projectIds?: string[]) {
+    if (projectId) return { projectId };
+    if (projectIds !== undefined) {
+      if (projectIds.length === 0) return { projectId: { in: [] as string[] } };
+      return { projectId: { in: projectIds } };
+    }
+    return {};
+  }
+
+  async headcountByContractor(params: { date?: string; projectIds?: string[] }) {
+    const day = params.date ? parseDateOnly(params.date, new Date()) : startOfLocalDay();
+    const next = new Date(day);
+    next.setDate(next.getDate() + 1);
+    const projectFilter = this.projectUserFilter(undefined, params.projectIds);
+
+    const contractors = await this.prisma.contractor.findMany({
+      where: { isDeleted: false },
+      orderBy: { name: 'asc' },
+    });
+
+    const rows = await Promise.all(
+      contractors.map(async (c) => {
+        const userWhere = {
+          isDeleted: false,
+          contractorId: c.id,
+          ...projectFilter,
+        };
+        const [registered, presentUsers] = await Promise.all([
+          this.prisma.user.count({ where: userWhere }),
+          this.prisma.accessLog.findMany({
+            where: {
+              eventAt: { gte: day, lt: next },
+              isValid: true,
+              user: userWhere,
+            },
+            select: { userId: true },
+            distinct: ['userId'],
+          }),
+        ]);
+        return {
+          contractorId: c.id,
+          code: c.code,
+          name: c.name,
+          registeredCount: registered,
+          presentCount: presentUsers.filter((r) => r.userId).length,
+          date: formatDateOnly(day),
+        };
+      }),
+    );
+
+    return {
+      date: formatDateOnly(day),
+      rows: rows.filter((r) => r.registeredCount > 0 || r.presentCount > 0),
+    };
+  }
+
+  async personnelDetail(params: {
+    from?: string;
+    to?: string;
+    contractorId?: string;
+    projectId?: string;
+    projectIds?: string[];
+  }) {
+    const now = new Date();
+    const from = params.from ? parseDateOnly(params.from, now) : startOfLocalDay(now);
+    const toBase = params.to ? parseDateOnly(params.to, now) : startOfLocalDay(now);
+    const to = new Date(toBase);
+    to.setDate(to.getDate() + 1);
+
+    const users = await this.prisma.user.findMany({
+      where: {
+        isDeleted: false,
+        ...(params.contractorId
+          ? { contractorId: params.contractorId }
+          : { contractorId: { not: null } }),
+        ...this.projectUserFilter(params.projectId, params.projectIds),
+      },
+      include: {
+        contractor: true,
+        project: true,
+        department: true,
+      },
+      orderBy: [{ fullName: 'asc' }],
+    });
+
+    const userIds = users.map((u) => u.id);
+    const logs = userIds.length
+      ? await this.prisma.accessLog.findMany({
+          where: {
+            userId: { in: userIds },
+            eventAt: { gte: from, lt: to },
+            isValid: true,
+          },
+          orderBy: { eventAt: 'asc' },
+          select: {
+            userId: true,
+            eventAt: true,
+            action: true,
+          },
+        })
+      : [];
+
+    const byUser = new Map<string, typeof logs>();
+    for (const log of logs) {
+      if (!log.userId) continue;
+      const list = byUser.get(log.userId) ?? [];
+      list.push(log);
+      byUser.set(log.userId, list);
+    }
+
+    const rows = users.map((u) => {
+      const userLogs = byUser.get(u.id) ?? [];
+      const firstIn = userLogs.find((l) => l.action === 'CHECK_IN') ?? userLogs[0];
+      const lastOut = [...userLogs].reverse().find((l) => l.action === 'CHECK_OUT') ?? null;
+      return {
+        userId: u.id,
+        employeeCode: u.employeeCode,
+        fullName: u.fullName,
+        citizenId: u.citizenId,
+        userType: u.userType,
+        contractorName: u.contractor?.name ?? null,
+        contractorCode: u.contractor?.code ?? null,
+        projectName: u.project?.name ?? null,
+        projectCode: u.project?.code ?? null,
+        departmentName: u.department?.name ?? null,
+        firstCheckInAt: firstIn?.eventAt ?? null,
+        lastCheckOutAt: lastOut?.eventAt ?? null,
+        eventCount: userLogs.length,
+      };
+    });
+
+    return {
+      from: formatDateOnly(from),
+      to: formatDateOnly(toBase),
+      rows,
+    };
+  }
+
+  async accessLogReport(params: {
+    from?: string;
+    to?: string;
+    contractorId?: string;
+    projectId?: string;
+    projectIds?: string[];
+    userId?: string;
+  }) {
+    const now = new Date();
+    const from = params.from ? parseDateOnly(params.from, now) : startOfLocalDay(now);
+    const toBase = params.to ? parseDateOnly(params.to, now) : startOfLocalDay(now);
+    const to = new Date(toBase);
+    to.setDate(to.getDate() + 1);
+
+    const logs = await this.prisma.accessLog.findMany({
+      where: {
+        eventAt: { gte: from, lt: to },
+        ...(params.userId ? { userId: params.userId } : {}),
+        user: {
+          isDeleted: false,
+          ...(params.contractorId ? { contractorId: params.contractorId } : {}),
+          ...this.projectUserFilter(params.projectId, params.projectIds),
+        },
+      },
+      include: {
+        user: {
+          include: { contractor: true, project: true, department: true },
+        },
+        device: true,
+        zone: true,
+      },
+      orderBy: { eventAt: 'asc' },
+      take: 10_000,
+    });
+
+    return {
+      from: formatDateOnly(from),
+      to: formatDateOnly(toBase),
+      rows: logs.map((l) => ({
+        id: l.id,
+        eventAt: l.eventAt,
+        action: l.action,
+        isValid: l.isValid,
+        employeeCode: l.user?.employeeCode ?? null,
+        fullName: l.user?.fullName ?? null,
+        citizenId: l.user?.citizenId ?? null,
+        contractorName: l.user?.contractor?.name ?? null,
+        projectName: l.user?.project?.name ?? null,
+        departmentName: l.user?.department?.name ?? null,
+        deviceName: l.device?.name ?? null,
+        zoneName: l.zone?.name ?? null,
+      })),
+    };
+  }
+
+  async shiftPersonnel(params: {
+    contractorId?: string;
+    workShiftId?: string;
+    projectId?: string;
+    projectIds?: string[];
+  }) {
+    const today = startOfLocalDay();
+    const assignments = await this.prisma.employeeShift.findMany({
+      where: {
+        isDeleted: false,
+        startDate: { lte: today },
+        OR: [{ endDate: null }, { endDate: { gt: today } }],
+        ...(params.workShiftId ? { workShiftId: params.workShiftId } : {}),
+        user: {
+          isDeleted: false,
+          ...(params.contractorId ? { contractorId: params.contractorId } : {}),
+          ...this.projectUserFilter(params.projectId, params.projectIds),
+        },
+      },
+      include: {
+        user: { include: { contractor: true, project: true, department: true } },
+        workShift: true,
+      },
+      orderBy: [{ workShift: { name: 'asc' } }, { user: { fullName: 'asc' } }],
+    });
+
+    return {
+      asOf: formatDateOnly(today),
+      rows: assignments.map((a) => ({
+        assignmentId: a.id,
+        userId: a.userId,
+        employeeCode: a.user.employeeCode,
+        fullName: a.user.fullName,
+        citizenId: a.user.citizenId,
+        contractorName: a.user.contractor?.name ?? null,
+        projectName: a.user.project?.name ?? null,
+        departmentName: a.user.department?.name ?? null,
+        workShiftId: a.workShiftId,
+        shiftName: a.workShift.name,
+        shiftCode: a.workShift.code,
+        startTime: a.workShift.startTime,
+        endTime: a.workShift.endTime,
+        assignmentType: a.assignmentType,
+        startDate: a.startDate,
+        endDate: a.endDate,
+      })),
+    };
+  }
+
+  async exportPersonnelExcel(params: {
+    from?: string;
+    to?: string;
+    contractorId?: string;
+    projectId?: string;
+    projectIds?: string[];
+  }): Promise<Buffer> {
+    const data = await this.personnelDetail(params);
+    const wb = new ExcelJS.Workbook();
+    const sheet = wb.addWorksheet('Nhan su nha thau');
+    sheet.columns = [
+      { header: 'Ma NV', key: 'employeeCode', width: 14 },
+      { header: 'Ho ten', key: 'fullName', width: 24 },
+      { header: 'CCCD', key: 'citizenId', width: 16 },
+      { header: 'Nha thau', key: 'contractorName', width: 20 },
+      { header: 'Du an', key: 'projectName', width: 20 },
+      { header: 'Phong ban', key: 'departmentName', width: 16 },
+      { header: 'Vao dau', key: 'firstCheckInAt', width: 20 },
+      { header: 'Ra cuoi', key: 'lastCheckOutAt', width: 20 },
+      { header: 'So su kien', key: 'eventCount', width: 12 },
+    ];
+    for (const r of data.rows) {
+      sheet.addRow({
+        ...r,
+        firstCheckInAt: r.firstCheckInAt ? r.firstCheckInAt.toISOString() : '',
+        lastCheckOutAt: r.lastCheckOutAt ? r.lastCheckOutAt.toISOString() : '',
+      });
+    }
+    const buf = await wb.xlsx.writeBuffer();
+    return Buffer.from(buf);
+  }
+
+  async exportAccessLogsExcel(params: {
+    from?: string;
+    to?: string;
+    contractorId?: string;
+    projectId?: string;
+    projectIds?: string[];
+    userId?: string;
+  }): Promise<Buffer> {
+    const data = await this.accessLogReport(params);
+    const wb = new ExcelJS.Workbook();
+    const sheet = wb.addWorksheet('Vao ra');
+    sheet.columns = [
+      { header: 'Thoi gian', key: 'eventAt', width: 22 },
+      { header: 'Hanh dong', key: 'action', width: 12 },
+      { header: 'Ma NV', key: 'employeeCode', width: 14 },
+      { header: 'Ho ten', key: 'fullName', width: 24 },
+      { header: 'CCCD', key: 'citizenId', width: 16 },
+      { header: 'Nha thau', key: 'contractorName', width: 18 },
+      { header: 'Du an', key: 'projectName', width: 18 },
+      { header: 'Thiet bi', key: 'deviceName', width: 16 },
+      { header: 'Khu vuc', key: 'zoneName', width: 16 },
+    ];
+    for (const r of data.rows) {
+      sheet.addRow({
+        ...r,
+        eventAt: r.eventAt ? new Date(r.eventAt).toISOString() : '',
+      });
+    }
+    const buf = await wb.xlsx.writeBuffer();
+    return Buffer.from(buf);
+  }
+
+  async exportShiftPersonnelExcel(params: {
+    contractorId?: string;
+    workShiftId?: string;
+    projectId?: string;
+    projectIds?: string[];
+  }): Promise<Buffer> {
+    const data = await this.shiftPersonnel(params);
+    const wb = new ExcelJS.Workbook();
+    const sheet = wb.addWorksheet('Nhan su theo ca');
+    sheet.columns = [
+      { header: 'Ca', key: 'shiftName', width: 18 },
+      { header: 'Ma ca', key: 'shiftCode', width: 12 },
+      { header: 'Gio', key: 'hours', width: 14 },
+      { header: 'Ma NV', key: 'employeeCode', width: 14 },
+      { header: 'Ho ten', key: 'fullName', width: 24 },
+      { header: 'CCCD', key: 'citizenId', width: 16 },
+      { header: 'Nha thau', key: 'contractorName', width: 18 },
+      { header: 'Du an', key: 'projectName', width: 18 },
+    ];
+    for (const r of data.rows) {
+      sheet.addRow({
+        ...r,
+        hours: `${r.startTime}–${r.endTime}`,
+      });
+    }
+    const buf = await wb.xlsx.writeBuffer();
+    return Buffer.from(buf);
+  }
+
+  /** Build + persist daily headcount snapshots; optionally push to monitor URL. */
+  async snapshotAndPush(dateInput?: string, push = true) {
+    const day = dateInput ? parseDateOnly(dateInput, new Date()) : startOfLocalDay();
+    const { rows } = await this.headcountByContractor({ date: formatDateOnly(day) });
+
+    const saved = [];
+    for (const row of rows) {
+      const payload = {
+        date: row.date,
+        contractor: { id: row.contractorId, code: row.code, name: row.name },
+        registeredCount: row.registeredCount,
+        presentCount: row.presentCount,
+      };
+      const record = await this.prisma.dailyContractorHeadcount.upsert({
+        where: {
+          date_contractorId: { date: day, contractorId: row.contractorId },
+        },
+        create: {
+          date: day,
+          contractorId: row.contractorId,
+          headcount: row.presentCount,
+          payload,
+        },
+        update: {
+          headcount: row.presentCount,
+          payload,
+        },
+      });
+      saved.push(record);
+    }
+
+    let pushResult: { ok: boolean; status?: string; error?: string } = {
+      ok: false,
+      status: 'SKIPPED',
+    };
+    if (push) {
+      pushResult = await this.pushToMonitor({
+        date: formatDateOnly(day),
+        contractors: rows.map((r) => ({
+          code: r.code,
+          name: r.name,
+          headcount: r.presentCount,
+          registeredCount: r.registeredCount,
+        })),
+      });
+      await this.prisma.dailyContractorHeadcount.updateMany({
+        where: { date: day },
+        data: {
+          pushedAt: new Date(),
+          pushStatus: pushResult.status ?? (pushResult.ok ? 'OK' : 'FAILED'),
+          pushError: pushResult.error ?? null,
+        },
+      });
+    }
+
+    return { date: formatDateOnly(day), saved: saved.length, push: pushResult, rows };
+  }
+
+  @Cron('5 0 * * *')
+  async cronDailyPush() {
+    try {
+      const enabled = await this.settings.getBoolean(SETTING_KEY.MONITOR_PUSH_ENABLED, false);
+      if (!enabled) return;
+      await this.snapshotAndPush(undefined, true);
+    } catch (err) {
+      this.logger.error(`Daily contractor push failed: ${(err as Error).message}`);
+    }
+  }
+
+  private async pushToMonitor(body: unknown): Promise<{
+    ok: boolean;
+    status?: string;
+    error?: string;
+  }> {
+    const url = (await this.settings.getRawOrDefault(SETTING_KEY.MONITOR_PUSH_URL, '')).trim();
+    if (!url) {
+      return { ok: false, status: 'NO_URL', error: 'Chưa cấu hình MONITOR_PUSH_URL' };
+    }
+    const secret = (await this.settings.getRawOrDefault(SETTING_KEY.MONITOR_PUSH_SECRET, '')).trim();
+    try {
+      const res = await firstValueFrom(
+        this.http.post(url, body, {
+          timeout: 15_000,
+          headers: {
+            'Content-Type': 'application/json',
+            ...(secret ? { Authorization: `Bearer ${secret}` } : {}),
+          },
+        }),
+      );
+      const status = String(res.status);
+      return { ok: res.status >= 200 && res.status < 300, status };
+    } catch (err) {
+      return {
+        ok: false,
+        status: 'FAILED',
+        error: (err as Error).message,
+      };
+    }
+  }
+
+  listSnapshots(limit = 30) {
+    return this.prisma.dailyContractorHeadcount.findMany({
+      take: Math.min(100, Math.max(1, limit)),
+      orderBy: [{ date: 'desc' }, { contractor: { name: 'asc' } }],
+      include: { contractor: true, project: true },
+    });
+  }
+}

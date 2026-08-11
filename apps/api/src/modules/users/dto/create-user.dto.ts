@@ -63,9 +63,28 @@ export class CreateUserDto {
   @IsEnum(UserType)
   userType?: UserType;
 
+  @ApiPropertyOptional({ description: 'CCCD' })
+  @Transform(emptyToUndefined)
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  citizenId?: string;
+
   @ApiPropertyOptional()
   @Transform(emptyToUndefined)
   @IsOptional()
   @IsString()
   departmentId?: string;
+
+  @ApiPropertyOptional()
+  @Transform(emptyToUndefined)
+  @IsOptional()
+  @IsString()
+  contractorId?: string;
+
+  @ApiPropertyOptional()
+  @Transform(emptyToUndefined)
+  @IsOptional()
+  @IsString()
+  projectId?: string;
 }

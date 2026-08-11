@@ -146,6 +146,11 @@ export type UserFormFields = {
   email: string;
   phone: string;
   departmentId?: string;
+  userType?: string;
+  contractorId?: string;
+  projectId?: string;
+  /** Contractor IDs linked to the selected project (for match validation). */
+  projectContractorIds?: string[];
 };
 
 export type UserFormFieldErrors = FieldErrors<keyof UserFormFields>;
@@ -163,6 +168,19 @@ export function validateUserForm(form: UserFormFields): UserFormFieldErrors {
   if (!phone) errors.phone = 'Vui lòng nhập số điện thoại';
   else if (!isValidVnPhone(phone)) {
     errors.phone = 'SĐT không đúng (vd. 0912345678 hoặc +84912345678)';
+  }
+
+  if ((form.userType || 'EMPLOYEE') === 'CONTRACTOR' && !form.contractorId?.trim()) {
+    errors.contractorId = 'Nhân viên loại nhà thầu phải chọn nhà thầu';
+  }
+
+  if (
+    form.projectId?.trim() &&
+    form.contractorId?.trim() &&
+    form.projectContractorIds &&
+    !form.projectContractorIds.includes(form.contractorId)
+  ) {
+    errors.contractorId = 'Nhà thầu không thuộc dự án đã chọn';
   }
 
   return errors;

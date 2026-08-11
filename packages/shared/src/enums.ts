@@ -3,6 +3,7 @@ export enum UserRole {
   HR = 'HR',
   SECURITY = 'SECURITY',
   TECHNICIAN = 'TECHNICIAN',
+  STAFF = 'STAFF',
 }
 
 export enum DeviceType {

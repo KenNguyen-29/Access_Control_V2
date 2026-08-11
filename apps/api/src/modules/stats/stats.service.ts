@@ -170,6 +170,8 @@ export class StatsService {
     from?: string;
     to?: string;
     departmentId?: string;
+    contractorId?: string;
+    projectId?: string;
   }): Promise<AttendanceSummary> {
     const now = new Date();
     const defaultFrom = new Date(Date.UTC(now.getFullYear(), now.getMonth(), 1));
@@ -183,7 +185,15 @@ export class StatsService {
       where: {
         workShiftId: { not: null },
         date: { gte: from, lt: to },
-        ...(params.departmentId ? { user: { departmentId: params.departmentId } } : {}),
+        ...(params.departmentId || params.contractorId || params.projectId
+          ? {
+              user: {
+                ...(params.departmentId ? { departmentId: params.departmentId } : {}),
+                ...(params.contractorId ? { contractorId: params.contractorId } : {}),
+                ...(params.projectId ? { projectId: params.projectId } : {}),
+              },
+            }
+          : {}),
       },
       include: {
         user: { include: { department: true } },
@@ -274,6 +284,8 @@ export class StatsService {
     from?: string;
     to?: string;
     departmentId?: string;
+    contractorId?: string;
+    projectId?: string;
   }): Promise<WeeklyTimesheet> {
     const now = new Date();
     let rangeStart: Date;
@@ -299,7 +311,15 @@ export class StatsService {
       where: {
         workShiftId: { not: null },
         date: { gte: rangeStart, lt: rangeEndExclusive },
-        ...(params.departmentId ? { user: { departmentId: params.departmentId } } : {}),
+        ...(params.departmentId || params.contractorId || params.projectId
+          ? {
+              user: {
+                ...(params.departmentId ? { departmentId: params.departmentId } : {}),
+                ...(params.contractorId ? { contractorId: params.contractorId } : {}),
+                ...(params.projectId ? { projectId: params.projectId } : {}),
+              },
+            }
+          : {}),
       },
       include: {
         user: { include: { department: true } },

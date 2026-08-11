@@ -41,11 +41,11 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     label: 'Nhân sự',
     items: [
       {
-        id: 'account',
+        id: 'employees',
         path: '/users',
         icon: Users,
-        title: 'Tài khoản',
-        description: 'Quản lý tài khoản và nhân viên',
+        title: 'Nhân viên FaceID',
+        description: 'Quản lý nhân viên và hồ sơ FaceID',
       },
       {
         id: 'departments',
@@ -53,6 +53,13 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
         icon: Building2,
         title: 'Phòng ban',
         description: 'Cấu trúc phòng ban / bộ phận',
+      },
+      {
+        id: 'contractors',
+        path: '/settings/contractors',
+        icon: HardDrive,
+        title: 'Nhà thầu & Dự án',
+        description: 'Tổ chức công trường theo nhà thầu',
       },
     ],
   },
@@ -107,6 +114,13 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     id: 'data',
     label: 'Bảo mật & dữ liệu',
     items: [
+      {
+        id: 'accounts',
+        path: '/settings/accounts',
+        icon: KeyRound,
+        title: 'Tài khoản hệ thống',
+        description: 'Quản lý tài khoản',
+      },
       {
         id: 'storage',
         path: '/settings/storage',
@@ -165,4 +179,7 @@ export const SETTING_KEYS = {
   AKUVOX_WEBHOOK_TOKEN: 'AKUVOX_WEBHOOK_TOKEN',
   AKUVOX_ALLOWED_IPS: 'AKUVOX_ALLOWED_IPS',
   AKUVOX_MOCK_MODE: 'AKUVOX_MOCK_MODE',
+  MONITOR_PUSH_URL: 'MONITOR_PUSH_URL',
+  MONITOR_PUSH_SECRET: 'MONITOR_PUSH_SECRET',
+  MONITOR_PUSH_ENABLED: 'MONITOR_PUSH_ENABLED',
 } as const;

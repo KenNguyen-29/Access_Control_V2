@@ -97,19 +97,22 @@ export async function apiRequest<T>(
   return json.data as T;
 }
 
+export type AuthAccount = {
+  id: string;
+  username: string;
+  role: string;
+  mustChangePassword?: boolean;
+  mfaEnabled?: boolean;
+  projectIds?: string[];
+};
+
 export async function login(username: string, password: string) {
   return apiRequest<{
     accessToken: string;
     mustChangePassword?: boolean;
     mfaEnabled?: boolean;
     mfaRequired?: boolean;
-    account: {
-      id: string;
-      username: string;
-      role: string;
-      mustChangePassword?: boolean;
-      mfaEnabled?: boolean;
-    };
+    account: AuthAccount;
   }>('/auth/login', {
     method: 'POST',
     body: JSON.stringify({ username, password }),
@@ -120,14 +123,12 @@ export async function refreshSession() {
   return apiRequest<{
     accessToken: string;
     mustChangePassword?: boolean;
-    account: {
-      id: string;
-      username: string;
-      role: string;
-      mustChangePassword?: boolean;
-      mfaEnabled?: boolean;
-    };
+    account: AuthAccount;
   }>('/auth/refresh', { method: 'POST' });
+}
+
+export async function getMe() {
+  return apiRequest<AuthAccount>('/auth/me');
 }
 
 export async function logout() {
@@ -205,11 +206,38 @@ export type User = {
   employeeCode: string;
   email?: string | null;
   phone?: string | null;
+  citizenId?: string | null;
   userType?: string;
   departmentId?: string | null;
   department?: Department | null;
+  contractorId?: string | null;
+  contractor?: Contractor | null;
+  projectId?: string | null;
+  project?: Project | null;
   faceImagePath?: string | null;
   faceImageUrl?: string | null;
+};
+
+export type Contractor = {
+  id: string;
+  name: string;
+  code: string;
+  description?: string | null;
+  _count?: { users: number; projects: number };
+};
+
+export type Project = {
+  id: string;
+  name: string;
+  code: string;
+  siteName?: string | null;
+  description?: string | null;
+  contractors?: Array<{
+    id: string;
+    contractorId: string;
+    contractor: Contractor;
+  }>;
+  _count?: { users: number };
 };
 
 export type Device = {
@@ -307,25 +335,105 @@ export async function getDepartments() {
   return apiRequest<Department[]>('/departments');
 }
 
+export async function getContractors() {
+  return apiRequest<Contractor[]>('/contractors');
+}
+
+export async function createContractor(data: {
+  name: string;
+  code: string;
+  description?: string;
+}) {
+  return apiRequest<Contractor>('/contractors', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateContractor(
+  id: string,
+  data: { name?: string; code?: string; description?: string },
+) {
+  return apiRequest<Contractor>(`/contractors/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteContractor(id: string) {
+  return apiRequest<null>(`/contractors/${id}`, { method: 'DELETE' });
+}
+
+export async function getProjects(params?: { contractorId?: string }) {
+  const q = new URLSearchParams();
+  if (params?.contractorId) q.set('contractorId', params.contractorId);
+  const qs = q.toString();
+  return apiRequest<Project[]>(`/projects${qs ? `?${qs}` : ''}`);
+}
+
+export async function createProject(data: {
+  name: string;
+  code: string;
+  siteName?: string;
+  description?: string;
+  contractorIds?: string[];
+}) {
+  return apiRequest<Project>('/projects', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateProject(
+  id: string,
+  data: {
+    name?: string;
+    code?: string;
+    siteName?: string;
+    description?: string;
+    contractorIds?: string[];
+  },
+) {
+  return apiRequest<Project>(`/projects/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteProject(id: string) {
+  return apiRequest<null>(`/projects/${id}`, { method: 'DELETE' });
+}
+
 export async function getUsers(params?: {
   page?: number;
   pageSize?: number;
   search?: string;
   departmentId?: string;
+  contractorId?: string;
+  projectId?: string;
 }) {
   const q = new URLSearchParams();
   if (params?.page) q.set('page', String(params.page));
   if (params?.pageSize) q.set('pageSize', String(params.pageSize));
   if (params?.search) q.set('search', params.search);
   if (params?.departmentId) q.set('departmentId', params.departmentId);
+  if (params?.contractorId) q.set('contractorId', params.contractorId);
+  if (params?.projectId) q.set('projectId', params.projectId);
   const qs = q.toString();
   return apiRequest<PaginatedData<User>>(`/users${qs ? `?${qs}` : ''}`);
 }
 
-export async function getUserIds(params?: { search?: string; departmentId?: string }) {
+export async function getUserIds(params?: {
+  search?: string;
+  departmentId?: string;
+  contractorId?: string;
+  projectId?: string;
+}) {
   const q = new URLSearchParams();
   if (params?.search) q.set('search', params.search);
   if (params?.departmentId) q.set('departmentId', params.departmentId);
+  if (params?.contractorId) q.set('contractorId', params.contractorId);
+  if (params?.projectId) q.set('projectId', params.projectId);
   const qs = q.toString();
   return apiRequest<{ ids: string[]; total: number }>(`/users/ids${qs ? `?${qs}` : ''}`);
 }
@@ -1086,5 +1194,200 @@ export async function updateMusterStatus(
 
 export async function endEmergency(eventId: string) {
   return apiRequest<{ ended: boolean }>(`/emergency/${eventId}/end`, { method: 'POST' });
+}
+
+export async function getContractorHeadcount(date?: string) {
+  const q = date ? `?date=${encodeURIComponent(date)}` : '';
+  return apiRequest<{
+    date: string;
+    rows: Array<{
+      contractorId: string;
+      code: string;
+      name: string;
+      registeredCount: number;
+      presentCount: number;
+      date: string;
+    }>;
+  }>(`/contractor-reports/headcount${q}`);
+}
+
+export async function getContractorPersonnel(params?: {
+  from?: string;
+  to?: string;
+  contractorId?: string;
+  projectId?: string;
+}) {
+  const q = new URLSearchParams();
+  if (params?.from) q.set('from', params.from);
+  if (params?.to) q.set('to', params.to);
+  if (params?.contractorId) q.set('contractorId', params.contractorId);
+  if (params?.projectId) q.set('projectId', params.projectId);
+  const qs = q.toString();
+  return apiRequest<{ from: string; to: string; rows: Array<Record<string, unknown>> }>(
+    `/contractor-reports/personnel${qs ? `?${qs}` : ''}`,
+  );
+}
+
+export async function getContractorAccessLogs(params?: {
+  from?: string;
+  to?: string;
+  contractorId?: string;
+  projectId?: string;
+  userId?: string;
+}) {
+  const q = new URLSearchParams();
+  if (params?.from) q.set('from', params.from);
+  if (params?.to) q.set('to', params.to);
+  if (params?.contractorId) q.set('contractorId', params.contractorId);
+  if (params?.projectId) q.set('projectId', params.projectId);
+  if (params?.userId) q.set('userId', params.userId);
+  const qs = q.toString();
+  return apiRequest<{ from: string; to: string; rows: Array<Record<string, unknown>> }>(
+    `/contractor-reports/access-logs${qs ? `?${qs}` : ''}`,
+  );
+}
+
+export async function getShiftPersonnelReport(params?: {
+  contractorId?: string;
+  workShiftId?: string;
+}) {
+  const q = new URLSearchParams();
+  if (params?.contractorId) q.set('contractorId', params.contractorId);
+  if (params?.workShiftId) q.set('workShiftId', params.workShiftId);
+  const qs = q.toString();
+  return apiRequest<{ asOf: string; rows: Array<Record<string, unknown>> }>(
+    `/contractor-reports/shift-personnel${qs ? `?${qs}` : ''}`,
+  );
+}
+
+export async function downloadContractorPersonnelExcel(params?: {
+  from?: string;
+  to?: string;
+  contractorId?: string;
+  projectId?: string;
+}) {
+  const q = new URLSearchParams();
+  if (params?.from) q.set('from', params.from);
+  if (params?.to) q.set('to', params.to);
+  if (params?.contractorId) q.set('contractorId', params.contractorId);
+  if (params?.projectId) q.set('projectId', params.projectId);
+  const qs = q.toString();
+  return apiRequest<Blob>(`/contractor-reports/export/personnel${qs ? `?${qs}` : ''}`);
+}
+
+export async function downloadContractorAccessLogsExcel(params?: {
+  from?: string;
+  to?: string;
+  contractorId?: string;
+  projectId?: string;
+  userId?: string;
+}) {
+  const q = new URLSearchParams();
+  if (params?.from) q.set('from', params.from);
+  if (params?.to) q.set('to', params.to);
+  if (params?.contractorId) q.set('contractorId', params.contractorId);
+  if (params?.projectId) q.set('projectId', params.projectId);
+  if (params?.userId) q.set('userId', params.userId);
+  const qs = q.toString();
+  return apiRequest<Blob>(`/contractor-reports/export/access-logs${qs ? `?${qs}` : ''}`);
+}
+
+export async function downloadShiftPersonnelExcel(params?: {
+  contractorId?: string;
+  workShiftId?: string;
+}) {
+  const q = new URLSearchParams();
+  if (params?.contractorId) q.set('contractorId', params.contractorId);
+  if (params?.workShiftId) q.set('workShiftId', params.workShiftId);
+  const qs = q.toString();
+  return apiRequest<Blob>(`/contractor-reports/export/shift-personnel${qs ? `?${qs}` : ''}`);
+}
+
+export async function runContractorSnapshot(params?: { date?: string; push?: boolean }) {
+  const q = new URLSearchParams();
+  if (params?.date) q.set('date', params.date);
+  if (params?.push === false) q.set('push', 'false');
+  const qs = q.toString();
+  return apiRequest<unknown>(`/contractor-reports/snapshot${qs ? `?${qs}` : ''}`, {
+    method: 'POST',
+  });
+}
+
+export async function getContractorSnapshots(limit = 30) {
+  return apiRequest<
+    Array<{
+      id: string;
+      date: string;
+      headcount: number;
+      pushStatus?: string | null;
+      pushError?: string | null;
+      contractor?: Contractor;
+    }>
+  >(`/contractor-reports/snapshots?limit=${limit}`);
+}
+
+export type Role = {
+  id: string;
+  name: string;
+  code: string;
+  description?: string | null;
+};
+
+export type SystemAccount = {
+  id: string;
+  username: string;
+  isActive: boolean;
+  mustChangePassword: boolean;
+  passwordChangedAt?: string | null;
+  createdAt: string;
+  role: Role;
+  projectIds: string[];
+  projects: Array<{ id: string; name: string; code: string }>;
+};
+
+export async function getRoles() {
+  return apiRequest<Role[]>('/roles');
+}
+
+export async function getAccounts(params?: { page?: number; pageSize?: number; search?: string }) {
+  const q = new URLSearchParams();
+  if (params?.page) q.set('page', String(params.page));
+  if (params?.pageSize) q.set('pageSize', String(params.pageSize));
+  if (params?.search) q.set('search', params.search);
+  const qs = q.toString();
+  return apiRequest<PaginatedData<SystemAccount>>(`/accounts${qs ? `?${qs}` : ''}`);
+}
+
+export async function createAccount(data: {
+  username: string;
+  password: string;
+  roleId: string;
+  projectIds?: string[];
+  isActive?: boolean;
+}) {
+  return apiRequest<SystemAccount>('/accounts', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateAccount(
+  id: string,
+  data: {
+    roleId?: string;
+    password?: string;
+    projectIds?: string[];
+    isActive?: boolean;
+    mustChangePassword?: boolean;
+  },
+) {
+  return apiRequest<SystemAccount>(`/accounts/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteAccount(id: string) {
+  return apiRequest<null>(`/accounts/${id}`, { method: 'DELETE' });
 }
 

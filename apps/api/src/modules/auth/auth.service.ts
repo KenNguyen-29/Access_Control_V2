@@ -10,8 +10,10 @@ import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ProjectScopeService } from '../../common/services/project-scope.service';
 import { LoginDto } from './dto/login.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
+import type { JwtPayload } from './jwt.strategy';
 
 type LoginAttempt = { count: number; firstAt: number; lockedUntil?: number };
 
@@ -24,6 +26,7 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
     private readonly config: ConfigService,
+    private readonly projectScope: ProjectScopeService,
   ) {}
 
   private accessExpiresIn(): string {
@@ -82,8 +85,48 @@ export class AuthService {
     this.attempts.delete(this.attemptKey(ip, username));
   }
 
-  private signAccess(payload: { sub: string; username: string; role: string }) {
+  private signAccess(payload: JwtPayload) {
     return this.jwtService.sign(payload, { expiresIn: this.accessExpiresIn() } as never);
+  }
+
+  private async buildAuthContext(account: {
+    id: string;
+    username: string;
+    mustChangePassword: boolean;
+    mfaEnabled: boolean;
+    role: { code: string };
+  }) {
+    const projectIds = await this.projectScope.loadProjectIdsForAccount(
+      account.id,
+      account.role.code,
+    );
+    const payload: JwtPayload = {
+      sub: account.id,
+      username: account.username,
+      role: account.role.code,
+      ...(projectIds && projectIds.length ? { projectIds } : {}),
+    };
+    return {
+      payload,
+      account: {
+        id: account.id,
+        username: account.username,
+        role: account.role.code,
+        mustChangePassword: account.mustChangePassword,
+        mfaEnabled: account.mfaEnabled,
+        projectIds: projectIds ?? [],
+      },
+    };
+  }
+
+  async me(accountId: string) {
+    const account = await this.prisma.account.findFirst({
+      where: { id: accountId, isActive: true, isDeleted: false },
+      include: { role: true },
+    });
+    if (!account) throw new UnauthorizedException('Tài khoản không hợp lệ');
+    const ctx = await this.buildAuthContext(account);
+    return ctx.account;
   }
 
   private hashToken(raw: string) {
@@ -145,11 +188,7 @@ export class AuthService {
       data: { failedLoginCount: 0, lockedUntil: null },
     });
 
-    const payload = {
-      sub: account.id,
-      username: account.username,
-      role: account.role.code,
-    };
+    const { payload, account: accountView } = await this.buildAuthContext(account);
 
     const accessToken = this.signAccess(payload);
     const { refreshToken, expiresAt } = await this.issueRefreshToken({
@@ -166,13 +205,7 @@ export class AuthService {
       mfaEnabled: account.mfaEnabled,
       /** MFA challenge not enforced yet — reserved for future step-up. */
       mfaRequired: false,
-      account: {
-        id: account.id,
-        username: account.username,
-        role: account.role.code,
-        mustChangePassword: account.mustChangePassword,
-        mfaEnabled: account.mfaEnabled,
-      },
+      account: accountView,
     };
   }
 
@@ -202,11 +235,7 @@ export class AuthService {
       data: { revokedAt: new Date() },
     });
 
-    const payload = {
-      sub: account.id,
-      username: account.username,
-      role: account.role.code,
-    };
+    const { payload, account: accountView } = await this.buildAuthContext(account);
     const accessToken = this.signAccess(payload);
     const { refreshToken, expiresAt } = await this.issueRefreshToken({
       accountId: account.id,
@@ -219,13 +248,7 @@ export class AuthService {
       refreshToken,
       refreshExpiresAt: expiresAt.toISOString(),
       mustChangePassword: account.mustChangePassword,
-      account: {
-        id: account.id,
-        username: account.username,
-        role: account.role.code,
-        mustChangePassword: account.mustChangePassword,
-        mfaEnabled: account.mfaEnabled,
-      },
+      account: accountView,
     };
   }
 

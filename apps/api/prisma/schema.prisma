@@ -14,6 +14,7 @@ enum UserRole {
   HR
   SECURITY
   TECHNICIAN
+  STAFF
 }
 
 enum UserType {
@@ -90,6 +91,75 @@ model Department {
   @@map("departments")
 }
 
+model Contractor {
+  id          String   @id @default(cuid())
+  name        String
+  code        String   @unique
+  description String?
+  isDeleted   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  projectLinks ProjectContractor[]
+  users        User[]
+  headcounts   DailyContractorHeadcount[]
+
+  @@map("contractors")
+}
+
+model Project {
+  id          String   @id @default(cuid())
+  name        String
+  code        String   @unique
+  siteName    String?
+  description String?
+  isDeleted   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  contractors ProjectContractor[]
+  users       User[]
+  headcounts  DailyContractorHeadcount[]
+  accountLinks AccountProject[]
+
+  @@map("projects")
+}
+
+model ProjectContractor {
+  id           String   @id @default(cuid())
+  projectId    String
+  contractorId String
+  createdAt    DateTime @default(now())
+
+  project    Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  contractor Contractor @relation(fields: [contractorId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, contractorId])
+  @@index([contractorId])
+  @@map("project_contractors")
+}
+
+model DailyContractorHeadcount {
+  id           String   @id @default(cuid())
+  date         DateTime @db.Date
+  contractorId String
+  projectId    String?
+  headcount    Int
+  payload      Json?
+  pushedAt     DateTime?
+  pushStatus   String?
+  pushError    String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  contractor Contractor @relation(fields: [contractorId], references: [id])
+  project    Project?   @relation(fields: [projectId], references: [id])
+
+  @@unique([date, contractorId])
+  @@index([date])
+  @@map("daily_contractor_headcounts")
+}
+
 model Role {
   id          String   @id @default(cuid())
   name        String
@@ -110,8 +180,12 @@ model User {
   fullName      String
   email         String?
   phone         String?
+  /// CCCD / citizen ID (optional)
+  citizenId     String?   @unique
   userType      UserType  @default(EMPLOYEE)
   departmentId  String?
+  contractorId  String?
+  projectId     String?
   faceImagePath String?
   isActive      Boolean   @default(true)
   isDeleted     Boolean   @default(false)
@@ -119,6 +193,8 @@ model User {
   updatedAt     DateTime  @updatedAt
 
   department              Department?            @relation(fields: [departmentId], references: [id])
+  contractor              Contractor?            @relation(fields: [contractorId], references: [id])
+  project                 Project?               @relation(fields: [projectId], references: [id])
   credentials             Credential[]
   employeeShifts          EmployeeShift[]
   userDevicePermissions   UserDevicePermission[]
@@ -130,6 +206,8 @@ model User {
   emergencyMarked         EmergencyMuster[]      @relation("MusterMarkedBy")
   emergencyEventsCreated  EmergencyEvent[]
 
+  @@index([contractorId])
+  @@index([projectId])
   @@map("users")
 }
 
@@ -151,10 +229,25 @@ model Account {
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
 
-  role          Role           @relation(fields: [roleId], references: [id])
+  role          Role            @relation(fields: [roleId], references: [id])
   refreshTokens RefreshToken[]
+  projectLinks  AccountProject[]
 
   @@map("accounts")
+}
+
+model AccountProject {
+  id        String   @id @default(cuid())
+  accountId String
+  projectId String
+  createdAt DateTime @default(now())
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([accountId, projectId])
+  @@index([projectId])
+  @@map("account_projects")
 }
 
 model RefreshToken {

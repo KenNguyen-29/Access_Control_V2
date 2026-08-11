@@ -26,6 +26,11 @@ import { AuditLogsModule } from './modules/audit-logs/audit-logs.module';
 import { RetentionModule } from './modules/retention/retention.module';
 import { BackupModule } from './modules/backup/backup.module';
 import { IntegrationModule } from './modules/integration/integration.module';
+import { ContractorsModule } from './modules/contractors/contractors.module';
+import { ProjectsModule } from './modules/projects/projects.module';
+import { ContractorReportsModule } from './modules/contractor-reports/contractor-reports.module';
+import { AccountsModule } from './modules/accounts/accounts.module';
+import { RbacModule } from './common/rbac/rbac.module';
 import { isRedisEnabled } from './common/utils/redis.util';
 
 const redisModules = isRedisEnabled()
@@ -48,6 +53,7 @@ const redisModules = isRedisEnabled()
     ScheduleModule.forRoot(),
     ...redisModules,
     PrismaModule,
+    RbacModule,
     StorageModule,
     QueueModule,
     EventsModule,
@@ -71,6 +77,10 @@ const redisModules = isRedisEnabled()
     RetentionModule,
     BackupModule,
     IntegrationModule,
+    ContractorsModule,
+    ProjectsModule,
+    ContractorReportsModule,
+    AccountsModule,
   ],
 })
 export class AppModule {}

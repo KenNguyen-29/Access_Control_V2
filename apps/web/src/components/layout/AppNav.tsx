@@ -8,13 +8,15 @@ import {
   Users,
   Clock,
   LayoutGrid,
-  Activity,
+  CalendarClock,
+  HardHat,
   Shield,
   Settings,
   LogOut,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
+import { usePermissions } from '@/hooks/usePermissions';
 
 const tabs = [
   { href: '/dashboard', id: 'dashboard', icon: Monitor, label: 'Giám sát' },
@@ -22,14 +24,25 @@ const tabs = [
   { href: '/access-control', id: 'access-control', icon: Shield, label: 'Phân quyền' },
   { href: '/shifts', id: 'shifts', icon: Clock, label: 'Ca làm' },
   { href: '/devices', id: 'devices', icon: LayoutGrid, label: 'Thiết bị' },
-  { href: '/reports', id: 'reports', icon: Activity, label: 'Báo cáo' },
+  { href: '/reports', id: 'reports', icon: CalendarClock, label: 'Chấm công' },
+  { href: '/reports/contractors', id: 'reports-contractors', icon: HardHat, label: 'BC nhà thầu' },
   { href: '/settings', id: 'settings', icon: Settings, label: 'Cài đặt' },
 ];
+
+function isTabActive(pathname: string, tab: (typeof tabs)[number]) {
+  if (tab.id === 'reports') return pathname === '/reports';
+  if (tab.id === 'reports-contractors') {
+    return pathname === '/reports/contractors' || pathname.startsWith('/reports/contractors/');
+  }
+  return pathname === tab.href || pathname.startsWith(`${tab.href}/`);
+}
 
 export function AppNav() {
   const pathname = usePathname();
   const { signOut, account } = useAuth();
+  const { canAccess } = usePermissions();
   const isHome = pathname === '/home' || pathname === '/';
+  const visibleTabs = tabs.filter((tab) => canAccess(tab.href));
 
   return (
     <header className="fixed left-0 right-0 top-0 z-50 h-16 border-b border-tertiary/15 bg-[hsl(var(--nav-bg))] text-[hsl(var(--nav-foreground))]">
@@ -64,8 +77,8 @@ export function AppNav() {
               )}
             </Link>
 
-            {tabs.map((tab) => {
-              const active = pathname === tab.href || pathname.startsWith(`${tab.href}/`);
+            {visibleTabs.map((tab) => {
+              const active = isTabActive(pathname, tab);
               return (
                 <Link
                   key={tab.id}

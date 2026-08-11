@@ -47,6 +47,9 @@ export default function SettingsPage() {
     webhookToken: '',
     allowedIps: '',
     mockMode: false,
+    monitorPushUrl: '',
+    monitorPushSecret: '',
+    monitorPushEnabled: false,
   });
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -91,6 +94,9 @@ export default function SettingsPage() {
       webhookToken: map[SETTING_KEYS.AKUVOX_WEBHOOK_TOKEN] || '',
       allowedIps: map[SETTING_KEYS.AKUVOX_ALLOWED_IPS] || '',
       mockMode: map[SETTING_KEYS.AKUVOX_MOCK_MODE] === 'true',
+      monitorPushUrl: map[SETTING_KEYS.MONITOR_PUSH_URL] || '',
+      monitorPushSecret: map[SETTING_KEYS.MONITOR_PUSH_SECRET] || '',
+      monitorPushEnabled: map[SETTING_KEYS.MONITOR_PUSH_ENABLED] === 'true',
     });
   }, [settingsQuery.data]);
 
@@ -165,10 +171,19 @@ export default function SettingsPage() {
       const ops: Promise<unknown>[] = [
         upsertSystemSetting(SETTING_KEYS.AKUVOX_ALLOWED_IPS, integration.allowedIps),
         upsertSystemSetting(SETTING_KEYS.AKUVOX_MOCK_MODE, String(integration.mockMode)),
+        upsertSystemSetting(SETTING_KEYS.MONITOR_PUSH_URL, integration.monitorPushUrl),
+        upsertSystemSetting(
+          SETTING_KEYS.MONITOR_PUSH_ENABLED,
+          String(integration.monitorPushEnabled),
+        ),
       ];
       const token = integration.webhookToken.trim();
       if (token && !token.startsWith('****')) {
         ops.push(upsertSystemSetting(SETTING_KEYS.AKUVOX_WEBHOOK_TOKEN, token));
+      }
+      const secret = integration.monitorPushSecret.trim();
+      if (secret && !secret.startsWith('****')) {
+        ops.push(upsertSystemSetting(SETTING_KEYS.MONITOR_PUSH_SECRET, secret));
       }
       await Promise.all(ops);
     },

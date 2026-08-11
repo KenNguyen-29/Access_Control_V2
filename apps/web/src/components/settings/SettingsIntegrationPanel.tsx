@@ -8,6 +8,9 @@ export type IntegrationSettingsValues = {
   webhookToken: string;
   allowedIps: string;
   mockMode: boolean;
+  monitorPushUrl: string;
+  monitorPushSecret: string;
+  monitorPushEnabled: boolean;
 };
 
 type IntegrationStatus = {
@@ -119,6 +122,50 @@ export function SettingsIntegrationPanel({
             {status?.redis.host}:{status?.redis.port}
           </p>
           <p className="text-xs text-muted-foreground">{status?.redis.note}</p>
+        </div>
+      </DesignCard>
+
+      <DesignCard
+        title="Hệ giám sát chung"
+        description="Đẩy headcount nhà thầu hàng ngày (cron 00:05 hoặc nút Snapshot trên báo cáo)."
+      >
+        <div className="max-w-2xl space-y-4">
+          <label className="block space-y-1">
+            <span className="text-sm font-medium">Push URL</span>
+            <Input
+              className="h-9 font-mono"
+              value={values.monitorPushUrl}
+              disabled={loading || saving}
+              placeholder="https://monitor.example.com/api/headcount"
+              onChange={(e) => onChange({ monitorPushUrl: e.target.value })}
+            />
+          </label>
+          <label className="block space-y-1">
+            <span className="text-sm font-medium">Bearer secret</span>
+            <Input
+              className="h-9 font-mono"
+              value={values.monitorPushSecret}
+              disabled={loading || saving}
+              placeholder="****"
+              onChange={(e) => onChange({ monitorPushSecret: e.target.value })}
+            />
+          </label>
+          <div className="flex items-center gap-3">
+            <input
+              id="monitor_push_enabled"
+              type="checkbox"
+              className="h-4 w-4 rounded border-border accent-primary"
+              checked={values.monitorPushEnabled}
+              disabled={loading || saving}
+              onChange={(e) => onChange({ monitorPushEnabled: e.target.checked })}
+            />
+            <label htmlFor="monitor_push_enabled" className="text-sm text-muted-foreground">
+              Bật cron đẩy tự động mỗi ngày
+            </label>
+          </div>
+          <Button disabled={saving || loading} onClick={onSave}>
+            {saving ? 'Đang lưu...' : 'Lưu'}
+          </Button>
         </div>
       </DesignCard>
     </div>

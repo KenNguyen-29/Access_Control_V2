@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter, usePathname } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Plus,
@@ -30,7 +31,9 @@ import {
   downloadUsersImportTemplate,
   enrollFace,
   getAccessZones,
+  getContractors,
   getDepartments,
+  getProjects,
   getUsers,
   importUsers,
   provisionUser,
@@ -46,6 +49,7 @@ import {
 } from '@/lib/formValidation';
 import { FieldError, RequiredMark } from '@/components/ui/field-error';
 import { cn } from '@/lib/utils';
+import { usePermissions } from '@/hooks/usePermissions';
 
 function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
@@ -61,7 +65,11 @@ const EMPTY_FORM = {
   fullName: '',
   email: '',
   phone: '',
+  citizenId: '',
+  userType: 'EMPLOYEE',
   departmentId: '',
+  contractorId: '',
+  projectId: '',
   zoneIds: [] as string[],
   autoSyncFace: true,
   faceImageFile: null as File | null,
@@ -152,9 +160,15 @@ function summarizeProvisionResult(
 
 export default function UsersPage() {
   const queryClient = useQueryClient();
+  const router = useRouter();
+  const pathname = usePathname();
+  const { canWriteUsers } = usePermissions();
+  const writeEnabled = canWriteUsers();
   const [search, setSearch] = useState('');
   const debouncedSearch = useDebouncedValue(search);
   const [deptFilter, setDeptFilter] = useState('all');
+  const [contractorFilter, setContractorFilter] = useState('all');
+  const [projectFilter, setProjectFilter] = useState('all');
   const [page, setPage] = useState(1);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -168,20 +182,67 @@ export default function UsersPage() {
   const importInputRef = useRef<HTMLInputElement>(null);
 
   const departmentId = deptFilter === 'all' ? undefined : deptFilter;
+  const contractorId = contractorFilter === 'all' ? undefined : contractorFilter;
+  const projectId = projectFilter === 'all' ? undefined : projectFilter;
+
+  function syncFilterUrl(nextContractor: string, nextProject: string) {
+    const q = new URLSearchParams();
+    if (nextContractor !== 'all') q.set('contractorId', nextContractor);
+    if (nextProject !== 'all') q.set('projectId', nextProject);
+    const qs = q.toString();
+    const next = qs ? `${pathname}?${qs}` : pathname;
+    const current = `${pathname}${window.location.search}`;
+    if (next !== current) {
+      router.replace(next, { scroll: false });
+    }
+  }
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const c = params.get('contractorId');
+    const p = params.get('projectId');
+    if (c) setContractorFilter(c);
+    if (p) setProjectFilter(p);
+  }, []);
 
   const usersQuery = useQuery({
-    queryKey: queryKeys.users({ page, search: debouncedSearch, departmentId }),
+    queryKey: queryKeys.users({
+      page,
+      search: debouncedSearch,
+      departmentId,
+      contractorId,
+      projectId,
+    }),
     queryFn: () =>
       getUsers({
         page,
         pageSize: PAGE_SIZE,
         search: debouncedSearch.trim() || undefined,
         departmentId,
+        contractorId,
+        projectId,
       }),
   });
   const departmentsQuery = useQuery({
     queryKey: queryKeys.departments(),
     queryFn: () => getDepartments(),
+  });
+  const contractorsQuery = useQuery({
+    queryKey: ['contractors'],
+    queryFn: () => getContractors(),
+  });
+  const listProjectsQuery = useQuery({
+    queryKey: ['projects', 'list-filter', contractorFilter],
+    queryFn: () =>
+      getProjects(
+        contractorFilter !== 'all' ? { contractorId: contractorFilter } : undefined,
+      ),
+  });
+  const projectsQuery = useQuery({
+    queryKey: ['projects', form.contractorId || 'all'],
+    queryFn: () =>
+      getProjects(form.contractorId ? { contractorId: form.contractorId } : undefined),
+    enabled: open,
   });
   const zonesQuery = useQuery({
     queryKey: ['accessZones'],
@@ -193,8 +254,44 @@ export default function UsersPage() {
   const totalPages = usersQuery.data?.totalPages ?? 1;
   const currentPage = Math.min(page, totalPages);
   const departments: Department[] = departmentsQuery.data ?? [];
+  const contractors = contractorsQuery.data ?? [];
+  const listProjects = listProjectsQuery.data ?? [];
+  const projects = projectsQuery.data ?? [];
   const zones = zonesQuery.data ?? [];
-  const loading = usersQuery.isLoading || departmentsQuery.isLoading || zonesQuery.isLoading;
+
+  const selectedFormProject = useMemo(
+    () => projects.find((p) => p.id === form.projectId) ?? null,
+    [projects, form.projectId],
+  );
+  const projectContractorIds = useMemo(
+    () => selectedFormProject?.contractors?.map((l) => l.contractorId) ?? [],
+    [selectedFormProject],
+  );
+  const formContractorOptions = useMemo(() => {
+    if (!form.projectId || projectContractorIds.length === 0) return contractors;
+    return contractors.filter((c) => projectContractorIds.includes(c.id));
+  }, [contractors, form.projectId, projectContractorIds]);
+
+  const loading =
+    usersQuery.isLoading ||
+    departmentsQuery.isLoading ||
+    zonesQuery.isLoading ||
+    contractorsQuery.isLoading;
+
+  const filteredContractorName = useMemo(
+    () =>
+      contractorFilter === 'all'
+        ? null
+        : contractors.find((c) => c.id === contractorFilter)?.name ?? null,
+    [contractorFilter, contractors],
+  );
+  const filteredProjectName = useMemo(
+    () =>
+      projectFilter === 'all'
+        ? null
+        : listProjects.find((p) => p.id === projectFilter)?.name ?? null,
+    [projectFilter, listProjects],
+  );
   const queryError = usersQuery.error ?? departmentsQuery.error ?? zonesQuery.error;
   const displayError =
     error ??
@@ -210,16 +307,23 @@ export default function UsersPage() {
     void queryClient.invalidateQueries({ queryKey: queryKeys.departments() });
   }
 
-  const hasActiveFilters = search.trim() !== '' || deptFilter !== 'all';
+  const hasActiveFilters =
+    search.trim() !== '' ||
+    deptFilter !== 'all' ||
+    contractorFilter !== 'all' ||
+    projectFilter !== 'all';
 
   useEffect(() => {
     setPage(1);
-  }, [debouncedSearch, deptFilter]);
+  }, [debouncedSearch, deptFilter, contractorFilter, projectFilter]);
 
   function clearFilters() {
     setSearch('');
     setDeptFilter('all');
+    setContractorFilter('all');
+    setProjectFilter('all');
     setPage(1);
+    syncFilterUrl('all', 'all');
   }
 
   function openCreate() {
@@ -237,7 +341,11 @@ export default function UsersPage() {
       fullName: user.fullName,
       email: user.email || '',
       phone: user.phone || '',
+      citizenId: user.citizenId || '',
+      userType: user.userType || 'EMPLOYEE',
       departmentId: user.departmentId || '',
+      contractorId: user.contractorId || '',
+      projectId: user.projectId || '',
       zoneIds: [],
       autoSyncFace: false,
       faceImageFile: null,
@@ -318,9 +426,16 @@ export default function UsersPage() {
         fullName: form.fullName.trim(),
         email: form.email.trim(),
         phone: form.phone.trim(),
+        citizenId: form.citizenId.trim() || undefined,
+        userType: form.userType || undefined,
         departmentId: form.departmentId || undefined,
+        contractorId: form.contractorId || undefined,
+        projectId: form.projectId || undefined,
       };
-      const errors = validateUserForm(form);
+      const errors = validateUserForm({
+        ...form,
+        projectContractorIds: form.projectId ? projectContractorIds : undefined,
+      });
       if (hasFormErrors(errors)) {
         throw new ApiError('Vui lòng kiểm tra lại thông tin đã nhập', 400);
       }
@@ -373,7 +488,10 @@ export default function UsersPage() {
   const deleting = deleteMutation.isPending;
 
   function onSave() {
-    const errors = validateUserForm(form);
+    const errors = validateUserForm({
+      ...form,
+      projectContractorIds: form.projectId ? projectContractorIds : undefined,
+    });
     setFieldErrors(errors);
     if (hasFormErrors(errors)) {
       setError('Vui lòng kiểm tra lại thông tin đã nhập');
@@ -439,43 +557,50 @@ export default function UsersPage() {
       title="Quản lý Nhân sự"
       subtitle="Danh sách nhân viên, phòng ban và thông tin liên hệ."
       actions={
-        <>
-          <input
-            ref={importInputRef}
-            type="file"
-            accept=".xlsx,.xls,.zip"
-            className="hidden"
-            onChange={(e) => void onImportFile(e.target.files?.[0])}
-          />
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => void onDownloadTemplate()}
-            disabled={loading || importing}
-            title="Mẫu: mã NV tự sinh; dán ảnh vào cột Ảnh; khu vực nhiều tên cách nhau bởi ;. ZIP = Excel + ảnh."
-          >
-            <Download className="h-4 w-4" />
-            Tải mẫu Excel
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => importInputRef.current?.click()}
-            disabled={loading || importing}
-            title="Nhận .xlsx (ảnh dán trong file) hoặc .zip (Excel + ảnh)"
-          >
-            <Upload className="h-4 w-4" />
-            {importing ? 'Đang import...' : 'Import Excel'}
-          </Button>
+        writeEnabled ? (
+          <>
+            <input
+              ref={importInputRef}
+              type="file"
+              accept=".xlsx,.xls,.zip"
+              className="hidden"
+              onChange={(e) => void onImportFile(e.target.files?.[0])}
+            />
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void onDownloadTemplate()}
+              disabled={loading || importing}
+              title="Mẫu: mã NV tự sinh; dán ảnh vào cột Ảnh; khu vực nhiều tên cách nhau bởi ;. ZIP = Excel + ảnh."
+            >
+              <Download className="h-4 w-4" />
+              Tải mẫu Excel
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => importInputRef.current?.click()}
+              disabled={loading || importing}
+              title="Nhận .xlsx (ảnh dán trong file) hoặc .zip (Excel + ảnh)"
+            >
+              <Upload className="h-4 w-4" />
+              {importing ? 'Đang import...' : 'Import Excel'}
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => load()} disabled={loading}>
+              <RefreshCw className={loading ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
+              Làm mới
+            </Button>
+            <Button variant="accent" size="sm" onClick={openCreate}>
+              <Plus className="h-4 w-4" />
+              Thêm nhân viên
+            </Button>
+          </>
+        ) : (
           <Button variant="outline" size="sm" onClick={() => load()} disabled={loading}>
             <RefreshCw className={loading ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
             Làm mới
           </Button>
-          <Button variant="accent" size="sm" onClick={openCreate}>
-            <Plus className="h-4 w-4" />
-            Thêm nhân viên
-          </Button>
-        </>
+        )
       }
     >
       {notice && (
@@ -488,9 +613,31 @@ export default function UsersPage() {
           {importErrors}
         </pre>
       )}
+      {(filteredContractorName || filteredProjectName) && (
+        <div className="mb-4 flex flex-col gap-2 rounded-sm border border-primary/20 bg-primary/5 px-3 py-2 text-sm sm:flex-row sm:items-center sm:justify-between">
+          <p>
+            Đang xem NV
+            {filteredContractorName ? (
+              <>
+                {' '}
+                của nhà thầu <strong>{filteredContractorName}</strong>
+              </>
+            ) : null}
+            {filteredProjectName ? (
+              <>
+                {filteredContractorName ? ',' : ''} dự án <strong>{filteredProjectName}</strong>
+              </>
+            ) : null}
+            .
+          </p>
+          <Button variant="outline" size="sm" className="h-8 shrink-0" onClick={clearFilters}>
+            Xóa lọc nhà thầu
+          </Button>
+        </div>
+      )}
       <DesignCard title="Tìm kiếm & bộ lọc">
-        <div className="grid grid-cols-1 items-end gap-4 sm:grid-cols-2 lg:grid-cols-[1fr_200px_auto]">
-          <div>
+        <div className="grid grid-cols-1 items-end gap-4 sm:grid-cols-2 lg:grid-cols-[minmax(0,240px)_minmax(180px,1fr)_minmax(180px,1fr)_minmax(180px,1fr)_auto]">
+          <div className="min-w-0">
             <label htmlFor="user-search" className="mb-1 block text-xs text-muted-foreground">
               Tìm kiếm
             </label>
@@ -498,7 +645,7 @@ export default function UsersPage() {
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 id="user-search"
-                placeholder="Tên hoặc mã nhân viên..."
+                placeholder="Tên, mã NV hoặc CCCD..."
                 className="input-design h-10 pl-10"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
@@ -522,6 +669,51 @@ export default function UsersPage() {
               {departments.map((d) => (
                 <option key={d.id} value={d.id}>
                   {d.name}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div>
+            <label htmlFor="user-contractor" className="mb-1 block text-xs text-muted-foreground">
+              Nhà thầu
+            </label>
+            <Select
+              id="user-contractor"
+              value={contractorFilter}
+              onChange={(e) => {
+                const next = e.target.value;
+                setContractorFilter(next);
+                setProjectFilter('all');
+                setPage(1);
+                syncFilterUrl(next, 'all');
+              }}
+            >
+              <option value="all">Tất cả nhà thầu</option>
+              {contractors.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div>
+            <label htmlFor="user-project" className="mb-1 block text-xs text-muted-foreground">
+              Dự án
+            </label>
+            <Select
+              id="user-project"
+              value={projectFilter}
+              onChange={(e) => {
+                const next = e.target.value;
+                setProjectFilter(next);
+                setPage(1);
+                syncFilterUrl(contractorFilter, next);
+              }}
+            >
+              <option value="all">Tất cả dự án</option>
+              {listProjects.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
                 </option>
               ))}
             </Select>
@@ -556,15 +748,18 @@ export default function UsersPage() {
           }
         >
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[820px] table-fixed border-collapse text-sm">
+            <table className="w-full min-w-[1100px] table-fixed border-collapse text-sm">
               <colgroup>
                 <col className="w-12" />
-                <col className="w-[26%]" />
-                <col className="w-[14%]" />
-                <col className="w-[18%]" />
                 <col className="w-[16%]" />
+                <col className="w-[10%]" />
+                <col className="w-[11%]" />
                 <col className="w-[14%]" />
-                <col className="w-20" />
+                <col className="w-[11%]" />
+                <col className="w-24" />
+                <col className="w-[14%]" />
+                <col className="w-[10%]" />
+                <col className="w-[88px]" />
               </colgroup>
               <thead>
                 <tr className="border-b border-border bg-muted/30">
@@ -572,6 +767,9 @@ export default function UsersPage() {
                   <th className="p-3 text-left font-semibold">Họ tên</th>
                   <th className="p-3 text-left font-semibold">Mã NV</th>
                   <th className="p-3 text-left font-semibold">Phòng ban</th>
+                  <th className="p-3 text-left font-semibold">Nhà thầu</th>
+                  <th className="p-3 text-left font-semibold">CCCD</th>
+                  <th className="p-3 text-left font-semibold">Loại</th>
                   <th className="p-3 text-left font-semibold">Email</th>
                   <th className="p-3 text-left font-semibold">SĐT</th>
                   <th className="p-3 text-right font-semibold">Thao tác</th>
@@ -584,7 +782,7 @@ export default function UsersPage() {
                       {(currentPage - 1) * PAGE_SIZE + i + 1}
                     </td>
                     <td className="p-3">
-                      <div className="flex items-center gap-3">
+                      <div className="flex min-w-0 items-center gap-3">
                         <Avatar name={u.fullName} src={u.faceImageUrl} />
                         <span className="truncate font-semibold">{u.fullName}</span>
                       </div>
@@ -594,29 +792,51 @@ export default function UsersPage() {
                     </td>
                     <td className="p-3">
                       {u.department?.name ? (
-                        <Badge variant="secondary" className="bg-blue-100 text-xs font-medium text-blue-700">
+                        <Badge variant="secondary" className="max-w-full truncate bg-blue-100 text-xs font-medium text-blue-700">
                           {u.department.name}
                         </Badge>
                       ) : (
                         <span className="text-muted-foreground">—</span>
                       )}
                     </td>
-                    <td className="truncate p-3">{u.email || '—'}</td>
-                    <td className="truncate p-3">{u.phone || '—'}</td>
+                    <td className="truncate p-3 text-xs" title={u.contractor?.name || undefined}>
+                      {u.contractor?.name || '—'}
+                    </td>
+                    <td className="truncate p-3 font-mono text-xs">{u.citizenId || '—'}</td>
                     <td className="p-3">
-                      <div className="flex justify-end gap-1">
-                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(u)}>
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8"
-                          onClick={() => setDeleteTarget(u)}
-                        >
-                          <Trash2 className="h-4 w-4 text-destructive" />
-                        </Button>
-                      </div>
+                      <Badge
+                        variant="secondary"
+                        className={
+                          u.userType === 'CONTRACTOR'
+                            ? 'bg-amber-100 text-xs font-medium text-amber-800'
+                            : 'bg-slate-100 text-xs font-medium text-slate-700'
+                        }
+                      >
+                        {u.userType === 'CONTRACTOR' ? 'Nhà thầu' : 'Nội bộ'}
+                      </Badge>
+                    </td>
+                    <td className="truncate p-3 text-xs" title={u.email || undefined}>
+                      {u.email || '—'}
+                    </td>
+                    <td className="truncate p-3 text-xs">{u.phone || '—'}</td>
+                    <td className="p-3">
+                      {writeEnabled ? (
+                        <div className="flex justify-end gap-1">
+                          <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => openEdit(u)}>
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 shrink-0"
+                            onClick={() => setDeleteTarget(u)}
+                          >
+                            <Trash2 className="h-4 w-4 text-destructive" />
+                          </Button>
+                        </div>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -758,18 +978,87 @@ export default function UsersPage() {
             </div>
           </div>
           <div>
-            <label className="mb-1 block text-xs text-muted-foreground">Phòng ban</label>
-            <Select
-              value={form.departmentId}
-              onChange={(e) => patchForm({ departmentId: e.target.value })}
-            >
-              <option value="">— Chọn phòng ban —</option>
-              {departments.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.name}
-                </option>
-              ))}
-            </Select>
+            <label className="mb-1 block text-xs text-muted-foreground">CCCD</label>
+            <Input
+              className="input-design h-10 font-mono"
+              placeholder="001234567890"
+              value={form.citizenId}
+              onChange={(e) => patchForm({ citizenId: e.target.value })}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="mb-1 block text-xs text-muted-foreground">Loại NV</label>
+              <Select
+                value={form.userType}
+                onChange={(e) => patchForm({ userType: e.target.value })}
+              >
+                <option value="EMPLOYEE">Nhân viên</option>
+                <option value="CONTRACTOR">Nhà thầu / CN</option>
+                <option value="VISITOR">Khách</option>
+              </Select>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs text-muted-foreground">Phòng ban</label>
+              <Select
+                value={form.departmentId}
+                onChange={(e) => patchForm({ departmentId: e.target.value })}
+              >
+                <option value="">— Chọn phòng ban —</option>
+                {departments.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.name}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="mb-1 block text-xs text-muted-foreground">
+                Nhà thầu
+                {form.userType === 'CONTRACTOR' ? <RequiredMark /> : null}
+              </label>
+              <Select
+                value={form.contractorId}
+                className={cn(fieldErrors.contractorId && 'border-destructive')}
+                onChange={(e) =>
+                  patchForm({ contractorId: e.target.value, projectId: '' })
+                }
+                aria-invalid={Boolean(fieldErrors.contractorId)}
+              >
+                <option value="">— Không chọn —</option>
+                {formContractorOptions.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </Select>
+              <FieldError message={fieldErrors.contractorId} />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs text-muted-foreground">Dự án</label>
+              <Select
+                value={form.projectId}
+                onChange={(e) => {
+                  const projectId = e.target.value;
+                  const p = projects.find((x) => x.id === projectId);
+                  const ids = p?.contractors?.map((l) => l.contractorId) ?? [];
+                  const nextContractor =
+                    !projectId || ids.length === 0 || ids.includes(form.contractorId)
+                      ? form.contractorId
+                      : '';
+                  patchForm({ projectId, contractorId: nextContractor });
+                }}
+              >
+                <option value="">— Không chọn —</option>
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </Select>
+            </div>
           </div>
           {!editing && (
             <>

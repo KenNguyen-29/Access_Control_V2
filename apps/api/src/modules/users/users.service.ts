@@ -48,15 +48,26 @@ export class UsersService {
     private readonly credentials: CredentialsService,
   ) {}
 
-  private buildWhere(query: { search?: string; departmentId?: string }) {
+  private buildWhere(
+    query: {
+      search?: string;
+      departmentId?: string;
+      contractorId?: string;
+      projectId?: string;
+    },
+    scope?: { projectId?: string | { in: string[] } },
+  ) {
     return {
       isDeleted: false,
       ...(query.departmentId ? { departmentId: query.departmentId } : {}),
+      ...(query.contractorId ? { contractorId: query.contractorId } : {}),
+      ...scope,
       ...(query.search
         ? {
             OR: [
               { fullName: { contains: query.search, mode: 'insensitive' as const } },
               { employeeCode: { contains: query.search, mode: 'insensitive' as const } },
+              { citizenId: { contains: query.search, mode: 'insensitive' as const } },
             ],
           }
         : {}),
@@ -80,15 +91,18 @@ export class UsersService {
     return { ...user, faceImageUrl };
   }
 
-  async findAll(query: UsersQueryDto) {
+  async findAll(
+    query: UsersQueryDto,
+    scopeFilter?: { projectId?: string | { in: string[] } },
+  ) {
     const page = query.page ?? 1;
     const pageSize = query.pageSize ?? 20;
-    const where = this.buildWhere(query);
+    const where = this.buildWhere(query, scopeFilter);
 
     const [rawItems, total] = await Promise.all([
       this.prisma.user.findMany({
         where,
-        include: { department: true },
+        include: { department: true, contractor: true, project: true },
         skip: (page - 1) * pageSize,
         take: pageSize,
         // Secondary id keeps offset pagination stable when createdAt ties (bulk seed).
@@ -101,8 +115,11 @@ export class UsersService {
     return { items, total, page, pageSize };
   }
 
-  async findIds(query: UsersIdsQueryDto) {
-    const where = this.buildWhere(query);
+  async findIds(
+    query: UsersIdsQueryDto,
+    scopeFilter?: { projectId?: string | { in: string[] } },
+  ) {
+    const where = this.buildWhere(query, scopeFilter);
     const [rows, total] = await Promise.all([
       this.prisma.user.findMany({
         where,
@@ -117,7 +134,7 @@ export class UsersService {
   async findOne(id: string) {
     const user = await this.prisma.user.findFirst({
       where: { id, isDeleted: false },
-      include: { department: true, credentials: true },
+      include: { department: true, credentials: true, contractor: true, project: true },
     });
     if (!user) throw new NotFoundException('User not found');
     return this.withFaceUrl(user);
@@ -142,6 +159,8 @@ export class UsersService {
   }
 
   async create(dto: CreateUserDto) {
+    this.assertContractorRequired(dto.userType, dto.contractorId);
+    await this.assertProjectContractorMatch(dto.projectId, dto.contractorId);
     const trimmedCode = dto.employeeCode?.trim();
     const baseData = {
       ...dto,
@@ -155,7 +174,7 @@ export class UsersService {
             ...baseData,
             employeeCode: baseData.employeeCode || (await this.nextEmployeeCode()),
           },
-          include: { department: true },
+          include: { department: true, contractor: true, project: true },
         });
         return this.withFaceUrl(user);
       } catch (err) {
@@ -180,12 +199,40 @@ export class UsersService {
     throw new ConflictException('Không thể tự sinh mã nhân viên, vui lòng thử lại');
   }
 
+  private assertContractorRequired(userType?: UserType, contractorId?: string | null) {
+    if (userType === UserType.CONTRACTOR && !contractorId) {
+      throw new BadRequestException('Nhân viên loại nhà thầu phải chọn nhà thầu');
+    }
+  }
+
+  private async assertProjectContractorMatch(
+    projectId?: string | null,
+    contractorId?: string | null,
+  ) {
+    if (!projectId || !contractorId) return;
+    const link = await this.prisma.projectContractor.findUnique({
+      where: {
+        projectId_contractorId: { projectId, contractorId },
+      },
+      select: { id: true },
+    });
+    if (!link) {
+      throw new BadRequestException('Nhà thầu không thuộc dự án đã chọn');
+    }
+  }
+
   async update(id: string, dto: UpdateUserDto) {
-    await this.findOne(id);
+    const existing = await this.findOne(id);
+    const nextType = dto.userType ?? existing.userType;
+    const nextContractor =
+      dto.contractorId !== undefined ? dto.contractorId : existing.contractorId;
+    const nextProject = dto.projectId !== undefined ? dto.projectId : existing.projectId;
+    this.assertContractorRequired(nextType, nextContractor);
+    await this.assertProjectContractorMatch(nextProject, nextContractor);
     const user = await this.prisma.user.update({
       where: { id },
       data: dto,
-      include: { department: true },
+      include: { department: true, contractor: true, project: true },
     });
     return this.withFaceUrl(user);
   }
@@ -283,8 +330,11 @@ export class UsersService {
       fullName: 'Nguyễn Văn A',
       email: 'nguyenvana@example.com',
       phone: '0912345678',
+      citizenId: '001234567890',
       department: 'Phòng Nhân sự',
-      userType: 'EMPLOYEE',
+      contractor: 'NhaThauA',
+      project: 'DuAn1',
+      userType: 'CONTRACTOR',
       faceImage: '',
       zones: 'Khu vực chính; Khu văn phòng',
     });
@@ -298,7 +348,8 @@ export class UsersService {
       'Hoặc import file ZIP chứa Excel + ảnh JPG/PNG (cột Ảnh ghi tên file, vd. anh1.jpg).';
     tip.getCell('A4').value =
       'Cột Khu vực: nhiều khu vực, phân tách bằng dấu ; hoặc , (đúng tên khu vực trên hệ thống).';
-    tip.getCell('A5').value = 'Phòng ban: chỉ 1 phòng ban / nhân viên.';
+    tip.getCell('A5').value =
+      'Phòng ban / Nhà thầu / Dự án: ghi đúng tên hoặc mã đã tạo trên hệ thống. CCCD tùy chọn.';
     tip.getColumn(1).width = 110;
     return workbookToBuffer(workbook);
   }
@@ -377,6 +428,26 @@ export class UsersService {
     const deptByName = new Map(
       departments.map((d) => [d.name.trim().toLowerCase(), d.id] as const),
     );
+    const contractors = await this.prisma.contractor.findMany({
+      where: { isDeleted: false },
+      select: { id: true, name: true, code: true },
+    });
+    const contractorByName = new Map(
+      contractors.flatMap((c) => [
+        [c.name.trim().toLowerCase(), c.id] as const,
+        [c.code.trim().toLowerCase(), c.id] as const,
+      ]),
+    );
+    const projects = await this.prisma.project.findMany({
+      where: { isDeleted: false },
+      select: { id: true, name: true, code: true },
+    });
+    const projectByName = new Map(
+      projects.flatMap((p) => [
+        [p.name.trim().toLowerCase(), p.id] as const,
+        [p.code.trim().toLowerCase(), p.id] as const,
+      ]),
+    );
 
     const zones = await this.prisma.accessZone.findMany({
       where: { isDeleted: false },
@@ -398,11 +469,24 @@ export class UsersService {
       const email = cell(row, 'email');
       const phoneRaw = cell(row, 'phone');
       const departmentName = cell(row, 'department');
+      const citizenId = cell(row, 'citizenId') || undefined;
+      const contractorName = cell(row, 'contractor');
+      const projectName = cell(row, 'project');
       const userTypeRaw = cell(row, 'userType');
       const faceRaw = cell(row, 'faceImage');
       const zonesRaw = cell(row, 'zones');
 
-      if (!fullName && !email && !phoneRaw && !departmentName && !faceRaw && !zonesRaw) {
+      if (
+        !fullName &&
+        !email &&
+        !phoneRaw &&
+        !departmentName &&
+        !faceRaw &&
+        !zonesRaw &&
+        !citizenId &&
+        !contractorName &&
+        !projectName
+      ) {
         result.skipped += 1;
         continue;
       }
@@ -453,6 +537,54 @@ export class UsersService {
         }
       }
 
+      let contractorId: string | undefined;
+      if (contractorName) {
+        contractorId = contractorByName.get(contractorName.trim().toLowerCase());
+        if (!contractorId) {
+          result.errors.push({
+            row: rowNumber,
+            message: `Không tìm thấy nhà thầu "${contractorName}"`,
+          });
+          continue;
+        }
+      }
+
+      if (userType === UserType.CONTRACTOR && !contractorId) {
+        result.errors.push({
+          row: rowNumber,
+          message: 'Loại CONTRACTOR bắt buộc cột Nhà thầu',
+        });
+        continue;
+      }
+
+      let projectId: string | undefined;
+      if (projectName) {
+        projectId = projectByName.get(projectName.trim().toLowerCase());
+        if (!projectId) {
+          result.errors.push({
+            row: rowNumber,
+            message: `Không tìm thấy dự án "${projectName}"`,
+          });
+          continue;
+        }
+      }
+
+      if (projectId && contractorId) {
+        const link = await this.prisma.projectContractor.findUnique({
+          where: {
+            projectId_contractorId: { projectId, contractorId },
+          },
+          select: { id: true },
+        });
+        if (!link) {
+          result.errors.push({
+            row: rowNumber,
+            message: `Nhà thầu "${contractorName}" không thuộc dự án "${projectName}"`,
+          });
+          continue;
+        }
+      }
+
       const zoneNames = parseZoneNames(zonesRaw);
       const zoneIds: string[] = [];
       let zoneError: string | null = null;
@@ -488,7 +620,10 @@ export class UsersService {
               email,
               phone,
               userType,
+              ...(citizenId ? { citizenId } : {}),
               ...(departmentId ? { departmentId } : {}),
+              ...(contractorId ? { contractorId } : {}),
+              ...(projectId ? { projectId } : {}),
             },
           });
           userId = existingByEmail.id;
@@ -499,7 +634,10 @@ export class UsersService {
             email,
             phone,
             userType,
+            ...(citizenId ? { citizenId } : {}),
             ...(departmentId ? { departmentId } : {}),
+            ...(contractorId ? { contractorId } : {}),
+            ...(projectId ? { projectId } : {}),
           });
           userId = created.id;
           result.created += 1;

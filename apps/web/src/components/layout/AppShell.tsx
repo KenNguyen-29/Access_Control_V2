@@ -1,6 +1,7 @@
 'use client';
 
 import { AppNav } from '@/components/layout/AppNav';
+import { RequirePermission } from '@/components/layout/RequirePermission';
 
 export function AppShell({
   children,
@@ -20,7 +21,7 @@ export function AppShell({
               : 'relative min-h-0 flex-1 overflow-y-auto bg-neutral'
           }
         >
-          {children}
+          <RequirePermission>{children}</RequirePermission>
         </div>
       </main>
     </div>

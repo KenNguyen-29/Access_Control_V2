@@ -4,12 +4,13 @@ import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { changePassword, login, logout as apiLogout } from '@/lib/api';
 
-type Account = {
+export type Account = {
   id: string;
   username: string;
   role: string;
   mustChangePassword?: boolean;
   mfaEnabled?: boolean;
+  projectIds?: string[];
 };
 
 export function useAuth() {

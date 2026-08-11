@@ -11,6 +11,7 @@ async function main() {
     { name: 'HR Manager', code: UserRole.HR, description: 'HR and attendance management' },
     { name: 'Security Guard', code: UserRole.SECURITY, description: 'Live monitoring dashboard' },
     { name: 'Technician', code: UserRole.TECHNICIAN, description: 'Device maintenance' },
+    { name: 'Nhân viên vận hành', code: UserRole.STAFF, description: 'Site operations — scoped by project' },
   ];
 
   for (const role of roles) {

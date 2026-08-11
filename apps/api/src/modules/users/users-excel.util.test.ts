@@ -42,7 +42,10 @@ describe('users-excel util', () => {
       'Họ tên',
       'Email',
       'Số điện thoại',
+      'CCCD',
       'Phòng ban',
+      'Nhà thầu',
+      'Dự án',
       'Loại NV',
       'Ảnh',
       'Khu vực',
@@ -51,14 +54,28 @@ describe('users-excel util', () => {
     assert.equal(map.fullName, 1);
     assert.equal(map.email, 2);
     assert.equal(map.phone, 3);
-    assert.equal(map.department, 4);
-    assert.equal(map.userType, 5);
-    assert.equal(map.faceImage, 6);
-    assert.equal(map.zones, 7);
+    assert.equal(map.citizenId, 4);
+    assert.equal(map.department, 5);
+    assert.equal(map.contractor, 6);
+    assert.equal(map.project, 7);
+    assert.equal(map.userType, 8);
+    assert.equal(map.faceImage, 9);
+    assert.equal(map.zones, 10);
     assert.ok(USER_HEADER_ALIASES.fullName.includes('ho ten'));
     assert.deepEqual(
       USER_EXCEL_COLUMNS.map((c) => c.key),
-      ['fullName', 'email', 'phone', 'department', 'userType', 'faceImage', 'zones'],
+      [
+        'fullName',
+        'email',
+        'phone',
+        'citizenId',
+        'department',
+        'contractor',
+        'project',
+        'userType',
+        'faceImage',
+        'zones',
+      ],
     );
   });
 });
