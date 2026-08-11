@@ -173,7 +173,10 @@ async function main() {
   });
 
   console.log('Seed completed.');
-  console.log('  Admin login: admin / admin123');
+  console.log('  Login accounts (password admin123, đổi sau khi vào):');
+  console.log('    admin  / ADMIN');
+  console.log('    hr1    / HR');
+  console.log('    staff1 / STAFF');
   console.log('  Demo employee: EMP001 - Nguyen Van A');
   console.log(`  Sample zones: ${mainZone.name}, ${officeZone.name}`);
 }
