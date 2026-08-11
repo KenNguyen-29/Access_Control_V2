@@ -751,14 +751,14 @@ export default function UsersPage() {
             <table className="w-full min-w-[1100px] table-fixed border-collapse text-sm">
               <colgroup>
                 <col className="w-12" />
+                <col className="w-[15%]" />
+                <col className="w-[9%]" />
                 <col className="w-[16%]" />
+                <col className="w-[12%]" />
                 <col className="w-[10%]" />
-                <col className="w-[11%]" />
-                <col className="w-[14%]" />
-                <col className="w-[11%]" />
-                <col className="w-24" />
-                <col className="w-[14%]" />
-                <col className="w-[10%]" />
+                <col className="w-[7.5rem]" />
+                <col className="w-[13%]" />
+                <col className="w-[9%]" />
                 <col className="w-[88px]" />
               </colgroup>
               <thead>
@@ -792,7 +792,11 @@ export default function UsersPage() {
                     </td>
                     <td className="p-3">
                       {u.department?.name ? (
-                        <Badge variant="secondary" className="max-w-full truncate bg-blue-100 text-xs font-medium text-blue-700">
+                        <Badge
+                          variant="secondary"
+                          title={u.department.name}
+                          className="block max-w-full truncate bg-blue-100 text-xs font-medium text-blue-700"
+                        >
                           {u.department.name}
                         </Badge>
                       ) : (
@@ -803,13 +807,13 @@ export default function UsersPage() {
                       {u.contractor?.name || '—'}
                     </td>
                     <td className="truncate p-3 font-mono text-xs">{u.citizenId || '—'}</td>
-                    <td className="p-3">
+                    <td className="whitespace-nowrap p-3">
                       <Badge
                         variant="secondary"
                         className={
                           u.userType === 'CONTRACTOR'
-                            ? 'bg-amber-100 text-xs font-medium text-amber-800'
-                            : 'bg-slate-100 text-xs font-medium text-slate-700'
+                            ? 'whitespace-nowrap bg-amber-100 text-xs font-medium text-amber-800'
+                            : 'whitespace-nowrap bg-slate-100 text-xs font-medium text-slate-700'
                         }
                       >
                         {u.userType === 'CONTRACTOR' ? 'Nhà thầu' : 'Nội bộ'}

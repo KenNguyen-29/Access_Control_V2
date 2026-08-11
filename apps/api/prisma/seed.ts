@@ -1,78 +1,11 @@
-import { PrismaClient, UserRole, DeviceType, CredentialType } from '@prisma/client';
-import * as bcrypt from 'bcrypt';
+import { PrismaClient, DeviceType, CredentialType } from '@prisma/client';
+import { ensureRolesAndAdmin } from './ensure-bootstrap';
 
 const prisma = new PrismaClient();
 
 async function main() {
   console.log('Seeding database...');
-
-  const roles = [
-    { name: 'Administrator', code: UserRole.ADMIN, description: 'Full system access' },
-    { name: 'HR Manager', code: UserRole.HR, description: 'HR and attendance management' },
-    { name: 'Security Guard', code: UserRole.SECURITY, description: 'Live monitoring dashboard' },
-    { name: 'Technician', code: UserRole.TECHNICIAN, description: 'Device maintenance' },
-    { name: 'Nhân viên vận hành', code: UserRole.STAFF, description: 'Site operations — scoped by project' },
-  ];
-
-  for (const role of roles) {
-    await prisma.role.upsert({
-      where: { code: role.code },
-      update: {},
-      create: role,
-    });
-  }
-
-  const adminRole = await prisma.role.findUniqueOrThrow({ where: { code: UserRole.ADMIN } });
-
-  const bootstrapPassword = process.env.ADMIN_BOOTSTRAP_PASSWORD?.trim();
-  const bootstrapUsername = (process.env.ADMIN_BOOTSTRAP_USERNAME || 'admin').trim();
-
-  if (bootstrapPassword) {
-    if (bootstrapPassword.length < 8) {
-      throw new Error('ADMIN_BOOTSTRAP_PASSWORD must be at least 8 characters');
-    }
-    if (bootstrapPassword === 'admin123') {
-      throw new Error(
-        'ADMIN_BOOTSTRAP_PASSWORD must not be the insecure default "admin123". Choose a strong password.',
-      );
-    }
-    const passwordHash = await bcrypt.hash(bootstrapPassword, 12);
-    await prisma.account.upsert({
-      where: { username: bootstrapUsername },
-      update: {
-        passwordHash,
-        mustChangePassword: true,
-        isActive: true,
-        isDeleted: false,
-        roleId: adminRole.id,
-      },
-      create: {
-        username: bootstrapUsername,
-        passwordHash,
-        roleId: adminRole.id,
-        mustChangePassword: true,
-      },
-    });
-    console.log(
-      `Admin account "${bootstrapUsername}" bootstrapped (mustChangePassword=true). Change password after first login.`,
-    );
-  } else {
-    // Never create or refresh admin/admin123. Mark existing default admin to force password change.
-    const existingAdmin = await prisma.account.findUnique({ where: { username: 'admin' } });
-    if (existingAdmin) {
-      await prisma.account.update({
-        where: { id: existingAdmin.id },
-        data: { mustChangePassword: true },
-      });
-      console.log(
-        'Existing admin found: mustChangePassword=true. Set ADMIN_BOOTSTRAP_PASSWORD to rotate password on seed.',
-      );
-    } else {
-      console.log(
-        'No admin account created. Set ADMIN_BOOTSTRAP_PASSWORD (and optional ADMIN_BOOTSTRAP_USERNAME) to bootstrap.',
-      );
-    }
-  }
+  await ensureRolesAndAdmin(prisma);
 
   const dept = await prisma.department.upsert({
     where: { code: 'IT' },

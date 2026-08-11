@@ -40,7 +40,7 @@ Dán nội dung từ [`.env.production.example`](../.env.production.example), s�
 
 Mặc định port công ty: **web 3003**, **API 8010** (`WEB_HOST_PORT`, `API_HOST_PORT`).
 
-Seed lần đầu (tùy chọn, chạy tay một lần sau khi có Docker):
+Deploy lần đầu tự tạo **roles** + tài khoản **admin / admin123** (đổi mật khẩu sau khi vào). Demo nhà thầu (tùy chọn):
 
 ```bash
 git clone https://github.com/<ORG>/Access_Control_V2.git /tmp/acv2-setup

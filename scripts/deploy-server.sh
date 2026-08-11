@@ -48,6 +48,9 @@ done
 echo "==> Running database migrations (one-off container)..."
 docker compose -f docker-compose.prod.yml run --rm --no-deps api npx prisma migrate deploy
 
+echo "==> Ensuring login roles + first admin (if DB has no account)..."
+docker compose -f docker-compose.prod.yml run --rm --no-deps api node prisma/ensure-bootstrap.js
+
 if [ "${SEED_DB:-false}" = "true" ]; then
   echo "==> Seeding database..."
   if ! docker compose -f docker-compose.prod.yml run --rm --no-deps api npx prisma db seed; then
