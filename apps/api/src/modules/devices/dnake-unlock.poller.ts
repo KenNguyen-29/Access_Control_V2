@@ -97,7 +97,7 @@ export class DnakeUnlockPoller {
         }
       } catch (err) {
         this.logger.warn(
-          `DNAKE ingest failed device=${device.code} code=${employeeCode}: ${
+          `DNAKE ingest failed device=${device.code} identity=${identity}: ${
             err instanceof Error ? err.message : err
           }`,
         );
