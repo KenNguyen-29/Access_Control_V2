@@ -4,12 +4,15 @@ import { ConfigService } from '@nestjs/config';
 import { DnakeService } from './dnake.service';
 import { AkuvoxEventService } from '../queue/akuvox-event.service';
 
-/**
- * DNAKE Unlock Logs (UI Access → Unlock Logs):
- * unlock_type: Face / Card / Password / Intercom (numeric firmware-dependent).
- * We ingest Face + Card successful unlocks for attendance.
- */
-const ATTENDANCE_UNLOCK_TYPES = new Set([1, 2, 3, 4]);
+/** DNAKE unlock log: status 0 = Success (Apifox samples); -1 = no user / failed. */
+function isDnakeUnlockSuccess(status: number): boolean {
+  return status === 0 || status === 1;
+}
+
+/** unlock_type 2 = Face in Apifox samples; 1 = Card; 0 may appear on some firmwares. */
+function isDnakeAttendanceUnlock(unlockType: number): boolean {
+  return unlockType === 0 || unlockType === 1 || unlockType === 2;
+}
 
 @Injectable()
 export class DnakeUnlockPoller {
@@ -64,28 +67,34 @@ export class DnakeUnlockPoller {
       maxTs = Math.max(maxTs, ts);
 
       const unlockType = Number(row.unlock_type);
-      if (!ATTENDANCE_UNLOCK_TYPES.has(unlockType)) continue;
+      if (!isDnakeAttendanceUnlock(unlockType)) continue;
 
-      // Success in DNAKE UI; firmware commonly uses 1.
       const status = Number(row.status);
-      if (status !== 1) continue;
+      if (!isDnakeUnlockSuccess(status)) continue;
 
-      const employeeCode = String(row.number || row.name || '').trim();
-      if (!employeeCode || employeeCode.toLowerCase() === 'none') continue;
+      const number = String(row.number || '').trim();
+      const name = String(row.name || '').trim();
+      const identity = number || name;
+      if (!identity || identity.toLowerCase() === 'none') continue;
 
       // ts may be unix seconds or ms
       const eventAt = new Date(ts > 1e12 ? ts : ts * 1000);
-      const sourceEventId = `dnake:${device.id}:${ts}:${employeeCode}`;
+      const sourceEventId = `dnake:${device.id}:${ts}:${identity}`;
 
       try {
-        await this.events.ingestAccessEvent({
+        const result = await this.events.ingestAccessEvent({
           deviceId: device.id,
-          employeeCode,
+          employeeCode: identity,
           eventAt,
           sourceEventId,
           rawPayload: row as object,
           denied: false,
         });
+        if (result && 'processed' in result && result.processed) {
+          this.logger.log(
+            `DNAKE ingested device=${device.code} identity=${identity} ts=${ts} unlock_type=${unlockType}`,
+          );
+        }
       } catch (err) {
         this.logger.warn(
           `DNAKE ingest failed device=${device.code} code=${employeeCode}: ${

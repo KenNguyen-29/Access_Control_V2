@@ -96,12 +96,30 @@ export class AkuvoxEventService {
   }
 
   private async findUserByEmployeeCode(employeeCode?: string) {
-    const code = employeeCode?.trim();
-    if (!code) return null;
+    return this.findUserByIdentity(employeeCode);
+  }
+
+  /** Match by employeeCode first, then fullName (DNAKE unlock logs often have name only). */
+  private async findUserByIdentity(identifier?: string) {
+    const key = identifier?.trim();
+    if (!key || key.toLowerCase() === 'none') return null;
+
+    const byCode = await this.prisma.user.findFirst({
+      where: {
+        employeeCode: { equals: key, mode: 'insensitive' },
+        isDeleted: false,
+      },
+      include: { department: true },
+    });
+    if (byCode) return byCode;
+
     return this.prisma.user.findFirst({
       where: {
-        employeeCode: { equals: code, mode: 'insensitive' },
         isDeleted: false,
+        OR: [
+          { fullName: { equals: key, mode: 'insensitive' } },
+          { fullName: { contains: key, mode: 'insensitive' } },
+        ],
       },
       include: { department: true },
     });
@@ -182,7 +200,7 @@ export class AkuvoxEventService {
     if (!device) {
       return { skipped: true, reason: 'device_not_found' };
     }
-    const user = await this.findUserByEmployeeCode(params.employeeCode);
+    const user = await this.findUserByIdentity(params.employeeCode);
     return this.persistAndEmit({
       device,
       user,

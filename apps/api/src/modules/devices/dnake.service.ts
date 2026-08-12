@@ -91,7 +91,8 @@ export class DnakeService {
   private isOk(data: unknown): boolean {
     if (!data || typeof data !== 'object' || Array.isArray(data)) return false;
     const code = (data as DnakeApiResponse).code;
-    return code === 0;
+    // DNAKE docs: 0 = app success; some firmwares also return HTTP-style 200 in JSON body.
+    return code === 0 || code === 200;
   }
 
   private async request(
@@ -201,7 +202,7 @@ export class DnakeService {
     form.append('passNum', '0');
     form.append('pinMode', '0');
     form.append('pinCode', '');
-    form.append('cards', cred?.cardNumber?.trim() || '');
+    form.append('cards', cred?.cardNumber?.trim() || user.employeeCode);
     form.append('relays', String(Math.max(0, relay - 1)));
     form.append('room', user.employeeCode);
     form.append('activeEnable', '1');
