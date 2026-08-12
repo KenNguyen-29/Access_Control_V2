@@ -194,7 +194,7 @@ export const hasUserFormErrors = hasFormErrors;
 export type DeviceFormFields = {
   name: string;
   code: string;
-  deviceType: 'AKUVOX' | 'CAMERA';
+  deviceType: 'AKUVOX' | 'DNAKE' | 'CAMERA';
   zoneId: string;
   ipAddress: string;
   location: string;
@@ -205,6 +205,10 @@ export type DeviceFormFields = {
   isEdit?: boolean;
   hasExistingPassword?: boolean;
 };
+
+function isAttendancePanel(type: DeviceFormFields['deviceType']) {
+  return type === 'AKUVOX' || type === 'DNAKE';
+}
 
 export type DeviceFormFieldErrors = FieldErrors<keyof DeviceFormFields>;
 
@@ -219,8 +223,8 @@ export function validateDeviceForm(form: DeviceFormFields): DeviceFormFieldError
     errors.code = 'Mã chỉ gồm chữ/số/_/- (tối đa 32 ký tự)';
   }
 
-  if (form.deviceType === 'AKUVOX' && !form.zoneId.trim()) {
-    errors.zoneId = 'Vui lòng chọn khu vực cho Akuvox';
+  if (isAttendancePanel(form.deviceType) && !form.zoneId.trim()) {
+    errors.zoneId = 'Vui lòng chọn khu vực cho thiết bị chấm công';
   }
 
   const ip = form.ipAddress.trim();
@@ -236,13 +240,13 @@ export function validateDeviceForm(form: DeviceFormFields): DeviceFormFieldError
     else if (!isValidRtspUrl(rtsp)) errors.rtspUrl = 'RTSP URL phải bắt đầu bằng rtsp:// hoặc rtsps://';
   }
 
-  if (form.deviceType === 'AKUVOX') {
+  if (isAttendancePanel(form.deviceType)) {
     if (!form.username.trim()) {
-      errors.username = 'Vui lòng nhập Username Akuvox';
+      errors.username = 'Vui lòng nhập Username thiết bị';
     }
     const needsPassword = !form.isEdit || !form.hasExistingPassword;
     if (needsPassword && !form.password.trim()) {
-      errors.password = 'Vui lòng nhập Password Akuvox';
+      errors.password = 'Vui lòng nhập Password thiết bị';
     }
   } else {
     if (!form.username.trim()) {
@@ -264,7 +268,7 @@ export type DeviceMappingFields = {
 
 export function validateDeviceMappingForm(form: DeviceMappingFields): FieldErrors<keyof DeviceMappingFields> {
   const errors: FieldErrors<keyof DeviceMappingFields> = {};
-  if (!form.akuvoxDeviceId.trim()) errors.akuvoxDeviceId = 'Vui lòng chọn đầu đọc Akuvox';
+  if (!form.akuvoxDeviceId.trim()) errors.akuvoxDeviceId = 'Vui lòng chọn đầu đọc';
   if (!form.cameraDeviceId.trim()) errors.cameraDeviceId = 'Vui lòng chọn camera';
   if (
     form.akuvoxDeviceId &&

@@ -1,8 +1,20 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { DeviceType } from '@prisma/client';
 import { paginatedResponse, successResponse } from '../../common/utils/response.util';
 import { DevicesService } from './devices.service';
 import { AkuvoxService } from './akuvox.service';
+import { DnakeService } from './dnake.service';
 import { DeviceWebRtcService } from './device-webrtc.service';
 import { CreateDeviceDto } from './dto/create-device.dto';
 import { UpdateDeviceDto } from './dto/update-device.dto';
@@ -10,6 +22,7 @@ import { DevicesQueryDto } from './dto/devices-query.dto';
 import { WebRtcOfferDto } from './dto/webrtc-offer.dto';
 import { AkuvoxWebhookSecurityService } from '../webhooks/akuvox-webhook-security.service';
 import { WebhooksService } from '../webhooks/webhooks.service';
+import { PrismaService } from '../../prisma/prisma.service';
 
 @ApiTags('devices')
 @ApiBearerAuth()
@@ -18,9 +31,11 @@ export class DevicesController {
   constructor(
     private readonly service: DevicesService,
     private readonly akuvox: AkuvoxService,
+    private readonly dnake: DnakeService,
     private readonly webrtc: DeviceWebRtcService,
     private readonly webhookSecurity: AkuvoxWebhookSecurityService,
     private readonly webhooks: WebhooksService,
+    private readonly prisma: PrismaService,
   ) {}
 
   @Get('akuvox/webhook-info')
@@ -80,10 +95,21 @@ export class DevicesController {
     @Param('userId') userId: string,
     @Body() body: { zoneId?: string },
   ) {
-    return successResponse(
-      await this.akuvox.syncUserCredentials(userId, body?.zoneId),
-      'User credentials synced',
-    );
+    const [akuvox, dnake] = await Promise.all([
+      this.akuvox.syncUserCredentials(userId, body?.zoneId).catch((err) => ({
+        synced: 0,
+        devices: 0,
+        results: [],
+        error: err instanceof Error ? err.message : 'akuvox sync failed',
+      })),
+      this.dnake.syncUserCredentials(userId, body?.zoneId).catch((err) => ({
+        synced: 0,
+        devices: 0,
+        results: [],
+        error: err instanceof Error ? err.message : 'dnake sync failed',
+      })),
+    ]);
+    return successResponse({ akuvox, dnake }, 'User credentials synced');
   }
 
   @Patch(':id')
@@ -99,11 +125,31 @@ export class DevicesController {
 
   @Post(':id/open-door')
   async openDoor(@Param('id') id: string) {
+    const device = await this.prisma.device.findFirst({
+      where: { id, isDeleted: false },
+      select: { deviceType: true },
+    });
+    if (!device) {
+      throw new BadRequestException('Device not found');
+    }
+    if (device.deviceType === DeviceType.DNAKE) {
+      throw new BadRequestException('DNAKE S414L chưa hỗ trợ mở cửa từ xa qua API');
+    }
     return successResponse(await this.akuvox.openDoor(id), 'Door open command sent');
   }
 
   @Post(':id/sync-credentials')
   async syncCredentials(@Param('id') id: string) {
+    const device = await this.prisma.device.findFirst({
+      where: { id, isDeleted: false },
+      select: { deviceType: true },
+    });
+    if (!device) {
+      throw new BadRequestException('Device not found');
+    }
+    if (device.deviceType === DeviceType.DNAKE) {
+      return successResponse(await this.dnake.syncCredentials(id), 'Credentials synced');
+    }
     return successResponse(await this.akuvox.syncCredentials(id), 'Credentials synced');
   }
 

@@ -4,6 +4,7 @@ import sharp from 'sharp';
 import { PrismaService } from '../../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import { AkuvoxService } from '../devices/akuvox.service';
+import { DnakeService } from '../devices/dnake.service';
 import { CreateCredentialDto } from './dto/create-credential.dto';
 
 const MAX_FACE_BYTES = 10 * 1024 * 1024;
@@ -16,6 +17,7 @@ export class CredentialsService {
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
     private readonly akuvox: AkuvoxService,
+    private readonly dnake: DnakeService,
   ) {}
 
   findByUser(userId: string) {
@@ -141,9 +143,14 @@ export class CredentialsService {
           `Auto Akuvox sync after face enroll failed for user=${user.id}: ${(err as Error).message}`,
         );
       });
+      void this.dnake.syncUserCredentials(user.id).catch((err) => {
+        this.logger.warn(
+          `Auto DNAKE sync after face enroll failed for user=${user.id}: ${(err as Error).message}`,
+        );
+      });
     } else {
       this.logger.log(
-        `Skip auto Akuvox sync after face enroll user=${user.id} (no zone yet; provision will sync)`,
+        `Skip auto panel sync after face enroll user=${user.id} (no zone yet; provision will sync)`,
       );
     }
 

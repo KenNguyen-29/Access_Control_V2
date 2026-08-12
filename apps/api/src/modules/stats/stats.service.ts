@@ -108,6 +108,7 @@ export class StatsService {
       users,
       cameras,
       akuvox,
+      dnake,
       workShifts,
       activeAssignments,
       assignedUserRows,
@@ -119,6 +120,7 @@ export class StatsService {
       this.prisma.user.count({ where: { isDeleted: false } }),
       this.prisma.device.count({ where: { isDeleted: false, deviceType: 'CAMERA' } }),
       this.prisma.device.count({ where: { isDeleted: false, deviceType: 'AKUVOX' } }),
+      this.prisma.device.count({ where: { isDeleted: false, deviceType: 'DNAKE' } }),
       this.prisma.workShift.count({ where: { isDeleted: false } }),
       this.prisma.employeeShift.count({
         where: { isDeleted: false, OR: [{ endDate: null }, { endDate: { gte: startOfDay } }] },
@@ -153,9 +155,9 @@ export class StatsService {
 
     return {
       users,
-      devices: cameras + akuvox,
+      devices: cameras + akuvox + dnake,
       cameras,
-      akuvox,
+      akuvox: akuvox + dnake,
       workShifts,
       activeAssignments,
       unassignedEmployees,

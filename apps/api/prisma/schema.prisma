@@ -25,6 +25,7 @@ enum UserType {
 
 enum DeviceType {
   AKUVOX
+  DNAKE
   CAMERA
 }
 
@@ -302,6 +303,7 @@ model Device {
   rtspUsername  String?
   rtspPassword  String?
   akuvoxConfig  Json?
+  dnakeConfig   Json?
   isOnline      Boolean          @default(false)
   lastHeartbeat DateTime?
   syncStatus    DeviceSyncStatus @default(NOT_APPLICABLE)

@@ -12,7 +12,7 @@ export class CreateDeviceMappingDto {
   @ApiProperty()
   @Transform(emptyToUndefined)
   @IsString()
-  @IsNotEmpty({ message: 'Vui lòng chọn đầu đọc Akuvox' })
+  @IsNotEmpty({ message: 'Vui lòng chọn đầu đọc (Akuvox/DNAKE)' })
   akuvoxDeviceId!: string;
 
   @ApiProperty()

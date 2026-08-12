@@ -88,22 +88,30 @@ export class CreateDeviceDto {
   @IsString()
   rtspPassword?: string;
 
-  @ApiPropertyOptional({ description: 'Tài khoản HTTP API của Akuvox (bắt buộc với thiết bị Akuvox)' })
+  @ApiPropertyOptional({
+    description: 'Tài khoản HTTP API của Akuvox/DNAKE (bắt buộc với panel chấm công)',
+  })
   @Transform(emptyToUndefined)
-  @ValidateIf((o: CreateDeviceDto) => o.deviceType === DeviceType.AKUVOX)
-  @IsString({ message: 'Username Akuvox không hợp lệ' })
-  @IsNotEmpty({ message: 'Vui lòng nhập Username Akuvox' })
+  @ValidateIf(
+    (o: CreateDeviceDto) =>
+      o.deviceType === DeviceType.AKUVOX || o.deviceType === DeviceType.DNAKE,
+  )
+  @IsString({ message: 'Username không hợp lệ' })
+  @IsNotEmpty({ message: 'Vui lòng nhập Username thiết bị' })
   @MaxLength(100)
   username?: string;
 
   @ApiPropertyOptional({
     description:
-      'Mật khẩu HTTP API của Akuvox (bắt buộc khi tạo). Khi sửa: để trống để giữ nguyên mật khẩu cũ',
+      'Mật khẩu HTTP API Akuvox/DNAKE (bắt buộc khi tạo). Khi sửa: để trống để giữ nguyên mật khẩu cũ',
   })
   @Transform(emptyToUndefined)
-  @ValidateIf((o: CreateDeviceDto) => o.deviceType === DeviceType.AKUVOX)
-  @IsString({ message: 'Password Akuvox không hợp lệ' })
-  @IsNotEmpty({ message: 'Vui lòng nhập Password Akuvox' })
+  @ValidateIf(
+    (o: CreateDeviceDto) =>
+      o.deviceType === DeviceType.AKUVOX || o.deviceType === DeviceType.DNAKE,
+  )
+  @IsString({ message: 'Password không hợp lệ' })
+  @IsNotEmpty({ message: 'Vui lòng nhập Password thiết bị' })
   @MaxLength(200)
   password?: string;
 
@@ -119,10 +127,15 @@ export class CreateDeviceDto {
   @Max(8)
   relay?: number;
 
-  @ApiPropertyOptional({ description: 'Khu vực truy cập (AccessZone id) — bắt buộc với Akuvox' })
+  @ApiPropertyOptional({
+    description: 'Khu vực truy cập (AccessZone id) — bắt buộc với Akuvox/DNAKE',
+  })
   @Transform(emptyToUndefined)
-  @ValidateIf((o: CreateDeviceDto) => o.deviceType === DeviceType.AKUVOX)
+  @ValidateIf(
+    (o: CreateDeviceDto) =>
+      o.deviceType === DeviceType.AKUVOX || o.deviceType === DeviceType.DNAKE,
+  )
   @IsString()
-  @IsNotEmpty({ message: 'Vui lòng chọn khu vực cho thiết bị Akuvox' })
+  @IsNotEmpty({ message: 'Vui lòng chọn khu vực cho thiết bị chấm công' })
   zoneId?: string;
 }

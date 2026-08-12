@@ -6,6 +6,7 @@ import JSZip from 'jszip';
 import { PrismaService } from '../../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import { AkuvoxService } from '../devices/akuvox.service';
+import { DnakeService } from '../devices/dnake.service';
 import { PermissionsService } from '../permissions/permissions.service';
 import { CredentialsService } from '../credentials/credentials.service';
 import { CreateUserDto } from './dto/create-user.dto';
@@ -45,6 +46,7 @@ export class UsersService {
     private readonly storage: StorageService,
     private readonly permissions: PermissionsService,
     private readonly akuvox: AkuvoxService,
+    private readonly dnake: DnakeService,
     private readonly credentials: CredentialsService,
   ) {}
 
@@ -285,14 +287,45 @@ export class UsersService {
     if (autoSync) {
       for (const zone of zones) {
         try {
-          const result = await this.akuvox.syncUserCredentials(userId, zone.id);
+          const [akuvoxResult, dnakeResult] = await Promise.all([
+            this.akuvox.syncUserCredentials(userId, zone.id).catch((err) => ({
+              synced: 0,
+              devices: 0,
+              results: [
+                {
+                  deviceId: zone.id,
+                  deviceName: zone.name,
+                  zoneId: zone.id,
+                  zoneName: zone.name,
+                  ok: false,
+                  error: err instanceof Error ? err.message : 'akuvox error',
+                },
+              ],
+              mock: false,
+            })),
+            this.dnake.syncUserCredentials(userId, zone.id).catch((err) => ({
+              synced: 0,
+              devices: 0,
+              results: [
+                {
+                  deviceId: zone.id,
+                  deviceName: zone.name,
+                  zoneId: zone.id,
+                  zoneName: zone.name,
+                  ok: false,
+                  error: err instanceof Error ? err.message : 'dnake error',
+                },
+              ],
+              mock: false,
+            })),
+          ]);
           syncByZone.push({
             zoneId: zone.id,
             zoneName: zone.name,
-            synced: result.synced,
-            devices: result.devices,
-            results: result.results ?? [],
-            mock: result.mock,
+            synced: akuvoxResult.synced + dnakeResult.synced,
+            devices: akuvoxResult.devices + dnakeResult.devices,
+            results: [...(akuvoxResult.results ?? []), ...(dnakeResult.results ?? [])],
+            mock: Boolean(akuvoxResult.mock || dnakeResult.mock),
           });
         } catch (err) {
           syncByZone.push({

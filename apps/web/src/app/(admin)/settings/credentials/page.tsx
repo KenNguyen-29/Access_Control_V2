@@ -47,7 +47,10 @@ export default function CredentialsSettingsPage() {
 
   const items = credentialsQuery.data ?? [];
   const devices = useMemo(
-    () => (devicesQuery.data?.items ?? []).filter((d) => d.deviceType === 'AKUVOX'),
+    () =>
+      (devicesQuery.data?.items ?? []).filter(
+        (d) => d.deviceType === 'AKUVOX' || d.deviceType === 'DNAKE',
+      ),
     [devicesQuery.data],
   );
   const loading = credentialsQuery.isLoading || devicesQuery.isLoading;

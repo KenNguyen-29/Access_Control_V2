@@ -39,6 +39,7 @@ export function StatusBadge({ status, className }: { status: string; className?:
 
 const DEVICE_TYPE_COLORS: Record<string, string> = {
   AKUVOX: 'bg-violet-100 text-violet-700',
+  DNAKE: 'bg-teal-100 text-teal-700',
   CAMERA: 'bg-blue-100 text-blue-700',
 };
 

@@ -166,6 +166,35 @@ export class AkuvoxEventService {
     });
   }
 
+  /** Vendor-agnostic ingest (DNAKE unlock poll, etc.). */
+  async ingestAccessEvent(params: {
+    deviceId: string;
+    employeeCode: string;
+    eventAt: Date;
+    sourceEventId: string;
+    rawPayload: object;
+    denied?: boolean;
+  }) {
+    const device = await this.prisma.device.findFirst({
+      where: { id: params.deviceId, isDeleted: false },
+      select: { id: true, name: true, zoneId: true },
+    });
+    if (!device) {
+      return { skipped: true, reason: 'device_not_found' };
+    }
+    const user = await this.findUserByEmployeeCode(params.employeeCode);
+    return this.persistAndEmit({
+      device,
+      user,
+      employeeCode: params.employeeCode,
+      eventAt: params.eventAt,
+      sourceEventId: params.sourceEventId,
+      rawPayload: params.rawPayload,
+      denied: params.denied,
+      skipPunch: Boolean(params.denied),
+    });
+  }
+
   async handle(data: AkuvoxWebhookJobData) {
     const { payload, sourceIp } = data;
     this.logger.log(

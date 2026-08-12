@@ -244,7 +244,7 @@ export type Device = {
   id: string;
   name: string;
   code: string;
-  deviceType: 'AKUVOX' | 'CAMERA';
+  deviceType: 'AKUVOX' | 'DNAKE' | 'CAMERA';
   ipAddress?: string | null;
   location?: string | null;
   zoneId?: string | null;
@@ -255,6 +255,8 @@ export type Device = {
   lastHeartbeat?: string | null;
   akuvoxUsername?: string | null;
   hasAkuvoxPassword?: boolean;
+  dnakeUsername?: string | null;
+  hasDnakePassword?: boolean;
   rtspUsername?: string | null;
   hasRtspPassword?: boolean;
 };

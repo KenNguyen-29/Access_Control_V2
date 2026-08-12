@@ -99,7 +99,9 @@ export default function MiniAccessLog({ lastEvent }: Props) {
       .catch(() => {});
     getDevices({ page: 1, pageSize: 100 })
       .then((res) => {
-        setDevices(res.items.filter((d) => d.deviceType === 'AKUVOX'));
+        setDevices(
+          res.items.filter((d) => d.deviceType === 'AKUVOX' || d.deviceType === 'DNAKE'),
+        );
       })
       .catch(() => {});
   }, []);

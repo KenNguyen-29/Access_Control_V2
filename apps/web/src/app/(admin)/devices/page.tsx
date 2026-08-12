@@ -53,10 +53,28 @@ import { cn } from '@/lib/utils';
 
 const DEFAULT_RTSP_TEMPLATE = 'rtsp://192.168.1.100:554/Streaming/Channels/101';
 
+type PanelDeviceType = 'AKUVOX' | 'DNAKE' | 'CAMERA';
+
+function isAttendancePanel(type: PanelDeviceType) {
+  return type === 'AKUVOX' || type === 'DNAKE';
+}
+
+function panelUsername(device: Device) {
+  if (device.deviceType === 'CAMERA') return device.rtspUsername || '';
+  if (device.deviceType === 'DNAKE') return device.dnakeUsername || '';
+  return device.akuvoxUsername || '';
+}
+
+function hasPanelPassword(device: Device, type: PanelDeviceType) {
+  if (type === 'CAMERA') return Boolean(device.hasRtspPassword);
+  if (type === 'DNAKE') return Boolean(device.hasDnakePassword);
+  return Boolean(device.hasAkuvoxPassword);
+}
+
 const EMPTY_FORM = {
   name: '',
   code: '',
-  deviceType: 'AKUVOX' as 'AKUVOX' | 'CAMERA',
+  deviceType: 'AKUVOX' as PanelDeviceType,
   ipAddress: '',
   location: '',
   zoneId: '',
@@ -117,7 +135,10 @@ export default function DevicesPage() {
         ? 'Không tải được thiết bị'
         : null);
 
-  const akuvoxDevices = useMemo(() => items.filter((d) => d.deviceType === 'AKUVOX'), [items]);
+  const readerDevices = useMemo(
+    () => items.filter((d) => isAttendancePanel(d.deviceType)),
+    [items],
+  );
   const cameras = useMemo(() => items.filter((d) => d.deviceType === 'CAMERA'), [items]);
 
   const hasActiveFilters = search.trim() !== '' || typeFilter !== 'all' || zoneFilter !== '';
@@ -167,8 +188,7 @@ export default function DevicesPage() {
       location: device.location || '',
       zoneId: device.zoneId || '',
       rtspUrl: device.rtspUrl || DEFAULT_RTSP_TEMPLATE,
-      username:
-        (device.deviceType === 'CAMERA' ? device.rtspUsername : device.akuvoxUsername) || '',
+      username: panelUsername(device),
       password: '',
     });
     setFieldErrors({});
@@ -232,18 +252,18 @@ export default function DevicesPage() {
 
   const saveMutation = useMutation({
     mutationFn: async () => {
-      const isAkuvox = form.deviceType === 'AKUVOX';
-      const duplicateZone = isAkuvox
+      const isPanel = isAttendancePanel(form.deviceType);
+      const duplicateZone = isPanel
         ? items.find(
             (d) =>
-              d.deviceType === 'AKUVOX' &&
+              d.deviceType === form.deviceType &&
               d.zoneId === form.zoneId &&
               d.id !== editing?.id,
           )
         : null;
       if (duplicateZone) {
         throw new ApiError(
-          `Khu vực "${zoneNameById.get(form.zoneId) ?? form.zoneId}" đã có Akuvox (${duplicateZone.name})`,
+          `Khu vực "${zoneNameById.get(form.zoneId) ?? form.zoneId}" đã có ${form.deviceType} (${duplicateZone.name})`,
           409,
         );
       }
@@ -255,10 +275,10 @@ export default function DevicesPage() {
         deviceType: form.deviceType,
         ipAddress: form.ipAddress.trim() || undefined,
         location: form.location.trim() || undefined,
-        zoneId: isAkuvox ? form.zoneId : form.zoneId.trim() || undefined,
+        zoneId: isPanel ? form.zoneId : form.zoneId.trim() || undefined,
         rtspUrl: form.rtspUrl.trim() || undefined,
         // Credentials mapped by device type; password omitted when blank to keep existing
-        ...(isAkuvox
+        ...(isPanel
           ? {
               username: username || undefined,
               ...(password ? { password } : {}),
@@ -304,8 +324,7 @@ export default function DevicesPage() {
 
   function onSave() {
     const hasExistingPassword = Boolean(
-      editing &&
-        (form.deviceType === 'AKUVOX' ? editing.hasAkuvoxPassword : editing.hasRtspPassword),
+      editing && hasPanelPassword(editing, form.deviceType),
     );
     const errors = validateDeviceForm({
       ...form,
@@ -375,7 +394,7 @@ export default function DevicesPage() {
     <PageShell
       badge="Quản trị"
       title="Quản lý Thiết bị"
-      subtitle="Akuvox FaceID, camera MediaMTX và liên kết Akuvox ↔ Camera."
+      subtitle="Akuvox / DNAKE FaceID, camera và liên kết đầu đọc ↔ Camera."
       actions={
         <>
           <Button variant="outline" size="sm" onClick={() => load()} disabled={loading}>
@@ -432,6 +451,7 @@ export default function DevicesPage() {
             <Select id="device-type" value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
               <option value="all">Tất cả</option>
               <option value="AKUVOX">AKUVOX</option>
+              <option value="DNAKE">DNAKE</option>
               <option value="CAMERA">CAMERA</option>
             </Select>
           </div>
@@ -468,7 +488,7 @@ export default function DevicesPage() {
 
       <DesignCard
         title={`Danh sách thiết bị (${filtered.length})`}
-        description="Akuvox FaceID và camera giám sát"
+        description="Akuvox / DNAKE FaceID và camera giám sát"
       >
         <QueryBoundary
           isLoading={loading}
@@ -476,7 +496,7 @@ export default function DevicesPage() {
           isEmpty={filtered.length === 0}
           onRetry={() => load()}
           emptyTitle={hasActiveFilters ? 'Không tìm thấy thiết bị' : 'Chưa có thiết bị'}
-          emptyDescription="Thêm thiết bị Akuvox hoặc camera để bắt đầu."
+          emptyDescription="Thêm thiết bị Akuvox, DNAKE hoặc camera để bắt đầu."
         >
           <div className="overflow-x-auto">
             <table className="w-full min-w-[980px] table-fixed border-collapse text-sm">
@@ -541,17 +561,19 @@ export default function DevicesPage() {
                             <WifiOff className="h-4 w-4 text-slate-400" />
                           )}
                         </Button>
-                        {d.deviceType === 'AKUVOX' && (
+                        {isAttendancePanel(d.deviceType) && (
                           <>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8"
-                              title="Mở cửa"
-                              onClick={() => void onOpenDoor(d)}
-                            >
-                              <DoorOpen className="h-4 w-4" />
-                            </Button>
+                            {d.deviceType === 'AKUVOX' && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8"
+                                title="Mở cửa"
+                                onClick={() => void onOpenDoor(d)}
+                              >
+                                <DoorOpen className="h-4 w-4" />
+                              </Button>
+                            )}
                             <Button
                               variant="ghost"
                               size="icon"
@@ -585,8 +607,8 @@ export default function DevicesPage() {
       </DesignCard>
 
       <DesignCard
-        title={`Liên kết Akuvox ↔ Camera (${mappings.length})`}
-        description="Gắn camera giám sát với đầu đọc Akuvox để hiển thị khi có sự kiện."
+        title={`Liên kết đầu đọc ↔ Camera (${mappings.length})`}
+        description="Gắn camera giám sát với đầu đọc Akuvox/DNAKE để hiển thị khi có sự kiện."
       >
         <QueryBoundary
           isLoading={loading}
@@ -670,18 +692,19 @@ export default function DevicesPage() {
             <Select
               value={form.deviceType}
               onChange={(e) =>
-                patchForm({ deviceType: e.target.value as 'AKUVOX' | 'CAMERA' })
+                patchForm({ deviceType: e.target.value as PanelDeviceType })
               }
               disabled={!!editing}
             >
               <option value="AKUVOX">AKUVOX</option>
+              <option value="DNAKE">DNAKE</option>
               <option value="CAMERA">CAMERA</option>
             </Select>
           </div>
           <div>
             <label className="mb-1 block text-xs text-muted-foreground">
               Khu vực
-              {form.deviceType === 'AKUVOX' && <RequiredMark />}
+              {isAttendancePanel(form.deviceType) && <RequiredMark />}
             </label>
             <Select
               value={form.zoneId}
@@ -690,7 +713,9 @@ export default function DevicesPage() {
               aria-invalid={Boolean(fieldErrors.zoneId)}
             >
               <option value="">
-                {form.deviceType === 'AKUVOX' ? '— Chọn khu vực —' : '— Không gắn khu vực —'}
+                {isAttendancePanel(form.deviceType)
+                  ? '— Chọn khu vực —'
+                  : '— Không gắn khu vực —'}
               </option>
               {zones.map((z) => (
                 <option key={z.id} value={z.id}>
@@ -699,9 +724,9 @@ export default function DevicesPage() {
               ))}
             </Select>
             <FieldError message={fieldErrors.zoneId} />
-            {form.deviceType === 'AKUVOX' && form.zoneId && (
+            {isAttendancePanel(form.deviceType) && form.zoneId && (
               <p className="mt-1 text-xs text-muted-foreground">
-                Mỗi khu vực nên có một Akuvox — FaceID sẽ đồng bộ theo khu vực.
+                Mỗi khu vực nên có một đầu đọc cùng loại — FaceID đồng bộ theo khu vực.
               </p>
             )}
           </div>
@@ -754,7 +779,9 @@ export default function DevicesPage() {
             <div className="col-span-2 -mb-1 text-xs font-semibold text-muted-foreground">
               {form.deviceType === 'AKUVOX'
                 ? 'Tài khoản HTTP API (Akuvox)'
-                : 'Tài khoản đăng nhập camera (RTSP)'}
+                : form.deviceType === 'DNAKE'
+                  ? 'Tài khoản HTTP API (DNAKE)'
+                  : 'Tài khoản đăng nhập camera (RTSP)'}
             </div>
             <div>
               <label className="mb-1 block text-xs text-muted-foreground">
@@ -773,15 +800,12 @@ export default function DevicesPage() {
             <div>
               <label className="mb-1 block text-xs text-muted-foreground">
                 Mật khẩu
-                {(
-                  !editing ||
-                  !(form.deviceType === 'AKUVOX' ? editing.hasAkuvoxPassword : editing.hasRtspPassword)
-                ) && <RequiredMark />}
+                {(!editing || !hasPanelPassword(editing, form.deviceType)) && <RequiredMark />}
               </label>
               <Input
                 type="password"
                 placeholder={
-                  (form.deviceType === 'AKUVOX' ? editing?.hasAkuvoxPassword : editing?.hasRtspPassword)
+                  editing && hasPanelPassword(editing, form.deviceType)
                     ? '••••• (giữ nguyên nếu để trống)'
                     : '••••••'
                 }
@@ -808,7 +832,7 @@ export default function DevicesPage() {
         <div className="space-y-3">
           <div>
             <label className="mb-1 block text-xs text-muted-foreground">
-              Đầu đọc Akuvox
+              Đầu đọc (Akuvox / DNAKE)
               <RequiredMark />
             </label>
             <Select
@@ -817,10 +841,10 @@ export default function DevicesPage() {
               className={cn(mapFieldErrors.akuvoxDeviceId && 'border-destructive')}
               aria-invalid={Boolean(mapFieldErrors.akuvoxDeviceId)}
             >
-              <option value="">— Chọn Akuvox —</option>
-              {akuvoxDevices.map((d) => (
+              <option value="">— Chọn đầu đọc —</option>
+              {readerDevices.map((d) => (
                 <option key={d.id} value={d.id}>
-                  {d.name}
+                  {d.name} ({d.deviceType})
                 </option>
               ))}
             </Select>

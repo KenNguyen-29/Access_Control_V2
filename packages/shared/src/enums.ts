@@ -8,6 +8,7 @@ export enum UserRole {
 
 export enum DeviceType {
   AKUVOX = 'AKUVOX',
+  DNAKE = 'DNAKE',
   CAMERA = 'CAMERA',
 }
 

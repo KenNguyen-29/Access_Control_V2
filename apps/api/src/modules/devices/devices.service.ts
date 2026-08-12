@@ -4,11 +4,12 @@ import { Device, DeviceType, Prisma } from '@prisma/client';
 import { createConnection } from 'net';
 import { PrismaService } from '../../prisma/prisma.service';
 import { Go2RtcService } from './go2rtc.service';
+import { DnakeService } from './dnake.service';
 import { CreateDeviceDto } from './dto/create-device.dto';
 import { UpdateDeviceDto } from './dto/update-device.dto';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 
-type AkuvoxConfig = {
+type PanelConfig = {
   username?: string;
   password?: string;
   protocol?: 'http' | 'https';
@@ -16,10 +17,15 @@ type AkuvoxConfig = {
   authMode?: 'basic';
   apiVersion?: 'modern' | 'legacy';
   scheduleRelay?: string;
+  lastUnlockTs?: number;
 };
 
-const AKUVOX_CREDS_MSG =
-  'Thiết bị chưa cấu hình tài khoản Akuvox — nhập Username/Password trên trang Thiết bị';
+const PANEL_CREDS_MSG =
+  'Thiết bị chưa cấu hình tài khoản — nhập Username/Password trên trang Thiết bị';
+
+function isPanelType(type: DeviceType) {
+  return type === DeviceType.AKUVOX || type === DeviceType.DNAKE;
+}
 
 @Injectable()
 export class DevicesService {
@@ -27,6 +33,7 @@ export class DevicesService {
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     private readonly go2rtc: Go2RtcService,
+    private readonly dnake: DnakeService,
   ) {}
 
   /** Translate Prisma unique-constraint errors into a friendly 409 on the device code. */
@@ -42,37 +49,32 @@ export class DevicesService {
     throw err;
   }
 
-  private parseAkuvoxConfig(raw: Prisma.JsonValue | null | undefined): AkuvoxConfig {
+  private parsePanelConfig(raw: Prisma.JsonValue | null | undefined): PanelConfig {
     if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
-      return { ...(raw as AkuvoxConfig) };
+      return { ...(raw as PanelConfig) };
     }
     return {};
   }
 
-  /** Require per-device Akuvox username/password (no shared env fallback). */
-  private assertAkuvoxCredentials(deviceType: DeviceType, cfg: AkuvoxConfig, isCreate: boolean) {
-    if (deviceType !== DeviceType.AKUVOX) return;
+  private assertPanelCredentials(deviceType: DeviceType, cfg: PanelConfig, isCreate: boolean) {
+    if (!isPanelType(deviceType)) return;
     const username = cfg.username?.trim();
     const password = cfg.password?.trim();
     if (!username) {
-      throw new BadRequestException('Vui lòng nhập Username Akuvox');
+      throw new BadRequestException('Vui lòng nhập Username thiết bị');
     }
     if (!password) {
-      throw new BadRequestException(
-        isCreate
-          ? 'Vui lòng nhập Password Akuvox'
-          : AKUVOX_CREDS_MSG,
-      );
+      throw new BadRequestException(isCreate ? 'Vui lòng nhập Password thiết bị' : PANEL_CREDS_MSG);
     }
   }
 
-  /** Merge Akuvox credential/config fields (username/password/protocol/relay) into akuvoxConfig JSON. */
-  private buildAkuvoxConfig(
+  /** Merge username/password/protocol/relay into panel JSON config. */
+  private buildPanelConfig(
     dto: CreateDeviceDto | UpdateDeviceDto,
     existing?: Prisma.JsonValue | null,
-  ): AkuvoxConfig | undefined {
-    const current: AkuvoxConfig =
-      existing !== undefined ? this.parseAkuvoxConfig(existing) : {};
+  ): PanelConfig | undefined {
+    const current: PanelConfig =
+      existing !== undefined ? this.parsePanelConfig(existing) : {};
 
     let touched = false;
     if (dto.username !== undefined) {
@@ -95,19 +97,21 @@ export class DevicesService {
     return current;
   }
 
-  /** Strip stored password from akuvoxConfig and expose akuvoxUsername for the client. */
+  /** Strip stored passwords from panel configs for API responses. */
   private sanitize(device: Device) {
-    const cfg =
-      device.akuvoxConfig && typeof device.akuvoxConfig === 'object' && !Array.isArray(device.akuvoxConfig)
-        ? (device.akuvoxConfig as AkuvoxConfig)
-        : {};
-    const { password: _pw, ...safeConfig } = cfg;
+    const akuvoxCfg = this.parsePanelConfig(device.akuvoxConfig);
+    const dnakeCfg = this.parsePanelConfig(device.dnakeConfig);
+    const { password: _a, ...safeAkuvox } = akuvoxCfg;
+    const { password: _d, lastUnlockTs: _ts, ...safeDnake } = dnakeCfg;
     const { rtspPassword, ...safeDevice } = device;
     return {
       ...safeDevice,
-      akuvoxConfig: safeConfig,
-      akuvoxUsername: cfg.username ?? null,
-      hasAkuvoxPassword: Boolean(cfg.password),
+      akuvoxConfig: safeAkuvox,
+      dnakeConfig: safeDnake,
+      akuvoxUsername: akuvoxCfg.username ?? null,
+      hasAkuvoxPassword: Boolean(akuvoxCfg.password),
+      dnakeUsername: dnakeCfg.username ?? null,
+      hasDnakePassword: Boolean(dnakeCfg.password),
       hasRtspPassword: Boolean(rtspPassword),
     };
   }
@@ -163,15 +167,20 @@ export class DevicesService {
 
   async create(dto: CreateDeviceDto) {
     const { username: _u, password: _p, protocol: _pr, relay: _r, ...rest } = dto;
-    const akuvoxConfig = this.buildAkuvoxConfig(dto);
-    if (dto.deviceType === DeviceType.AKUVOX) {
-      this.assertAkuvoxCredentials(dto.deviceType, akuvoxConfig ?? {}, true);
+    const panelConfig = this.buildPanelConfig(dto);
+    if (isPanelType(dto.deviceType)) {
+      this.assertPanelCredentials(dto.deviceType, panelConfig ?? {}, true);
     }
+
+    const data: Prisma.DeviceUncheckedCreateInput = {
+      ...rest,
+      ...(dto.deviceType === DeviceType.AKUVOX && panelConfig ? { akuvoxConfig: panelConfig } : {}),
+      ...(dto.deviceType === DeviceType.DNAKE && panelConfig ? { dnakeConfig: panelConfig } : {}),
+    };
+
     let device: Device;
     try {
-      device = await this.prisma.device.create({
-        data: { ...rest, ...(akuvoxConfig ? { akuvoxConfig } : {}) },
-      });
+      device = await this.prisma.device.create({ data });
     } catch (err) {
       this.rethrowKnownError(err);
     }
@@ -185,29 +194,36 @@ export class DevicesService {
     if (!existing) throw new NotFoundException('Device not found');
 
     const { username: _u, password: _p, protocol: _pr, relay: _r, ...rest } = dto;
-    const hasAkuvoxFields =
+    const hasPanelFields =
       dto.username !== undefined ||
       dto.password !== undefined ||
       dto.protocol !== undefined ||
       dto.relay !== undefined;
-    const akuvoxConfig = hasAkuvoxFields
-      ? this.buildAkuvoxConfig(dto, existing.akuvoxConfig)
-      : this.parseAkuvoxConfig(existing.akuvoxConfig);
 
     const nextType = dto.deviceType ?? existing.deviceType;
-    if (nextType === DeviceType.AKUVOX) {
-      this.assertAkuvoxCredentials(nextType, akuvoxConfig ?? {}, false);
+    const existingPanel =
+      nextType === DeviceType.DNAKE ? existing.dnakeConfig : existing.akuvoxConfig;
+    const panelConfig = hasPanelFields
+      ? this.buildPanelConfig(dto, existingPanel)
+      : this.parsePanelConfig(existingPanel);
+
+    if (isPanelType(nextType)) {
+      this.assertPanelCredentials(nextType, panelConfig ?? {}, false);
     }
+
+    const data: Prisma.DeviceUncheckedUpdateInput = {
+      ...rest,
+      ...(hasPanelFields && panelConfig && nextType === DeviceType.DNAKE
+        ? { dnakeConfig: panelConfig }
+        : {}),
+      ...(hasPanelFields && panelConfig && nextType === DeviceType.AKUVOX
+        ? { akuvoxConfig: panelConfig }
+        : {}),
+    };
 
     let device: Device;
     try {
-      device = await this.prisma.device.update({
-        where: { id },
-        data: {
-          ...rest,
-          ...(hasAkuvoxFields && akuvoxConfig ? { akuvoxConfig } : {}),
-        },
-      });
+      device = await this.prisma.device.update({ where: { id }, data });
     } catch (err) {
       this.rethrowKnownError(err);
     }
@@ -243,12 +259,11 @@ export class DevicesService {
       return null;
     }
 
-    // AKUVOX (or others): probe the HTTP(S) port on the device IP.
     if (!device.ipAddress) return null;
     const cfg =
-      device.akuvoxConfig && typeof device.akuvoxConfig === 'object' && !Array.isArray(device.akuvoxConfig)
-        ? (device.akuvoxConfig as AkuvoxConfig)
-        : {};
+      device.deviceType === DeviceType.DNAKE
+        ? this.parsePanelConfig(device.dnakeConfig)
+        : this.parsePanelConfig(device.akuvoxConfig);
     return { host: device.ipAddress.trim(), port: cfg.protocol === 'https' ? 443 : 80 };
   }
 
@@ -271,20 +286,17 @@ export class DevicesService {
   }
 
   private buildAkuvoxUrl(device: Device, path: string) {
-    const cfg =
-      device.akuvoxConfig && typeof device.akuvoxConfig === 'object' && !Array.isArray(device.akuvoxConfig)
-        ? (device.akuvoxConfig as AkuvoxConfig)
-        : {};
+    const cfg = this.parsePanelConfig(device.akuvoxConfig);
     const protocol = cfg.protocol || 'http';
     return `${protocol}://${device.ipAddress}${path.startsWith('/') ? path : `/${path}`}`;
   }
 
   private buildAkuvoxAuthHeader(device: Device) {
-    const cfg = this.parseAkuvoxConfig(device.akuvoxConfig);
+    const cfg = this.parsePanelConfig(device.akuvoxConfig);
     const username = cfg.username?.trim();
     const password = cfg.password?.trim();
     if (!username || !password) {
-      throw new BadRequestException(AKUVOX_CREDS_MSG);
+      throw new BadRequestException(PANEL_CREDS_MSG);
     }
     return `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`;
   }
@@ -295,6 +307,36 @@ export class DevicesService {
     });
     if (!device) throw new NotFoundException('Device not found');
 
+    if (device.deviceType === DeviceType.DNAKE) {
+      const startedAt = Date.now();
+      try {
+        const result = await this.dnake.testConnection(id);
+        const target = this.resolveHostPort(device);
+        return {
+          deviceId: device.id,
+          online: Boolean(result.ok),
+          host: target?.host ?? null,
+          port: target?.port ?? null,
+          latencyMs: Date.now() - startedAt,
+          checkedAt: new Date().toISOString(),
+          mock: Boolean(result.mock),
+          detail: result.ok ? 'DNAKE API OK' : 'DNAKE login/info failed',
+        };
+      } catch (err) {
+        const target = this.resolveHostPort(device);
+        return {
+          deviceId: device.id,
+          online: false,
+          host: target?.host ?? null,
+          port: target?.port ?? null,
+          latencyMs: Date.now() - startedAt,
+          checkedAt: new Date().toISOString(),
+          mock: false,
+          detail: err instanceof Error ? err.message : 'DNAKE unreachable',
+        };
+      }
+    }
+
     const mockMode = this.config.get<string>('AKUVOX_MOCK_MODE', 'true') === 'true';
     const timeoutMs = Number(this.config.get<string>('DEVICE_PROBE_TIMEOUT', '4000'));
     const target = this.resolveHostPort(device);
@@ -302,8 +344,7 @@ export class DevicesService {
 
     let online: boolean;
     let detail: string | null = null;
-    if (mockMode) {
-      // Simulate a short probe; treat presence of a target as reachable.
+    if (mockMode && device.deviceType === DeviceType.AKUVOX) {
       await new Promise((r) => setTimeout(r, 400));
       online = Boolean(target);
     } else if (!target) {
@@ -329,6 +370,9 @@ export class DevicesService {
         online = false;
         detail = err instanceof Error ? err.message : 'HTTP API unreachable';
       }
+    } else if (mockMode) {
+      await new Promise((r) => setTimeout(r, 400));
+      online = Boolean(target);
     } else {
       online = await this.probeTcp(target.host, target.port, timeoutMs);
     }
