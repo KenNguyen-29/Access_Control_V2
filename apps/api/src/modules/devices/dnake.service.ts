@@ -168,15 +168,26 @@ export class DnakeService {
     return Array.isArray(data) ? (data as Array<Record<string, unknown>>) : [];
   }
 
+  private normalizeName(value: string) {
+    return value.trim().toLowerCase().replace(/\s+/g, ' ');
+  }
+
   private findUserIndex(
     users: Array<Record<string, unknown>>,
     employeeCode: string,
+    fullName?: string,
   ): number | null {
+    const code = employeeCode.trim().toLowerCase();
+    const nameKey = fullName ? this.normalizeName(fullName) : '';
     const idx = users.findIndex((u) => {
-      const uid = String(u.user_id ?? u.uid ?? '');
-      const room = String(u.room ?? '');
-      const name = String(u.name ?? '');
-      return uid === employeeCode || room === employeeCode || name === employeeCode;
+      const uid = String(u.user_id ?? u.uid ?? '').trim().toLowerCase();
+      const room = String(u.room ?? '').trim().toLowerCase();
+      const name = this.normalizeName(String(u.name ?? ''));
+      if (uid === code || room === code) return true;
+      if (nameKey && name && (name === nameKey || name.includes(nameKey) || nameKey.includes(name))) {
+        return true;
+      }
+      return false;
     });
     return idx >= 0 ? idx : null;
   }
@@ -189,7 +200,7 @@ export class DnakeService {
     const cfg = this.parseConfig(device);
     const relay = cfg.relay ?? 1;
     const existing = await this.listUsers(device);
-    const index = this.findUserIndex(existing, user.employeeCode);
+    const index = this.findUserIndex(existing, user.employeeCode, user.fullName);
     const action = index === null ? '1' : '2';
 
     const form = new FormData();
@@ -311,18 +322,22 @@ export class DnakeService {
       targetZoneIds = permissions.map((p) => p.zoneId);
     }
 
-    if (targetZoneIds.length === 0) {
-      throw new BadRequestException('Nhân viên chưa được gán khu vực nào');
-    }
-
     const devices = await this.prisma.device.findMany({
       where: {
         deviceType: DeviceType.DNAKE,
         isDeleted: false,
-        zoneId: { in: targetZoneIds },
+        ...(targetZoneIds.length > 0 ? { zoneId: { in: targetZoneIds } } : {}),
       },
       include: { zone: { select: { id: true, name: true } } },
     });
+
+    if (devices.length === 0) {
+      throw new BadRequestException(
+        targetZoneIds.length === 0
+          ? 'Chưa có thiết bị DNAKE để đồng bộ'
+          : 'Nhân viên chưa được gán khu vực nào có DNAKE',
+      );
+    }
 
     const zoneNameById = new Map(permissions.map((p) => [p.zoneId, p.zone?.name ?? p.zoneId]));
 

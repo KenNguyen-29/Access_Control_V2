@@ -143,16 +143,17 @@ export class CredentialsService {
           `Auto Akuvox sync after face enroll failed for user=${user.id}: ${(err as Error).message}`,
         );
       });
-      void this.dnake.syncUserCredentials(user.id).catch((err) => {
-        this.logger.warn(
-          `Auto DNAKE sync after face enroll failed for user=${user.id}: ${(err as Error).message}`,
-        );
-      });
     } else {
       this.logger.log(
-        `Skip auto panel sync after face enroll user=${user.id} (no zone yet; provision will sync)`,
+        `Skip auto Akuvox sync after face enroll user=${user.id} (no zone yet; provision will sync)`,
       );
     }
+
+    void this.dnake.syncUserCredentials(user.id).catch((err) => {
+      this.logger.warn(
+        `Auto DNAKE sync after face enroll failed for user=${user.id}: ${(err as Error).message}`,
+      );
+    });
 
     return { credential, faceImagePath: key, photoUrl };
   }
