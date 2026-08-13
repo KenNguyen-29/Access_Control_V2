@@ -1,3 +1,4 @@
+import { randomInt } from 'crypto';
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Prisma, UserType } from '@prisma/client';
@@ -142,22 +143,13 @@ export class UsersService {
     return this.withFaceUrl(user);
   }
 
-  private async nextEmployeeCode() {
-    const prefix = (this.config.get<string>('EMPLOYEE_CODE_PREFIX', 'NV') || 'NV').trim();
-    const codePrefix = `${prefix}-`;
-    const last = await this.prisma.user.findFirst({
-      where: {
-        employeeCode: {
-          startsWith: codePrefix,
-        },
-      },
-      select: { employeeCode: true },
-      orderBy: { employeeCode: 'desc' },
-    });
-    const current = last?.employeeCode ?? '';
-    const match = current.match(new RegExp(`^${prefix}-(\\d+)$`));
-    const next = Number(match?.[1] ?? '0') + 1;
-    return `${prefix}-${String(next).padStart(4, '0')}`;
+  private nextEmployeeCode() {
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    let suffix = '';
+    for (let i = 0; i < 4; i += 1) {
+      suffix += alphabet[randomInt(alphabet.length)];
+    }
+    return `EMP${suffix}`;
   }
 
   async create(dto: CreateUserDto) {
@@ -169,12 +161,12 @@ export class UsersService {
       employeeCode: trimmedCode || undefined,
     };
 
-    for (let attempt = 0; attempt < 5; attempt += 1) {
+    for (let attempt = 0; attempt < 8; attempt += 1) {
       try {
         const user = await this.prisma.user.create({
           data: {
             ...baseData,
-            employeeCode: baseData.employeeCode || (await this.nextEmployeeCode()),
+            employeeCode: baseData.employeeCode || this.nextEmployeeCode(),
           },
           include: { department: true, contractor: true, project: true },
         });

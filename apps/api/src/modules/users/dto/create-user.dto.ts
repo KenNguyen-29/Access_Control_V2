@@ -28,7 +28,7 @@ function normalizePhone({ value }: { value: unknown }) {
 const VN_PHONE_PATTERN = /^(0|\+84|84)(3|5|7|8|9)\d{8}$/;
 
 export class CreateUserDto {
-  @ApiPropertyOptional({ description: 'Để trống để hệ thống tự sinh dạng NV-0001' })
+  @ApiPropertyOptional({ description: 'Để trống để hệ thống tự sinh dạng EMP + 4 ký tự chữ/số (vd. EMPA3K9)' })
   @IsOptional()
   @IsString()
   @MaxLength(32)

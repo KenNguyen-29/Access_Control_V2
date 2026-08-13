@@ -928,7 +928,7 @@ export default function UsersPage() {
             </div>
           ) : (
             <div className="rounded-sm border border-dashed border-border bg-muted/20 px-3 py-2 text-sm text-muted-foreground">
-              Mã nhân viên sẽ được tự sinh sau khi lưu theo dạng <span className="font-mono">NV-0001</span>.
+              Mã nhân viên sẽ được tự sinh sau khi lưu theo dạng <span className="font-mono">EMPA3K9</span>.
             </div>
           )}
           <div>
