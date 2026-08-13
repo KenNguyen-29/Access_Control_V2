@@ -125,7 +125,7 @@ export default function DashboardPage() {
         const ageMs = Date.now() - new Date(newest.eventAt).getTime();
         // Only surface as live event if it happened in the last 2 minutes.
         if (ageMs > 120_000) return;
-        if (newest.warningMessage?.toLowerCase().includes('chưa tính chấm công')) return;
+        if (newest.warningMessage?.toLowerCase().includes('quét trong vòng')) return;
         setLastEvent((prev) => {
           if (!prev) return accessLogToCheckinEvent(newest);
           const prevTs = new Date(prev.timestamp).getTime();

@@ -8,10 +8,10 @@ import {
 } from '@/lib/socket';
 import { CheckinEvent, FireEmergencyEvent } from '@acv2/shared';
 
-/** Punch-cooldown noise — do not surface on dashboard. */
+/** Same-reader punch-cooldown noise — do not surface on dashboard. */
 function isCooldownNoiseEvent(event: CheckinEvent): boolean {
   const msg = (event.warningMessage || '').toLowerCase();
-  return msg.includes('chưa tính chấm công') || msg.includes('quét trong vòng');
+  return msg.includes('quét trong vòng');
 }
 
 export function useSocket() {

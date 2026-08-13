@@ -130,7 +130,7 @@ export default function MiniAccessLog({ lastEvent }: Props) {
       .then((items) =>
         setLogs(
           items.filter(
-            (l) => !(l.warningMessage || '').toLowerCase().includes('chưa tính chấm công'),
+            (l) => !(l.warningMessage || '').toLowerCase().includes('quét trong vòng'),
           ),
         ),
       )
@@ -160,7 +160,7 @@ export default function MiniAccessLog({ lastEvent }: Props) {
     lastHandledEventKey.current = eventKey;
 
     const optimistic = checkinEventToAccessLog(lastEvent);
-    if ((optimistic.warningMessage || '').toLowerCase().includes('chưa tính chấm công')) return;
+    if ((optimistic.warningMessage || '').toLowerCase().includes('quét trong vòng')) return;
     const filters = { zoneId, deviceId, action, validity };
     if (matchesFilters(optimistic, filters)) {
       setLogs((prev) => {

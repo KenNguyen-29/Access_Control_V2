@@ -4,14 +4,13 @@ import { ConfigService } from '@nestjs/config';
 import { DnakeService } from './dnake.service';
 import { AkuvoxEventService } from '../queue/akuvox-event.service';
 
-/** DNAKE unlock log: status 0 = Success (Apifox samples); -1 = no user / failed. */
+/** DNAKE unlock log: status 0 = Success (Apifox samples); 1 = some firmwares; -1 = failed. */
 function isDnakeUnlockSuccess(status: number): boolean {
   return status === 0 || status === 1;
 }
 
-/** unlock_type 2 = Face in Apifox samples; 1 = Card; 0 may appear on some firmwares. */
-function isDnakeAttendanceUnlock(unlockType: number): boolean {
-  return unlockType === 0 || unlockType === 1 || unlockType === 2;
+function normalizeTs(ts: number): number {
+  return ts > 1e12 ? ts : ts * 1000;
 }
 
 @Injectable()
@@ -46,7 +45,7 @@ export class DnakeUnlockPoller {
 
   private async pollDevice(device: Awaited<ReturnType<DnakeService['listActiveDevices']>>[number]) {
     const cfg = this.dnake.parseConfig(device);
-    const lastTs = cfg.lastUnlockTs ?? 0;
+    const lastTs = normalizeTs(cfg.lastUnlockTs ?? 0);
 
     let logs: Awaited<ReturnType<DnakeService['fetchUnlockLogs']>>;
     try {
@@ -58,16 +57,15 @@ export class DnakeUnlockPoller {
       return;
     }
 
-    const sorted = [...logs].sort((a, b) => Number(a.ts) - Number(b.ts));
+    const sorted = [...logs].sort((a, b) => normalizeTs(Number(a.ts)) - normalizeTs(Number(b.ts)));
     let maxTs = lastTs;
 
     for (const row of sorted) {
-      const ts = Number(row.ts);
-      if (!Number.isFinite(ts) || ts <= lastTs) continue;
+      const rawTs = Number(row.ts);
+      if (!Number.isFinite(rawTs)) continue;
+      const ts = normalizeTs(rawTs);
+      if (ts <= lastTs) continue;
       maxTs = Math.max(maxTs, ts);
-
-      const unlockType = Number(row.unlock_type);
-      if (!isDnakeAttendanceUnlock(unlockType)) continue;
 
       const status = Number(row.status);
       if (!isDnakeUnlockSuccess(status)) continue;
@@ -77,8 +75,8 @@ export class DnakeUnlockPoller {
       const identity = number || name;
       if (!identity || identity.toLowerCase() === 'none') continue;
 
-      // ts may be unix seconds or ms
-      const eventAt = new Date(ts > 1e12 ? ts : ts * 1000);
+      const unlockType = Number(row.unlock_type);
+      const eventAt = new Date(ts);
       const sourceEventId = `dnake:${device.id}:${ts}:${identity}`;
 
       try {
@@ -93,6 +91,10 @@ export class DnakeUnlockPoller {
         if (result && 'processed' in result && result.processed) {
           this.logger.log(
             `DNAKE ingested device=${device.code} identity=${identity} ts=${ts} unlock_type=${unlockType}`,
+          );
+        } else if (result && 'ignored' in result && result.ignored) {
+          this.logger.log(
+            `DNAKE skipped device=${device.code} identity=${identity} reason=${String(result.reason ?? 'ignored')}`,
           );
         }
       } catch (err) {

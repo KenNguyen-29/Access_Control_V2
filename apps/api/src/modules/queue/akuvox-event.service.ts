@@ -286,12 +286,14 @@ export class AkuvoxEventService {
   }) {
     const { device, user, eventAt, sourceEventId, rawPayload, pendingSnapshot } = params;
 
-    // Same person scanned again within 5 minutes → skip notify (Sự kiện / toast) and punch.
+    // Same person + same device within 5 minutes → skip spam.
+    // Different device (Akuvox vs DNAKE) still notifies monitoring.
     if (user?.id) {
       const cooldownSince = new Date(eventAt.getTime() - FACE_SCAN_COOLDOWN_MS);
       const recent = await this.prisma.accessLog.findFirst({
         where: {
           userId: user.id,
+          deviceId: device.id,
           eventAt: { gte: cooldownSince, lte: eventAt },
           NOT: { sourceEventId },
         },
@@ -301,7 +303,7 @@ export class AkuvoxEventService {
       if (recent) {
         this.metrics.markProcessed({ skipped: true, reason: 'cooldown_5m' });
         this.logger.log(
-          `Skipped face scan cooldown_5m user=${user.employeeCode} previous=${recent.id} at=${recent.eventAt.toISOString()}`,
+          `Skipped face scan cooldown_5m user=${user.employeeCode} device=${device.id} previous=${recent.id} at=${recent.eventAt.toISOString()}`,
         );
         return {
           ignored: true,
@@ -320,23 +322,22 @@ export class AkuvoxEventService {
       punchWarning = params.deniedStatus?.trim() || 'Access denied';
     } else if (user && !params.skipPunch) {
       const punch = await this.attendance.processPunch(user.id, eventAt);
-      if (punch.outcome === 'IGNORED') {
-        this.metrics.markProcessed({ skipped: true, reason: punch.reason ?? 'ignored' });
-        this.logger.log(
-          `Skipped notify punch ignored reason=${punch.reason ?? '—'} user=${user.employeeCode}`,
-        );
-        return {
-          ignored: true,
-          reason: punch.reason ?? 'IGNORED',
-          attendanceId: punch.record?.id,
-        };
-      }
       attendanceId = punch.record?.id;
-      punchWarning = punch.message;
-      action = this.toPrismaAction(punch);
-
-      if (punch.outcome === 'CHECK_IN' || punch.outcome === 'CHECK_OUT') {
-        await this.upsertPresence(user.id, action, device.zoneId, eventAt);
+      if (punch.outcome === 'IGNORED') {
+        action = PrismaAccessAction.UNKNOWN;
+        punchWarning =
+          punch.reason === 'NO_SHIFT'
+            ? 'Chưa gán ca — không tính chấm công'
+            : 'Sự kiện ra vào — không tính thêm chấm công';
+        this.logger.log(
+          `Notify without punch reason=${punch.reason ?? '—'} user=${user.employeeCode} device=${device.name}`,
+        );
+      } else {
+        punchWarning = punch.message;
+        action = this.toPrismaAction(punch);
+        if (punch.outcome === 'CHECK_IN' || punch.outcome === 'CHECK_OUT') {
+          await this.upsertPresence(user.id, action, device.zoneId, eventAt);
+        }
       }
     } else if (!user) {
       action = PrismaAccessAction.UNKNOWN;
