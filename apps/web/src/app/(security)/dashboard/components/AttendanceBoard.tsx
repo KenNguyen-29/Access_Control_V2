@@ -32,6 +32,7 @@ const STATUS_OPTIONS = [
   { value: '', label: 'Tất cả trạng thái' },
   { value: 'LATE', label: 'Đi muộn' },
   { value: 'ON_TIME', label: 'Đúng giờ' },
+  { value: 'EARLY_LEAVE', label: 'Về sớm' },
   { value: 'OVERTIME', label: 'Tăng ca' },
   { value: 'ABSENT', label: 'Vắng' },
 ];
@@ -162,7 +163,7 @@ export default function AttendanceBoard({ lastEvent }: Props) {
                 {r.checkInAt ? ` · ${new Date(r.checkInAt).toLocaleTimeString('vi-VN')}` : ''}
               </p>
             </div>
-            <StatusBadge status={r.status} />
+            <StatusBadge status={(r.lateMinutes ?? 0) > 0 ? 'LATE' : r.status} />
           </div>
         ))}
       </div>

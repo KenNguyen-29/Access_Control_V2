@@ -132,6 +132,7 @@ const ATTENDANCE_STATUS_OPTIONS = [
   { value: '', label: 'Tất cả trạng thái' },
   { value: 'ON_TIME', label: 'Đúng giờ' },
   { value: 'LATE', label: 'Đi muộn' },
+  { value: 'EARLY_LEAVE', label: 'Về sớm' },
   { value: 'OVERTIME', label: 'Tăng ca' },
   { value: 'ABSENT', label: 'Vắng' },
 ] as const;
@@ -891,7 +892,7 @@ export default function ReportsPage() {
                             </Badge>
                           </td>
                           <td className="p-2">
-                            <StatusBadge status={r.status} />
+                            <StatusBadge status={r.lateMinutes > 0 ? 'LATE' : r.status} />
                           </td>
                         </tr>
                       )),

@@ -171,9 +171,9 @@ export function computeAttendanceStatus(params: {
 }): AttendanceStatus {
   if (params.explicit) return params.explicit;
   if (!params.checkInAt && !params.checkOutAt) return AttendanceStatus.ABSENT;
+  if (params.lateMinutes > 0) return AttendanceStatus.LATE;
   if (params.otMinutes > 0) return AttendanceStatus.OVERTIME;
   if (params.earlyLeaveMinutes > 0) return AttendanceStatus.EARLY_LEAVE;
-  if (params.lateMinutes > 0) return AttendanceStatus.LATE;
   return AttendanceStatus.ON_TIME;
 }
 

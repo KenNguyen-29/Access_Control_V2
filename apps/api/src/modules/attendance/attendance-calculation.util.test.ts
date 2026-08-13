@@ -80,7 +80,7 @@ describe('attendance-calculation overnight', () => {
     );
     assert.equal(m.earlyLeaveMinutes, 8); // 17:00 - 16:52
     assert.equal(m.workedMinutes, 86); // 2h26 - 60 break
-    assert.equal(m.status, AttendanceStatus.EARLY_LEAVE);
+    assert.equal(m.status, AttendanceStatus.LATE); // late wins over early leave
   });
 
   it('day shift on-time worked minutes exclude break', () => {
@@ -109,6 +109,20 @@ describe('attendance-calculation overnight', () => {
     });
     assert.equal(r.earlyLeaveMinutes, 0);
     assert.equal(r.otMinutes, 0);
+  });
+
+  it('late check-in + early checkout stays LATE (not EARLY_LEAVE / on-time)', () => {
+    const checkIn = atVn(2026, 8, 13, 10, 35);
+    const checkOut = atVn(2026, 8, 13, 10, 57);
+    const m = computeMetricsFromTimes(
+      dayShift,
+      checkIn,
+      checkOut,
+      resolveWorkDateForPunch(dayShift, checkIn),
+    );
+    assert.ok(m.lateMinutes >= 150);
+    assert.ok(m.earlyLeaveMinutes > 0);
+    assert.equal(m.status, AttendanceStatus.LATE);
   });
 
   it('09:46 VN vs 08:00 shift is late even when stored as UTC instant', () => {
