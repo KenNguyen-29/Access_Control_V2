@@ -13,6 +13,7 @@ import { CredentialsService } from '../credentials/credentials.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { ProvisionUserDto } from './dto/provision-user.dto';
+import { TransferUserProjectDto } from './dto/transfer-user-project.dto';
 import { UsersIdsQueryDto, UsersQueryDto } from './dto/users-query.dto';
 import {
   basenamePath,
@@ -346,6 +347,161 @@ export class UsersService {
       autoSync,
       syncByZone,
       synced: syncByZone.reduce((n, z) => n + z.synced, 0),
+    };
+  }
+
+  /** Move CONTRACTOR to another project: revoke old zones, assign one new zone, optional shift, sync Face. */
+  async transferProject(
+    userId: string,
+    dto: TransferUserProjectDto,
+    byAccountId?: string,
+  ) {
+    const user = await this.prisma.user.findFirst({
+      where: { id: userId, isDeleted: false },
+    });
+    if (!user) throw new NotFoundException('User not found');
+    if (user.userType !== UserType.CONTRACTOR) {
+      throw new BadRequestException('Chỉ điều chuyển được công nhân nhà thầu (CONTRACTOR)');
+    }
+
+    const toProject = await this.prisma.project.findFirst({
+      where: { id: dto.toProjectId, isDeleted: false },
+    });
+    if (!toProject) throw new BadRequestException('Dự án đích không tồn tại');
+
+    if (user.projectId && user.projectId === dto.toProjectId) {
+      throw new BadRequestException('Người dùng đã thuộc dự án đích');
+    }
+
+    const zone = await this.prisma.accessZone.findFirst({
+      where: { id: dto.zoneId, isDeleted: false },
+    });
+    if (!zone) throw new BadRequestException('Khu vực không tồn tại');
+
+    if (dto.workShiftId) {
+      const shift = await this.prisma.workShift.findFirst({
+        where: { id: dto.workShiftId, isDeleted: false },
+      });
+      if (!shift) throw new BadRequestException('Ca làm việc không tồn tại');
+    }
+
+    const fromProjectId = user.projectId;
+
+    const oldPerms = await this.prisma.userAccessPermission.findMany({
+      where: { userId, isDeleted: false },
+      select: { id: true, zoneId: true },
+    });
+
+    await this.prisma.$transaction(async (tx) => {
+      if (oldPerms.length > 0) {
+        await tx.userAccessPermission.updateMany({
+          where: { userId, isDeleted: false },
+          data: { isDeleted: true },
+        });
+      }
+
+      await tx.user.update({
+        where: { id: userId },
+        data: { projectId: dto.toProjectId },
+      });
+
+      const existingPerm = await tx.userAccessPermission.findFirst({
+        where: { userId, zoneId: dto.zoneId },
+      });
+      if (existingPerm) {
+        await tx.userAccessPermission.update({
+          where: { id: existingPerm.id },
+          data: { isDeleted: false, validFrom: null, validTo: null },
+        });
+      } else {
+        await tx.userAccessPermission.create({
+          data: { userId, zoneId: dto.zoneId },
+        });
+      }
+
+      await tx.userProjectTransfer.create({
+        data: {
+          userId,
+          fromProjectId,
+          toProjectId: dto.toProjectId,
+          byAccountId: byAccountId || null,
+          note: dto.note?.trim() || null,
+        },
+      });
+
+      if (dto.workShiftId) {
+        const today = new Date();
+        const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+        const todayUtc = new Date(`${todayStr}T00:00:00.000Z`);
+        await tx.employeeShift.updateMany({
+          where: {
+            userId,
+            assignmentType: 'FIXED',
+            OR: [{ endDate: null }, { endDate: { gte: todayUtc } }],
+          },
+          data: { endDate: todayUtc },
+        });
+        await tx.employeeShift.create({
+          data: {
+            userId,
+            workShiftId: dto.workShiftId,
+            startDate: todayUtc,
+            endDate: null,
+            assignmentType: 'FIXED',
+          },
+        });
+      }
+    });
+
+    const [akuvoxResult, dnakeResult] = await Promise.all([
+      this.akuvox.syncUserCredentials(userId, dto.zoneId).catch((err) => ({
+        synced: 0,
+        devices: 0,
+        results: [
+          {
+            deviceId: dto.zoneId,
+            deviceName: zone.name,
+            zoneId: dto.zoneId,
+            zoneName: zone.name,
+            ok: false,
+            error: err instanceof Error ? err.message : 'akuvox error',
+          },
+        ],
+        mock: false,
+      })),
+      this.dnake.syncUserCredentials(userId, dto.zoneId).catch((err) => ({
+        synced: 0,
+        devices: 0,
+        results: [
+          {
+            deviceId: dto.zoneId,
+            deviceName: zone.name,
+            zoneId: dto.zoneId,
+            zoneName: zone.name,
+            ok: false,
+            error: err instanceof Error ? err.message : 'dnake error',
+          },
+        ],
+        mock: false,
+      })),
+    ]);
+
+    const updated = await this.findOne(userId);
+    return {
+      user: updated,
+      fromProjectId,
+      toProjectId: dto.toProjectId,
+      zoneId: dto.zoneId,
+      revokedZoneIds: oldPerms.map((p) => p.zoneId),
+      sync: {
+        synced: (akuvoxResult.synced ?? 0) + (dnakeResult.synced ?? 0),
+        devices: (akuvoxResult.devices ?? 0) + (dnakeResult.devices ?? 0),
+        results: [...(akuvoxResult.results ?? []), ...(dnakeResult.results ?? [])],
+        mock: Boolean(
+          ('mock' in akuvoxResult && akuvoxResult.mock) ||
+            ('mock' in dnakeResult && dnakeResult.mock),
+        ),
+      },
     };
   }
 

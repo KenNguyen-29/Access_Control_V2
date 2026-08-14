@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AttendanceCalculationService } from '../attendance/attendance-calculation.service';
+import { attachPunchLocations } from '../attendance/punch-location.util';
 
 export interface StatsOverview {
   users: number;
@@ -67,6 +68,8 @@ export interface WeeklyRow {
   workedMinutes: number;
   salaryCoefficient: number;
   status: string;
+  zoneName: string | null;
+  deviceName: string | null;
 }
 
 export interface WeeklyTimesheet {
@@ -331,7 +334,8 @@ export class StatsService {
     });
 
     const policy = await this.calc.getPolicyOptions();
-    const rows: WeeklyRow[] = records.map((r) => {
+    const withLocation = await attachPunchLocations(this.prisma, records);
+    const rows: WeeklyRow[] = withLocation.map((r) => {
       const effective = r.workShift
         ? this.calc.applyLateGraceFloor(r.workShift, policy.lateGraceFloor)
         : null;
@@ -364,6 +368,8 @@ export class StatsService {
         workedMinutes: metrics.workedMinutes,
         salaryCoefficient: r.workShift?.salaryCoefficient ?? 1,
         status: metrics.status,
+        zoneName: r.punchLocation?.zoneName ?? null,
+        deviceName: r.punchLocation?.deviceName ?? null,
       };
     });
 

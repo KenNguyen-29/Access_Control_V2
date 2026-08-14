@@ -263,7 +263,7 @@ export default function DevicesPage() {
         : null;
       if (duplicateZone) {
         throw new ApiError(
-          `Khu vực "${zoneNameById.get(form.zoneId) ?? form.zoneId}" đã có ${form.deviceType} (${duplicateZone.name})`,
+          `Khu vực "${zoneNameById.get(form.zoneId) ?? form.zoneId}" đã có ${form.deviceType} (${duplicateZone.name}). Mỗi máy chấm công chỉ gắn 1 khu vực.`,
           409,
         );
       }
@@ -717,16 +717,27 @@ export default function DevicesPage() {
                   ? '— Chọn khu vực —'
                   : '— Không gắn khu vực —'}
               </option>
-              {zones.map((z) => (
-                <option key={z.id} value={z.id}>
-                  {z.name}
-                </option>
-              ))}
+              {zones.map((z) => {
+                const takenBy = isAttendancePanel(form.deviceType)
+                  ? items.find(
+                      (d) =>
+                        d.deviceType === form.deviceType &&
+                        d.zoneId === z.id &&
+                        d.id !== editing?.id,
+                    )
+                  : null;
+                return (
+                  <option key={z.id} value={z.id} disabled={Boolean(takenBy)}>
+                    {z.name}
+                    {takenBy ? ` — đã có ${form.deviceType} (${takenBy.name})` : ''}
+                  </option>
+                );
+              })}
             </Select>
             <FieldError message={fieldErrors.zoneId} />
-            {isAttendancePanel(form.deviceType) && form.zoneId && (
+            {isAttendancePanel(form.deviceType) && (
               <p className="mt-1 text-xs text-muted-foreground">
-                Mỗi khu vực nên có một đầu đọc cùng loại — FaceID đồng bộ theo khu vực.
+                Mỗi máy chấm công chỉ gắn 1 khu vực. Mỗi khu vực chỉ 1 máy {form.deviceType}.
               </p>
             )}
           </div>

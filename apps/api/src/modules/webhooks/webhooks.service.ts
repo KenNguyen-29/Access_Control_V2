@@ -10,6 +10,7 @@ import { AkuvoxDoorLogPayload } from './akuvox-door-log.util';
 export interface AkuvoxDoorLogJobData {
   dto: AkuvoxDoorLogPayload;
   clientIp: string;
+  deviceCode?: string;
   receivedAt: string;
 }
 
@@ -49,23 +50,24 @@ export class WebhooksService {
     return { jobId: 'sync', mode: 'sync' as const, result };
   }
 
-  async processDoorLog(dto: AkuvoxDoorLogPayload, clientIp: string) {
+  async processDoorLog(dto: AkuvoxDoorLogPayload, clientIp: string, deviceCode?: string) {
     const data: AkuvoxDoorLogJobData = {
       dto,
       clientIp,
+      deviceCode: deviceCode?.trim() || undefined,
       receivedAt: new Date().toISOString(),
     };
 
     if (this.akuvoxQueue) {
       const job = await this.akuvoxQueue.add('process-door-log', data);
       this.metrics.markWebhook({ mode: 'queue', jobId: job.id != null ? String(job.id) : null });
-      this.logger.log(`Enqueued door_log job id=${job.id} clientIp=${clientIp}`);
+      this.logger.log(`Enqueued door_log job id=${job.id} clientIp=${clientIp} code=${deviceCode ?? '—'}`);
       return { jobId: job.id, mode: 'queue' as const };
     }
 
     this.metrics.markWebhook({ mode: 'sync', jobId: 'sync' });
-    const result = await this.events.processDoorLog(dto, clientIp);
-    this.logger.log(`Processed door_log sync clientIp=${clientIp}`);
+    const result = await this.events.processDoorLog(dto, clientIp, deviceCode);
+    this.logger.log(`Processed door_log sync clientIp=${clientIp} code=${deviceCode ?? '—'}`);
     return { jobId: 'sync', mode: 'sync' as const, result };
   }
 }

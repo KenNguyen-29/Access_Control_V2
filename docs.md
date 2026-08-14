@@ -105,32 +105,49 @@ Kiến trúc theo sơ đồ khách: **máy Face tại công trường chỉ gử
 | Khái niệm | Trong soft |
 |-----------|------------|
 | Công trường | `AccessZone` (Settings → Zones) |
-| Máy nhận diện | Device `AKUVOX` gắn `zoneId` của công trường (1 Face / zone) |
+| Máy nhận diện | Device `AKUVOX` / `DNAKE` gắn `zoneId` (1 panel cùng loại / zone) |
 | Tripod / cổng xoay | Thiết bị vật lý do **relay** của máy Face điều khiển — không có device type riêng |
-| VPN nội bộ | Hạ tầng mạng (site ↔ trung tâm). Soft chỉ cần API reachable và webhook trỏ đúng IP server |
+| VPN nội bộ | Hạ tầng mạng (site ↔ trung tâm). Soft chỉ cần API reachable và panel reachable đúng chiều |
+
+### Chiều VPN theo loại máy
+
+| Loại | Chiều kết nối | Ghi chú |
+|------|---------------|--------|
+| **Akuvox** | **Công trường → API trung tâm :8080** | Panel gọi webhook/door_log tới server. Firewall HQ: inbound TCP **8080** từ dải VPN site. Action URL nên kèm `deviceCode` (tránh nhầm khi NAT chung IP). |
+| **DNAKE** | **API trung tâm → IP panel** | Server poll `/api/v1/logs/unlock` tới IP panel trên VPN. Firewall site: cho phép HQ gọi HTTP panel; không cần webhook DNAKE Cloud. |
 
 ### Checklist mỗi công trường mới
 
 1. Tạo zone (tên công trường) trên UI **Settings → Zones**.
-2. Đăng ký Device Akuvox: IP trên LAN/VPN, `code`, `zoneId`, username/password HTTP API.
-3. Trên web Akuvox → **Setting → Action URL** (Door / Relay Triggered), bật và dán:
+2. Đăng ký Device Akuvox hoặc DNAKE: IP trên LAN/VPN, `code`, `zoneId`, username/password HTTP API.
+3. **Akuvox** — web panel → **Setting → Action URL** (Door / Relay Triggered), bật và dán:
 
 ```text
-http://<IP_SERVER_VPN>:8080/api/webhooks/akuvox?ip=$ip&active_user=$active_user&relay1status=$relay1status
+http://<IP_SERVER_VPN>:8080/api/webhooks/akuvox?ip=$ip&active_user=$active_user&relay1status=$relay1status&deviceCode=<MA_THIET_BI>
 ```
+
+Door log (nếu dùng): cùng host, path `/api/webhooks/akuvox/door-log` + query `deviceCode`.
 
 4. Trên server trung tâm (`.env` / `apps/api/.env`):
    - `API_PUBLIC_URL=http://<IP_SERVER_VPN>:8080` (máy Face tải ảnh mặt từ URL này)
    - `AKUVOX_MOCK_MODE=false`
-   - Firewall / Windows Firewall: mở **inbound TCP 8080** từ dải VPN của công trường
-5. Gán quyền zone cho nhân viên (provision) → sync face xuống máy thuộc zone đó.
-6. (Tuỳ chọn) Thêm Camera + mapping Akuvox↔Camera nếu cần live view trên màn Giám sát.
+   - `DNAKE_POLL_ENABLED=true` (nếu có DNAKE)
+   - Firewall: Akuvox → mở **inbound TCP 8080**; DNAKE → HQ phải route tới IP panel
+5. Gán quyền zone cho nhân viên (provision, mặc định **1 khu**) → sync face xuống máy thuộc zone đó.
+6. (Tuỳ chọn) Camera + mapping đầu đọc↔camera để snapshot vào/ra trên màn Giám sát.
+
+### Vận hành / báo cáo
+
+- Checklist ca đêm: [`docs/night-shift-ops-checklist.md`](./docs/night-shift-ops-checklist.md)
+- Test 12 làn / NAT: [`docs/load-test-12-lanes.md`](./docs/load-test-12-lanes.md)
+- **Sự kiện** (`AccessLog`): `deviceId`, `zoneId`, `projectId` (snapshot lúc quét)
+- **Báo cáo tuần / chi tiết**: cột khu vực + tên máy gắn theo lần vào gần nhất
+- Điều chuyển CN nhà thầu: Nhân sự → nút điều chuyển dự án (lịch sử `UserProjectTransfer`)
 
 ### Lưu ý báo cáo
 
 - **Sự kiện ra vào** (`AccessLog`) gắn `deviceId` + `zoneId` → lọc theo công trường trên Giám sát / nhật ký.
-- **Chấm công ngày** (`AttendanceRecord`) vẫn theo nhân viên / ngày tại trung tâm (không tách giờ công theo site) — đúng mô hình “xử lý tại server tập trung”.
-
+- **Chấm công ngày** (`AttendanceRecord`) vẫn theo nhân viên / ngày tại trung tâm; địa điểm xem qua AccessLog / cột khu vực–máy trên báo cáo.
 ## API smoke tests
 
 ```bash

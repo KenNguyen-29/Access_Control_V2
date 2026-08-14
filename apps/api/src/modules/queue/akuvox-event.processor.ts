@@ -6,7 +6,7 @@ import { AkuvoxDoorLogJobData } from '../webhooks/webhooks.service';
 import { AKUVOX_QUEUE } from './queue.constants';
 import { AkuvoxEventService } from './akuvox-event.service';
 
-@Processor(AKUVOX_QUEUE)
+@Processor(AKUVOX_QUEUE, { concurrency: 8 })
 export class AkuvoxEventProcessor extends WorkerHost {
   private readonly logger = new Logger(AkuvoxEventProcessor.name);
 
@@ -21,6 +21,7 @@ export class AkuvoxEventProcessor extends WorkerHost {
         ? await this.events.processDoorLog(
             (job.data as AkuvoxDoorLogJobData).dto,
             (job.data as AkuvoxDoorLogJobData).clientIp,
+            (job.data as AkuvoxDoorLogJobData).deviceCode,
           )
         : await this.events.handle(job.data as AkuvoxWebhookJobData);
     this.logger.log(`Worker finished job id=${job.id}`);

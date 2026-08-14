@@ -15,7 +15,7 @@ function FaceThumb({
   snapshotUrl?: string;
   invalid?: boolean;
 }) {
-  const src = faceImageUrl || snapshotUrl;
+  const src = snapshotUrl || faceImageUrl;
   const initial = (name?.trim()?.[0] || '?').toUpperCase();
 
   return (
@@ -33,11 +33,11 @@ function FaceThumb({
           <span className="text-2xl font-bold text-slate-400">{initial}</span>
         </div>
       )}
-      {faceImageUrl && snapshotUrl && faceImageUrl !== snapshotUrl && (
+      {snapshotUrl && faceImageUrl && snapshotUrl !== faceImageUrl && (
         // eslint-disable-next-line @next/next/no-img-element
         <img
-          src={snapshotUrl}
-          alt="Snapshot"
+          src={faceImageUrl}
+          alt="Enroll"
           className="absolute bottom-1 right-1 h-7 w-7 rounded border border-white object-cover shadow-sm"
         />
       )}

@@ -20,6 +20,7 @@ import {
   workbookToBuffer,
   type AttendanceExcelColumnKey,
 } from './attendance-excel.util';
+import { attachPunchLocations } from './punch-location.util';
 
 export type AttendanceImportResult = {
   created: number;
@@ -123,88 +124,95 @@ export class AttendanceService {
     }
 
     const effectiveShift = this.calc.applyLateGraceFloor(shift, policy.lateGraceFloor);
-    const existing = await this.prisma.attendanceRecord.findUnique({
-      where: { userId_date: { userId, date: workDate } },
-    });
+    const workDateKey = workDate.toISOString().slice(0, 10);
 
-    if (!existing?.checkInAt) {
-      const lateMinutes = this.calc.computeLateMinutes(effectiveShift, eventTime);
+    return this.prisma.$transaction(async (tx) => {
+      // Serialize punches per user + work date (12 concurrent lanes / double swipe).
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`punch:${userId}:${workDateKey}`}))`;
 
-      const record = await this.prisma.attendanceRecord.upsert({
+      const existing = await tx.attendanceRecord.findUnique({
         where: { userId_date: { userId, date: workDate } },
-        create: {
-          userId,
-          workShiftId: shift.id,
-          date: workDate,
-          checkInAt: eventTime,
-          lateMinutes,
-          status: lateMinutes > 0 ? AttendanceStatus.LATE : AttendanceStatus.ON_TIME,
+      });
+
+      if (!existing?.checkInAt) {
+        const lateMinutes = this.calc.computeLateMinutes(effectiveShift, eventTime);
+
+        const record = await tx.attendanceRecord.upsert({
+          where: { userId_date: { userId, date: workDate } },
+          create: {
+            userId,
+            workShiftId: shift.id,
+            date: workDate,
+            checkInAt: eventTime,
+            lateMinutes,
+            status: lateMinutes > 0 ? AttendanceStatus.LATE : AttendanceStatus.ON_TIME,
+          },
+          update: {
+            checkInAt: eventTime,
+            workShiftId: shift.id,
+            lateMinutes,
+            checkOutAt: null,
+            earlyLeaveMinutes: 0,
+            otMinutes: 0,
+            status: lateMinutes > 0 ? AttendanceStatus.LATE : AttendanceStatus.ON_TIME,
+          },
+        });
+
+        return { outcome: 'CHECK_IN' as const, record, cooldownMinutes };
+      }
+
+      if (existing.checkOutAt) {
+        return {
+          outcome: 'IGNORED' as const,
+          record: existing,
+          reason: 'ALREADY_COMPLETE' as const,
+          cooldownMinutes,
+          message: 'Đã chấm công xong hôm nay',
+        };
+      }
+
+      const elapsedMs = eventTime.getTime() - existing.checkInAt.getTime();
+      if (elapsedMs < cooldownMinutes * 60 * 1000) {
+        return {
+          outcome: 'IGNORED' as const,
+          record: existing,
+          reason: 'COOLDOWN' as const,
+          cooldownMinutes,
+          message: `Quét trong vòng ${cooldownMinutes} phút, chưa tính chấm công`,
+        };
+      }
+
+      const { earlyLeaveMinutes, otMinutes } = this.calc.computeEarlyLeaveAndOt(
+        effectiveShift,
+        eventTime,
+        {
+          earlyLeaveGraceMinutes: policy.earlyLeaveGraceMinutes,
+          otAfterMinutes: policy.otAfterMinutes,
         },
-        update: {
-          checkInAt: eventTime,
+      );
+
+      const lateMinutes = existing.lateMinutes ?? 0;
+      const status = this.calc.computeStatus({
+        lateMinutes,
+        earlyLeaveMinutes,
+        otMinutes,
+        checkInAt: existing.checkInAt,
+        checkOutAt: eventTime,
+      });
+
+      const record = await tx.attendanceRecord.update({
+        where: { id: existing.id },
+        data: {
+          checkOutAt: eventTime,
           workShiftId: shift.id,
-          lateMinutes,
-          checkOutAt: null,
-          earlyLeaveMinutes: 0,
-          otMinutes: 0,
-          status: lateMinutes > 0 ? AttendanceStatus.LATE : AttendanceStatus.ON_TIME,
+          earlyLeaveMinutes,
+          otMinutes,
+          status,
         },
       });
 
-      return { outcome: 'CHECK_IN', record, cooldownMinutes };
-    }
-
-    if (existing.checkOutAt) {
-      return {
-        outcome: 'IGNORED',
-        record: existing,
-        reason: 'ALREADY_COMPLETE',
-        cooldownMinutes,
-        message: 'Đã chấm công xong hôm nay',
-      };
-    }
-
-    const elapsedMs = eventTime.getTime() - existing.checkInAt.getTime();
-    if (elapsedMs < cooldownMinutes * 60 * 1000) {
-      return {
-        outcome: 'IGNORED',
-        record: existing,
-        reason: 'COOLDOWN',
-        cooldownMinutes,
-        message: `Quét trong vòng ${cooldownMinutes} phút, chưa tính chấm công`,
-      };
-    }
-
-    const { earlyLeaveMinutes, otMinutes } = this.calc.computeEarlyLeaveAndOt(
-      effectiveShift,
-      eventTime,
-      {
-        earlyLeaveGraceMinutes: policy.earlyLeaveGraceMinutes,
-        otAfterMinutes: policy.otAfterMinutes,
-      },
-    );
-
-    const lateMinutes = existing.lateMinutes ?? 0;
-    const status = this.calc.computeStatus({
-      lateMinutes,
-      earlyLeaveMinutes,
-      otMinutes,
-      checkInAt: existing.checkInAt,
-      checkOutAt: eventTime,
+      return { outcome: 'CHECK_OUT' as const, record, cooldownMinutes };
     });
-
-    const record = await this.prisma.attendanceRecord.update({
-      where: { id: existing.id },
-      data: {
-        checkOutAt: eventTime,
-        workShiftId: shift.id,
-        earlyLeaveMinutes,
-        otMinutes,
-        status,
-      },
-    });
-
-    return { outcome: 'CHECK_OUT', record, cooldownMinutes };
   }
 
   async findRecords(
@@ -274,7 +282,8 @@ export class AttendanceService {
       this.prisma.attendanceRecord.count({ where }),
     ]);
 
-    return { items, total, page, pageSize };
+    const withLocation = await attachPunchLocations(this.prisma, items);
+    return { items: withLocation, total, page, pageSize };
   }
 
   findAccessLogs(query: {

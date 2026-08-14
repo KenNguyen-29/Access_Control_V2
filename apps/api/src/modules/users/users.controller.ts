@@ -27,6 +27,7 @@ import { UsersService } from './users.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { ProvisionUserDto } from './dto/provision-user.dto';
+import { TransferUserProjectDto } from './dto/transfer-user-project.dto';
 import { UsersIdsQueryDto, UsersQueryDto } from './dto/users-query.dto';
 import { sendXlsx } from './users-excel.util';
 
@@ -113,6 +114,22 @@ export class UsersController {
   async provision(@Param('id') id: string, @Body() dto: ProvisionUserDto) {
     const result = await this.usersService.provision(id, dto);
     return successResponse(result, 'Đã cấp quyền khu vực');
+  }
+
+  @Post(':id/transfer-project')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.HR)
+  async transferProject(
+    @Param('id') id: string,
+    @Body() dto: TransferUserProjectDto,
+    @CurrentUser() account: JwtPayload,
+  ) {
+    const existing = await this.usersService.findOne(id);
+    const scope = this.projectScope.scopeFromUser(account);
+    this.projectScope.assertProjectInScope(scope, existing.projectId);
+    this.projectScope.assertProjectInScope(scope, dto.toProjectId);
+    const result = await this.usersService.transferProject(id, dto, account.sub);
+    return successResponse(result, 'Đã điều chuyển dự án');
   }
 
   @Patch(':id')

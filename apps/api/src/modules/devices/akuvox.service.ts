@@ -292,8 +292,25 @@ export class AkuvoxService {
     });
 
     try {
+      const zoneId = device.zoneId;
+      if (!zoneId) {
+        throw new BadRequestException(
+          'Thiết bị chưa gắn khu vực — không đồng bộ credential',
+        );
+      }
+
+      const permittedUserIds = await this.prisma.userAccessPermission.findMany({
+        where: { zoneId, isDeleted: false },
+        select: { userId: true },
+      });
+      const userIdSet = new Set(permittedUserIds.map((p) => p.userId));
+
       const credentials = await this.prisma.credential.findMany({
-        where: { isDeleted: false, isActive: true },
+        where: {
+          isDeleted: false,
+          isActive: true,
+          userId: { in: [...userIdSet] },
+        },
         include: { user: true },
         take: 500,
       });

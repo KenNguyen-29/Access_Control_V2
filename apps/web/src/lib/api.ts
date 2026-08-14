@@ -310,6 +310,12 @@ export type AttendanceRecord = {
   otMinutes?: number;
   user?: User;
   workShift?: WorkShift | null;
+  punchLocation?: {
+    zoneId: string | null;
+    zoneName: string | null;
+    deviceId: string | null;
+    deviceName: string | null;
+  } | null;
 };
 
 export type AccessLog = {
@@ -493,6 +499,42 @@ export async function provisionUser(
   data: { zoneIds: string[]; autoSync?: boolean },
 ) {
   return apiRequest<UserProvisionResult>(`/users/${userId}/provision`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export type UserProjectTransferResult = {
+  user: User;
+  fromProjectId: string | null;
+  toProjectId: string;
+  zoneId: string;
+  revokedZoneIds: string[];
+  sync: {
+    synced: number;
+    devices: number;
+    results: Array<{
+      deviceId: string;
+      deviceName: string;
+      zoneId: string | null;
+      zoneName?: string;
+      ok: boolean;
+      error?: string;
+    }>;
+    mock?: boolean;
+  };
+};
+
+export async function transferUserProject(
+  userId: string,
+  data: {
+    toProjectId: string;
+    zoneId: string;
+    workShiftId?: string;
+    note?: string;
+  },
+) {
+  return apiRequest<UserProjectTransferResult>(`/users/${userId}/transfer-project`, {
     method: 'POST',
     body: JSON.stringify(data),
   });
@@ -826,6 +868,8 @@ export type WeeklyRow = {
   workedMinutes: number;
   salaryCoefficient: number;
   status: string;
+  zoneName?: string | null;
+  deviceName?: string | null;
 };
 
 export type WeeklyTimesheet = {

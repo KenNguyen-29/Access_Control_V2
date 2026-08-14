@@ -68,6 +68,69 @@ export class DevicesService {
     }
   }
 
+  /** Akuvox panels behind the same NAT must not share IP — door_log falls back to client IP. */
+  private async assertUniqueAkuvoxIp(params: {
+    deviceType: DeviceType;
+    ipAddress?: string | null;
+    excludeDeviceId?: string;
+  }) {
+    if (params.deviceType !== DeviceType.AKUVOX) return;
+    const ip = params.ipAddress?.trim();
+    if (!ip) return;
+
+    const other = await this.prisma.device.findFirst({
+      where: {
+        isDeleted: false,
+        deviceType: DeviceType.AKUVOX,
+        ipAddress: ip,
+        ...(params.excludeDeviceId ? { id: { not: params.excludeDeviceId } } : {}),
+      },
+      select: { name: true, code: true },
+    });
+    if (other) {
+      throw new BadRequestException(
+        `IP ${ip} đã dùng cho máy Akuvox ${other.name} (${other.code}). ` +
+          `Hai máy cùng NAT cần mã thiết bị trên Action URL webhook (deviceCode), không dùng chung IP.`,
+      );
+    }
+  }
+
+  /** Attendance panels: exactly one zone, and that zone cannot already have another panel of the same type. */
+  private async assertAttendanceZoneAssignment(params: {
+    deviceType: DeviceType;
+    zoneId?: string | null;
+    excludeDeviceId?: string;
+  }) {
+    if (!isPanelType(params.deviceType)) return;
+    const zoneId = params.zoneId?.trim();
+    if (!zoneId) {
+      throw new BadRequestException('Vui lòng chọn khu vực cho thiết bị chấm công');
+    }
+
+    const zone = await this.prisma.accessZone.findFirst({
+      where: { id: zoneId, isDeleted: false },
+      select: { id: true, name: true },
+    });
+    if (!zone) {
+      throw new BadRequestException('Khu vực không tồn tại');
+    }
+
+    const other = await this.prisma.device.findFirst({
+      where: {
+        isDeleted: false,
+        deviceType: params.deviceType,
+        zoneId,
+        ...(params.excludeDeviceId ? { id: { not: params.excludeDeviceId } } : {}),
+      },
+      select: { name: true, code: true },
+    });
+    if (other) {
+      throw new ConflictException(
+        `Khu vực "${zone.name}" đã có thiết bị ${params.deviceType} (${other.name}). Mỗi máy chấm công chỉ gắn 1 khu vực, mỗi khu vực chỉ 1 máy ${params.deviceType}.`,
+      );
+    }
+  }
+
   /** Merge username/password/protocol/relay into panel JSON config. */
   private buildPanelConfig(
     dto: CreateDeviceDto | UpdateDeviceDto,
@@ -170,6 +233,14 @@ export class DevicesService {
     const panelConfig = this.buildPanelConfig(dto);
     if (isPanelType(dto.deviceType)) {
       this.assertPanelCredentials(dto.deviceType, panelConfig ?? {}, true);
+      await this.assertAttendanceZoneAssignment({
+        deviceType: dto.deviceType,
+        zoneId: dto.zoneId,
+      });
+      await this.assertUniqueAkuvoxIp({
+        deviceType: dto.deviceType,
+        ipAddress: dto.ipAddress,
+      });
     }
 
     const data: Prisma.DeviceUncheckedCreateInput = {
@@ -209,6 +280,18 @@ export class DevicesService {
 
     if (isPanelType(nextType)) {
       this.assertPanelCredentials(nextType, panelConfig ?? {}, false);
+      const nextZoneId = dto.zoneId !== undefined ? dto.zoneId : existing.zoneId;
+      await this.assertAttendanceZoneAssignment({
+        deviceType: nextType,
+        zoneId: nextZoneId,
+        excludeDeviceId: id,
+      });
+      const nextIp = dto.ipAddress !== undefined ? dto.ipAddress : existing.ipAddress;
+      await this.assertUniqueAkuvoxIp({
+        deviceType: nextType,
+        ipAddress: nextIp,
+        excludeDeviceId: id,
+      });
     }
 
     const data: Prisma.DeviceUncheckedUpdateInput = {

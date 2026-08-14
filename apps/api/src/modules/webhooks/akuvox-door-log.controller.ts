@@ -95,7 +95,14 @@ export class AkuvoxDoorLogController {
       });
     }
 
-    const result = await this.webhooks.processDoorLog(payload, clientIp);
+    const deviceCode =
+      query.deviceCode?.trim() ||
+      query.device?.trim() ||
+      query.DeviceCode?.trim() ||
+      query.mac?.trim() ||
+      undefined;
+
+    const result = await this.webhooks.processDoorLog(payload, clientIp, deviceCode);
     return successResponse(result);
   }
 

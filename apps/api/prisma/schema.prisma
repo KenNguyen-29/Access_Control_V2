@@ -122,6 +122,9 @@ model Project {
   users       User[]
   headcounts  DailyContractorHeadcount[]
   accountLinks AccountProject[]
+  accessLogs  AccessLog[]
+  transfersFrom UserProjectTransfer[] @relation("TransferFrom")
+  transfersTo   UserProjectTransfer[] @relation("TransferTo")
 
   @@map("projects")
 }
@@ -206,6 +209,7 @@ model User {
   emergencyMuster         EmergencyMuster[]      @relation("MusterUser")
   emergencyMarked         EmergencyMuster[]      @relation("MusterMarkedBy")
   emergencyEventsCreated  EmergencyEvent[]
+  projectTransfers        UserProjectTransfer[]
 
   @@index([contractorId])
   @@index([projectId])
@@ -233,6 +237,7 @@ model Account {
   role          Role            @relation(fields: [roleId], references: [id])
   refreshTokens RefreshToken[]
   projectLinks  AccountProject[]
+  projectTransfers UserProjectTransfer[]
 
   @@map("accounts")
 }
@@ -396,6 +401,8 @@ model AccessLog {
   userId         String?
   deviceId       String?
   zoneId         String?
+  /// Snapshot of user.projectId at event time (reports by place/project).
+  projectId      String?
   credentialId   String?
   action         AccessAction @default(UNKNOWN)
   sourceEventId  String?
@@ -409,11 +416,35 @@ model AccessLog {
   user       User?       @relation(fields: [userId], references: [id])
   device     Device?     @relation(fields: [deviceId], references: [id])
   zone       AccessZone? @relation(fields: [zoneId], references: [id])
+  project    Project?    @relation(fields: [projectId], references: [id])
   credential Credential? @relation(fields: [credentialId], references: [id])
 
   @@unique([deviceId, sourceEventId])
   @@index([eventAt])
+  @@index([projectId])
   @@map("access_logs")
+}
+
+/// History when contractor staff move between projects.
+model UserProjectTransfer {
+  id             String   @id @default(cuid())
+  userId         String
+  fromProjectId  String?
+  toProjectId    String
+  transferredAt  DateTime @default(now())
+  byAccountId    String?
+  note           String?
+  createdAt      DateTime @default(now())
+
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fromProject  Project? @relation("TransferFrom", fields: [fromProjectId], references: [id])
+  toProject    Project  @relation("TransferTo", fields: [toProjectId], references: [id])
+  byAccount    Account? @relation(fields: [byAccountId], references: [id])
+
+  @@index([userId])
+  @@index([toProjectId])
+  @@index([transferredAt])
+  @@map("user_project_transfers")
 }
 
 model UserPresence {

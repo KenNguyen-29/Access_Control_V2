@@ -14,6 +14,7 @@ import {
   ChevronRight,
   Download,
   Upload,
+  ArrowLeftRight,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -35,8 +36,10 @@ import {
   getDepartments,
   getProjects,
   getUsers,
+  getWorkShifts,
   importUsers,
   provisionUser,
+  transferUserProject,
   updateUser,
   type Department,
   type User,
@@ -177,6 +180,13 @@ export default function UsersPage() {
   const [form, setForm] = useState(EMPTY_FORM);
   const [fieldErrors, setFieldErrors] = useState<UserFormFieldErrors>({});
   const [deleteTarget, setDeleteTarget] = useState<User | null>(null);
+  const [transferTarget, setTransferTarget] = useState<User | null>(null);
+  const [transferForm, setTransferForm] = useState({
+    toProjectId: '',
+    zoneId: '',
+    workShiftId: '',
+    note: '',
+  });
   const [importing, setImporting] = useState(false);
   const [importErrors, setImportErrors] = useState<string | null>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
@@ -248,6 +258,21 @@ export default function UsersPage() {
     queryKey: ['accessZones'],
     queryFn: () => getAccessZones(),
   });
+  const transferProjectsQuery = useQuery({
+    queryKey: ['projects', 'transfer', transferTarget?.contractorId ?? 'all'],
+    queryFn: () =>
+      getProjects(
+        transferTarget?.contractorId
+          ? { contractorId: transferTarget.contractorId }
+          : undefined,
+      ),
+    enabled: !!transferTarget,
+  });
+  const workShiftsQuery = useQuery({
+    queryKey: ['workShifts'],
+    queryFn: () => getWorkShifts(),
+    enabled: !!transferTarget,
+  });
 
   const items = usersQuery.data?.items ?? [];
   const total = usersQuery.data?.total ?? 0;
@@ -258,6 +283,8 @@ export default function UsersPage() {
   const listProjects = listProjectsQuery.data ?? [];
   const projects = projectsQuery.data ?? [];
   const zones = zonesQuery.data ?? [];
+  const transferProjects = transferProjectsQuery.data ?? [];
+  const workShifts = workShiftsQuery.data ?? [];
 
   const selectedFormProject = useMemo(
     () => projects.find((p) => p.id === form.projectId) ?? null,
@@ -403,9 +430,7 @@ export default function UsersPage() {
 
   function toggleZone(zoneId: string) {
     setForm((prev) => {
-      const zoneIds = prev.zoneIds.includes(zoneId)
-        ? prev.zoneIds.filter((id) => id !== zoneId)
-        : [...prev.zoneIds, zoneId];
+      const zoneIds = prev.zoneIds.includes(zoneId) ? [] : [zoneId];
       const hasFace = Boolean(prev.faceImageFile || prev.facePreviewUrl);
       return {
         ...prev,
@@ -486,6 +511,32 @@ export default function UsersPage() {
     onError: (e) => setError(e instanceof ApiError ? e.message : 'Xóa thất bại'),
   });
   const deleting = deleteMutation.isPending;
+
+  const transferMutation = useMutation({
+    mutationFn: () => {
+      if (!transferTarget) throw new ApiError('Chưa chọn nhân viên', 400);
+      if (!transferForm.toProjectId.trim() || !transferForm.zoneId.trim()) {
+        throw new ApiError('Chọn dự án đích và đúng 1 khu vực', 400);
+      }
+      return transferUserProject(transferTarget.id, {
+        toProjectId: transferForm.toProjectId,
+        zoneId: transferForm.zoneId,
+        workShiftId: transferForm.workShiftId || undefined,
+        note: transferForm.note.trim() || undefined,
+      });
+    },
+    onSuccess: (result) => {
+      setTransferTarget(null);
+      setTransferForm({ toProjectId: '', zoneId: '', workShiftId: '', note: '' });
+      void queryClient.invalidateQueries({ queryKey: ['users'] });
+      void queryClient.invalidateQueries({ queryKey: ['permissions'] });
+      setNotice(
+        `Đã điều chuyển ${result.user.employeeCode} → dự án mới` +
+          (result.sync.mock ? ' (mock sync)' : ` · sync ${result.sync.synced} thiết bị`),
+      );
+    },
+    onError: (e) => setError(e instanceof ApiError ? e.message : 'Điều chuyển thất bại'),
+  });
 
   function onSave() {
     const errors = validateUserForm({
@@ -826,6 +877,26 @@ export default function UsersPage() {
                     <td className="p-3">
                       {writeEnabled ? (
                         <div className="flex justify-end gap-1">
+                          {u.userType === 'CONTRACTOR' && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 shrink-0"
+                              title="Điều chuyển dự án"
+                              onClick={() => {
+                                setTransferTarget(u);
+                                setTransferForm({
+                                  toProjectId: '',
+                                  zoneId: '',
+                                  workShiftId: '',
+                                  note: '',
+                                });
+                                setError(null);
+                              }}
+                            >
+                              <ArrowLeftRight className="h-4 w-4" />
+                            </Button>
+                          )}
                           <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => openEdit(u)}>
                             <Pencil className="h-4 w-4" />
                           </Button>
@@ -1068,7 +1139,7 @@ export default function UsersPage() {
             <>
               <div>
                 <label className="mb-1 block text-xs text-muted-foreground">
-                  Khu vực ra vào
+                  Khu vực ra vào (mặc định 1 khu)
                   {(form.faceImageFile || form.facePreviewUrl) && (
                     <span className="text-destructive"> *</span>
                   )}
@@ -1080,7 +1151,8 @@ export default function UsersPage() {
                     zones.map((z) => (
                       <label key={z.id} className="flex cursor-pointer items-center gap-2 text-sm">
                         <input
-                          type="checkbox"
+                          type="radio"
+                          name="user-zone"
                           className="h-3.5 w-3.5 accent-primary"
                           checked={form.zoneIds.includes(z.id)}
                           onChange={() => toggleZone(z.id)}
@@ -1090,6 +1162,9 @@ export default function UsersPage() {
                     ))
                   )}
                 </div>
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  Nhân sự chỉ được tính chấm công tại khu vực đã chọn.
+                </p>
               </div>
               <label className="flex cursor-pointer items-center gap-2 text-sm">
                 <input
@@ -1116,6 +1191,100 @@ export default function UsersPage() {
               onClick={() => onSave()}
             >
               {saving ? 'Đang lưu...' : 'Lưu'}
+            </Button>
+          </div>
+        </div>
+      </Dialog>
+
+      <Dialog
+        open={!!transferTarget}
+        onClose={() => !transferMutation.isPending && setTransferTarget(null)}
+        title={`Điều chuyển dự án — ${transferTarget?.fullName ?? ''}`}
+      >
+        <div className="space-y-3">
+          <p className="text-sm text-muted-foreground">
+            Thu hồi khu vực cũ, gán 1 khu vực mới, đồng bộ Face lên máy thuộc khu đích. Lịch sử
+            điều chuyển được lưu.
+          </p>
+          <div>
+            <label className="mb-1 block text-xs text-muted-foreground">
+              Dự án đích
+              <RequiredMark />
+            </label>
+            <Select
+              value={transferForm.toProjectId}
+              onChange={(e) =>
+                setTransferForm((prev) => ({ ...prev, toProjectId: e.target.value }))
+              }
+            >
+              <option value="">— Chọn dự án —</option>
+              {transferProjects
+                .filter((p) => p.id !== transferTarget?.projectId)
+                .map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name} ({p.code})
+                  </option>
+                ))}
+            </Select>
+          </div>
+          <div>
+            <label className="mb-1 block text-xs text-muted-foreground">
+              Khu vực mới (1 khu)
+              <RequiredMark />
+            </label>
+            <Select
+              value={transferForm.zoneId}
+              onChange={(e) => setTransferForm((prev) => ({ ...prev, zoneId: e.target.value }))}
+            >
+              <option value="">— Chọn khu vực —</option>
+              {zones.map((z) => (
+                <option key={z.id} value={z.id}>
+                  {z.name}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div>
+            <label className="mb-1 block text-xs text-muted-foreground">Ca làm (tuỳ chọn)</label>
+            <Select
+              value={transferForm.workShiftId}
+              onChange={(e) =>
+                setTransferForm((prev) => ({ ...prev, workShiftId: e.target.value }))
+              }
+            >
+              <option value="">— Giữ ca hiện tại —</option>
+              {workShifts.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name} ({s.code})
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div>
+            <label className="mb-1 block text-xs text-muted-foreground">Ghi chú</label>
+            <Input
+              className="input-design h-10"
+              value={transferForm.note}
+              onChange={(e) => setTransferForm((prev) => ({ ...prev, note: e.target.value }))}
+              placeholder="Lý do điều chuyển…"
+            />
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={transferMutation.isPending}
+              onClick={() => setTransferTarget(null)}
+            >
+              Hủy
+            </Button>
+            <Button
+              variant="accent"
+              size="sm"
+              disabled={transferMutation.isPending}
+              onClick={() => transferMutation.mutate()}
+            >
+              {transferMutation.isPending ? 'Đang chuyển…' : 'Điều chuyển'}
             </Button>
           </div>
         </div>

@@ -807,12 +807,14 @@ export default function ReportsPage() {
               emptyDescription="Chuyển sang tuần khác hoặc nới bộ lọc."
             >
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[1020px] text-sm">
+                <table className="w-full min-w-[1180px] text-sm">
                   <thead>
                     <tr className="border-b border-border bg-muted/30 text-left">
                       <th className="p-2 font-semibold">Nhân viên</th>
                       <th className="p-2 font-semibold">Ngày</th>
                       <th className="p-2 font-semibold">Ca</th>
+                      <th className="p-2 font-semibold">Khu vực</th>
+                      <th className="p-2 font-semibold">Máy</th>
                       <th className="p-2 font-semibold">Giờ vào</th>
                       <th className="p-2 font-semibold">Giờ ra</th>
                       <th className="p-2 text-right font-semibold">Giờ làm</th>
@@ -862,6 +864,8 @@ export default function ReportsPage() {
                               '—'
                             )}
                           </td>
+                          <td className="p-2 text-xs text-muted-foreground">{r.zoneName || '—'}</td>
+                          <td className="p-2 text-xs text-muted-foreground">{r.deviceName || '—'}</td>
                           <td className="p-2 font-mono text-xs">{formatTime(r.checkInAt)}</td>
                           <td className="p-2 font-mono text-xs">{formatTime(r.checkOutAt)}</td>
                           <td className="p-2 text-right font-medium">
@@ -1033,13 +1037,15 @@ export default function ReportsPage() {
               emptyDescription="Chọn khoảng thời gian khác hoặc nới bộ lọc."
             >
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[960px] text-sm">
+                <table className="w-full min-w-[1120px] text-sm">
                   <thead>
                     <tr className="border-b border-border bg-muted/30 text-left">
                       <th className="p-2 font-semibold">Ngày</th>
                       <th className="p-2 font-semibold">Nhân viên</th>
                       <th className="p-2 font-semibold">Phòng ban</th>
                       <th className="p-2 font-semibold">Ca</th>
+                      <th className="p-2 font-semibold">Khu vực</th>
+                      <th className="p-2 font-semibold">Máy</th>
                       <th className="p-2 font-semibold">Vào</th>
                       <th className="p-2 font-semibold">Ra</th>
                       <th className="p-2 font-semibold">Trạng thái</th>
@@ -1065,6 +1071,12 @@ export default function ReportsPage() {
                           {r.user?.department?.name ?? '—'}
                         </td>
                         <td className="p-2">{r.workShift?.name || '—'}</td>
+                        <td className="p-2 text-xs text-muted-foreground">
+                          {r.punchLocation?.zoneName || '—'}
+                        </td>
+                        <td className="p-2 text-xs text-muted-foreground">
+                          {r.punchLocation?.deviceName || '—'}
+                        </td>
                         <td className="p-2 font-mono text-xs">{formatDt(r.checkInAt)}</td>
                         <td className="p-2 font-mono text-xs">{formatDt(r.checkOutAt)}</td>
                         <td className="p-2">

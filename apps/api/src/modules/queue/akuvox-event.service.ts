@@ -13,8 +13,9 @@ import {
   isDoorLogSuccess,
   normalizedDoorLogUserId,
 } from '../webhooks/akuvox-door-log.util';
+import { SnapshotCaptureService } from './snapshot-capture.service';
 
-/** Suppress repeat face scans for the same person (no AccessLog / socket / punch). */
+/** Suppress repeat face scans for the same person+device (no AccessLog / socket / punch). */
 const FACE_SCAN_COOLDOWN_MS = 5 * 60 * 1000;
 
 @Injectable()
@@ -27,6 +28,7 @@ export class AkuvoxEventService {
     private readonly eventsGateway: EventsGateway,
     private readonly attendance: AttendanceService,
     private readonly metrics: RealtimeMetricsService,
+    private readonly snapshots: SnapshotCaptureService,
   ) {}
 
   private async upsertPresence(
@@ -139,7 +141,9 @@ export class AkuvoxEventService {
           where: { id: accessLogId },
           data: { snapshotPath },
         });
-        const snapshotUrl = await this.storage.getSignedUrl(snapshotPath).catch(() => undefined);
+        const snapshotUrl = await this.storage
+          .getAssetUrl(snapshotPath, { forBrowser: true })
+          .catch(() => this.storage.getSignedUrl(snapshotPath).catch(() => undefined));
         this.eventsGateway.emitCheckinEvent({
           ...baseEvent,
           snapshotUrl,
@@ -152,16 +156,82 @@ export class AkuvoxEventService {
     })();
   }
 
-  async processDoorLog(dto: AkuvoxDoorLogPayload, clientIp: string) {
+  /** Prefer webhook image; otherwise capture from mapped camera. */
+  private scheduleSnapshot(
+    accessLogId: string,
+    deviceId: string,
+    baseEvent: CheckinEvent,
+    pendingSnapshot?: { path: string; buffer: Buffer },
+  ) {
+    if (pendingSnapshot) {
+      this.finalizeSnapshotAsync(
+        accessLogId,
+        pendingSnapshot.path,
+        pendingSnapshot.buffer,
+        baseEvent,
+      );
+      return;
+    }
+    void (async () => {
+      const captured = await this.snapshots.captureForReaderDevice(deviceId);
+      if (!captured) return;
+      this.finalizeSnapshotAsync(accessLogId, captured.path, captured.buffer, baseEvent);
+    })();
+  }
+
+  /**
+   * Zone gate: no zones assigned → no punch.
+   * Zones assigned but device zone not in set → invalid, no punch.
+   */
+  private async resolveZonePunchGate(params: {
+    userId: string;
+    deviceZoneId: string | null;
+  }): Promise<{ allowPunch: boolean; warning?: string }> {
+    const permissions = await this.prisma.userAccessPermission.findMany({
+      where: { userId: params.userId, isDeleted: false },
+      select: { zoneId: true },
+    });
+    if (permissions.length === 0) {
+      return {
+        allowPunch: false,
+        warning: 'Chưa gán khu vực — không tính chấm công',
+      };
+    }
+    if (!params.deviceZoneId) {
+      return {
+        allowPunch: false,
+        warning: 'Thiết bị chưa gắn khu vực — không tính chấm công',
+      };
+    }
+    const allowed = new Set(permissions.map((p) => p.zoneId));
+    if (!allowed.has(params.deviceZoneId)) {
+      return {
+        allowPunch: false,
+        warning: 'Không có quyền khu vực thiết bị này — không tính chấm công',
+      };
+    }
+    return { allowPunch: true };
+  }
+
+  async processDoorLog(
+    dto: AkuvoxDoorLogPayload,
+    clientIp: string,
+    deviceCode?: string,
+  ) {
     const employeeCode = normalizedDoorLogUserId(dto);
     if (!employeeCode) {
       this.metrics.markProcessed({ skipped: true, reason: 'empty_person_code' });
       return { ignored: true, reason: 'EMPTY_PERSON_CODE' };
     }
 
-    const device = await this.findDevice({ clientIp });
+    const device = await this.findDevice({
+      deviceCode: deviceCode?.trim() || undefined,
+      clientIp,
+    });
     if (!device) {
-      this.logger.warn(`Device not found for clientIp=${clientIp}`);
+      this.logger.warn(
+        `Device not found for code=${deviceCode ?? '—'} clientIp=${clientIp}`,
+      );
       this.metrics.markProcessed({ skipped: true, reason: 'device_not_found' });
       return { skipped: true, reason: 'device_not_found' };
     }
@@ -286,8 +356,6 @@ export class AkuvoxEventService {
   }) {
     const { device, user, eventAt, sourceEventId, rawPayload, pendingSnapshot } = params;
 
-    // Same person + same device within 5 minutes → skip spam.
-    // Different device (Akuvox vs DNAKE) still notifies monitoring.
     if (user?.id) {
       const cooldownSince = new Date(eventAt.getTime() - FACE_SCAN_COOLDOWN_MS);
       const recent = await this.prisma.accessLog.findFirst({
@@ -316,38 +384,55 @@ export class AkuvoxEventService {
     let action: PrismaAccessAction = PrismaAccessAction.CHECK_IN;
     let attendanceId: string | undefined;
     let punchWarning: string | undefined;
+    let zoneDenied = false;
 
     if (params.denied) {
       action = PrismaAccessAction.DENIED;
       punchWarning = params.deniedStatus?.trim() || 'Access denied';
     } else if (user && !params.skipPunch) {
-      const punch = await this.attendance.processPunch(user.id, eventAt);
-      attendanceId = punch.record?.id;
-      if (punch.outcome === 'IGNORED') {
-        action = PrismaAccessAction.UNKNOWN;
-        punchWarning =
-          punch.reason === 'NO_SHIFT'
-            ? 'Chưa gán ca — không tính chấm công'
-            : 'Sự kiện ra vào — không tính thêm chấm công';
+      const gate = await this.resolveZonePunchGate({
+        userId: user.id,
+        deviceZoneId: device.zoneId,
+      });
+      if (!gate.allowPunch) {
+        zoneDenied = true;
+        action = PrismaAccessAction.DENIED;
+        punchWarning = gate.warning;
         this.logger.log(
-          `Notify without punch reason=${punch.reason ?? '—'} user=${user.employeeCode} device=${device.name}`,
+          `Zone gate blocked punch user=${user.employeeCode} device=${device.name} zone=${device.zoneId ?? '—'} msg=${gate.warning}`,
         );
       } else {
-        punchWarning = punch.message;
-        action = this.toPrismaAction(punch);
-        if (punch.outcome === 'CHECK_IN' || punch.outcome === 'CHECK_OUT') {
-          await this.upsertPresence(user.id, action, device.zoneId, eventAt);
+        const punch = await this.attendance.processPunch(user.id, eventAt);
+        attendanceId = punch.record?.id;
+        if (punch.outcome === 'IGNORED') {
+          action = PrismaAccessAction.UNKNOWN;
+          punchWarning =
+            punch.reason === 'NO_SHIFT'
+              ? 'Chưa gán ca — không tính chấm công'
+              : 'Sự kiện ra vào — không tính thêm chấm công';
+          this.logger.log(
+            `Notify without punch reason=${punch.reason ?? '—'} user=${user.employeeCode} device=${device.name}`,
+          );
+        } else {
+          punchWarning = punch.message;
+          action = this.toPrismaAction(punch);
+          if (punch.outcome === 'CHECK_IN' || punch.outcome === 'CHECK_OUT') {
+            await this.upsertPresence(user.id, action, device.zoneId, eventAt);
+          }
         }
       }
     } else if (!user) {
       action = PrismaAccessAction.UNKNOWN;
     }
 
+    const isValid = !!user && !params.denied && !zoneDenied;
     const warningMessage = params.denied
       ? punchWarning
-      : user
+      : zoneDenied
         ? punchWarning
-        : 'Unknown person';
+        : user
+          ? punchWarning
+          : 'Unknown person';
 
     const accessLog = await this.prisma.accessLog.upsert({
       where: {
@@ -356,24 +441,26 @@ export class AkuvoxEventService {
           sourceEventId,
         },
       },
-      create: {
+        create: {
         userId: user?.id,
         deviceId: device.id,
         zoneId: device.zoneId,
+        projectId: user?.projectId ?? null,
         action,
         sourceEventId,
         snapshotPath: null,
         rawPayload,
-        isValid: !!user && !params.denied,
+        isValid,
         warningMessage,
         eventAt,
       },
       update: {
         userId: user?.id,
         zoneId: device.zoneId,
+        projectId: user?.projectId ?? null,
         action,
         rawPayload,
-        isValid: !!user && !params.denied,
+        isValid,
         warningMessage,
         eventAt,
       },
@@ -397,24 +484,17 @@ export class AkuvoxEventService {
       timestamp: eventAt.toISOString(),
       snapshotUrl: undefined,
       faceImageUrl,
-      isValid: !!user && !params.denied,
+      isValid,
       warningMessage,
     };
 
     this.eventsGateway.emitCheckinEvent(checkinEvent);
     this.metrics.markProcessed({ accessLogId: accessLog.id });
     this.logger.log(
-      `Processed akuvox event accessLogId=${accessLog.id} action=${action} attendanceId=${attendanceId ?? '—'}`,
+      `Processed event accessLogId=${accessLog.id} action=${action} attendanceId=${attendanceId ?? '—'} valid=${isValid}`,
     );
 
-    if (pendingSnapshot) {
-      this.finalizeSnapshotAsync(
-        accessLog.id,
-        pendingSnapshot.path,
-        pendingSnapshot.buffer,
-        checkinEvent,
-      );
-    }
+    this.scheduleSnapshot(accessLog.id, device.id, checkinEvent, pendingSnapshot);
 
     return { processed: true, accessLogId: accessLog.id, attendanceId };
   }
