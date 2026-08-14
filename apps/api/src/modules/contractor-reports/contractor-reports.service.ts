@@ -5,6 +5,8 @@ import { firstValueFrom } from 'rxjs';
 import { PrismaService } from '../../prisma/prisma.service';
 import { SystemSettingsService } from '../system-settings/system-settings.service';
 import { SETTING_KEY } from '../system-settings/system-setting-keys';
+import { formatLocalDateTime } from '../attendance/attendance-excel.util';
+import { zonedPartsInVietnam } from '../../common/utils/vn-time.util';
 import * as ExcelJS from 'exceljs';
 
 function startOfLocalDay(d = new Date()): Date {
@@ -24,6 +26,46 @@ function parseDateOnly(value: string, fallback: Date): Date {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
   if (!match) return startOfLocalDay(fallback);
   return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+}
+
+function formatVnTime(d: Date | null | undefined): string {
+  if (!d) return '';
+  const p = zonedPartsInVietnam(d);
+  return `${String(p.hour).padStart(2, '0')}:${String(p.minute).padStart(2, '0')}`;
+}
+
+function formatVnDt(d: Date | null | undefined): string {
+  if (!d) return '';
+  return formatLocalDateTime(d);
+}
+
+function parseMonth(month?: string): {
+  year: number;
+  month: number;
+  from: Date;
+  toExclusive: Date;
+  days: number;
+  label: string;
+} {
+  const now = new Date();
+  let year = now.getFullYear();
+  let monthNum = now.getMonth() + 1;
+  const match = /^(\d{4})-(\d{2})$/.exec((month ?? '').trim());
+  if (match) {
+    year = Number(match[1]);
+    monthNum = Number(match[2]);
+  }
+  const from = new Date(Date.UTC(year, monthNum - 1, 1));
+  const toExclusive = new Date(Date.UTC(year, monthNum, 1));
+  const days = new Date(year, monthNum, 0).getDate();
+  return {
+    year,
+    month: monthNum,
+    from,
+    toExclusive,
+    days,
+    label: `${year}-${String(monthNum).padStart(2, '0')}`,
+  };
 }
 
 @Injectable()
@@ -302,8 +344,8 @@ export class ContractorReportsService {
     for (const r of data.rows) {
       sheet.addRow({
         ...r,
-        firstCheckInAt: r.firstCheckInAt ? r.firstCheckInAt.toISOString() : '',
-        lastCheckOutAt: r.lastCheckOutAt ? r.lastCheckOutAt.toISOString() : '',
+        firstCheckInAt: formatVnDt(r.firstCheckInAt),
+        lastCheckOutAt: formatVnDt(r.lastCheckOutAt),
       });
     }
     const buf = await wb.xlsx.writeBuffer();
@@ -335,7 +377,7 @@ export class ContractorReportsService {
     for (const r of data.rows) {
       sheet.addRow({
         ...r,
-        eventAt: r.eventAt ? new Date(r.eventAt).toISOString() : '',
+        eventAt: formatVnDt(r.eventAt),
       });
     }
     const buf = await wb.xlsx.writeBuffer();
@@ -365,6 +407,211 @@ export class ContractorReportsService {
       sheet.addRow({
         ...r,
         hours: `${r.startTime}–${r.endTime}`,
+      });
+    }
+    const buf = await wb.xlsx.writeBuffer();
+    return Buffer.from(buf);
+  }
+
+  async exportHeadcountExcel(params: { date?: string; projectIds?: string[] }): Promise<Buffer> {
+    const data = await this.headcountByContractor(params);
+    const wb = new ExcelJS.Workbook();
+    const sheet = wb.addWorksheet('So luong nha thau');
+    sheet.columns = [
+      { header: 'Ngay', key: 'date', width: 12 },
+      { header: 'Ma nha thau', key: 'code', width: 14 },
+      { header: 'Nha thau', key: 'name', width: 28 },
+      { header: 'Dang ky', key: 'registeredCount', width: 12 },
+      { header: 'Co mat', key: 'presentCount', width: 12 },
+    ];
+    for (const r of data.rows) {
+      sheet.addRow(r);
+    }
+    const buf = await wb.xlsx.writeBuffer();
+    return Buffer.from(buf);
+  }
+
+  private contractorUserWhere(params: {
+    contractorId?: string;
+    projectId?: string;
+    projectIds?: string[];
+  }) {
+    return {
+      isDeleted: false,
+      ...(params.contractorId
+        ? { contractorId: params.contractorId }
+        : { contractorId: { not: null } }),
+      ...this.projectUserFilter(params.projectId, params.projectIds),
+    };
+  }
+
+  async monthlyTimesheet(params: {
+    month?: string;
+    contractorId?: string;
+    projectId?: string;
+    projectIds?: string[];
+  }) {
+    const range = parseMonth(params.month);
+    const users = await this.prisma.user.findMany({
+      where: this.contractorUserWhere(params),
+      include: { contractor: true, project: true, department: true },
+      orderBy: [{ fullName: 'asc' }],
+    });
+    const userIds = users.map((u) => u.id);
+    const records = userIds.length
+      ? await this.prisma.attendanceRecord.findMany({
+          where: {
+            userId: { in: userIds },
+            workShiftId: { not: null },
+            date: { gte: range.from, lt: range.toExclusive },
+          },
+          include: { workShift: true },
+        })
+      : [];
+
+    const byUser = new Map<string, typeof records>();
+    for (const rec of records) {
+      const list = byUser.get(rec.userId) ?? [];
+      list.push(rec);
+      byUser.set(rec.userId, list);
+    }
+
+    const rows = users.map((u) => {
+      const list = byUser.get(u.id) ?? [];
+      const present = list.filter((r) => r.checkInAt);
+      return {
+        userId: u.id,
+        employeeCode: u.employeeCode,
+        fullName: u.fullName,
+        citizenId: u.citizenId,
+        contractorName: u.contractor?.name ?? null,
+        projectName: u.project?.name ?? null,
+        departmentName: u.department?.name ?? null,
+        workDays: present.length,
+        lateDays: present.filter((r) => (r.lateMinutes ?? 0) > 0).length,
+        lateMinutes: present.reduce((n, r) => n + (r.lateMinutes ?? 0), 0),
+        earlyLeaveMinutes: present.reduce((n, r) => n + (r.earlyLeaveMinutes ?? 0), 0),
+        otMinutes: present.reduce((n, r) => n + (r.otMinutes ?? 0), 0),
+      };
+    });
+
+    return { month: range.label, days: range.days, rows };
+  }
+
+  async monthlyDailyDetail(params: {
+    month?: string;
+    contractorId?: string;
+    projectId?: string;
+    projectIds?: string[];
+  }) {
+    const range = parseMonth(params.month);
+    const users = await this.prisma.user.findMany({
+      where: this.contractorUserWhere(params),
+      include: { contractor: true, project: true },
+      orderBy: [{ fullName: 'asc' }],
+    });
+    const userIds = users.map((u) => u.id);
+    const records = userIds.length
+      ? await this.prisma.attendanceRecord.findMany({
+          where: {
+            userId: { in: userIds },
+            workShiftId: { not: null },
+            date: { gte: range.from, lt: range.toExclusive },
+          },
+        })
+      : [];
+
+    const byUserDay = new Map<string, Map<number, (typeof records)[number]>>();
+    for (const rec of records) {
+      const day = rec.date.getUTCDate();
+      const map = byUserDay.get(rec.userId) ?? new Map();
+      map.set(day, rec);
+      byUserDay.set(rec.userId, map);
+    }
+
+    const rows = users.map((u) => {
+      const days: Record<string, string> = {};
+      const dayMap = byUserDay.get(u.id);
+      for (let d = 1; d <= range.days; d += 1) {
+        const rec = dayMap?.get(d);
+        if (!rec?.checkInAt) {
+          days[String(d)] = '';
+          continue;
+        }
+        const inn = formatVnTime(rec.checkInAt);
+        const out = formatVnTime(rec.checkOutAt);
+        days[String(d)] = out ? `${inn}-${out}` : inn;
+      }
+      return {
+        userId: u.id,
+        employeeCode: u.employeeCode,
+        fullName: u.fullName,
+        citizenId: u.citizenId,
+        contractorName: u.contractor?.name ?? null,
+        projectName: u.project?.name ?? null,
+        days,
+      };
+    });
+
+    return { month: range.label, days: range.days, rows };
+  }
+
+  async exportMonthlyExcel(params: {
+    month?: string;
+    contractorId?: string;
+    projectId?: string;
+    projectIds?: string[];
+  }): Promise<Buffer> {
+    const data = await this.monthlyTimesheet(params);
+    const wb = new ExcelJS.Workbook();
+    const sheet = wb.addWorksheet(`Ngay cong ${data.month}`);
+    sheet.columns = [
+      { header: 'Ma NV', key: 'employeeCode', width: 14 },
+      { header: 'Ho ten', key: 'fullName', width: 24 },
+      { header: 'CCCD', key: 'citizenId', width: 16 },
+      { header: 'Nha thau', key: 'contractorName', width: 20 },
+      { header: 'Du an', key: 'projectName', width: 20 },
+      { header: 'Ngay cong', key: 'workDays', width: 12 },
+      { header: 'Ngay muon', key: 'lateDays', width: 12 },
+      { header: 'Muon (phut)', key: 'lateMinutes', width: 14 },
+      { header: 'Ve som (phut)', key: 'earlyLeaveMinutes', width: 14 },
+      { header: 'OT (phut)', key: 'otMinutes', width: 12 },
+    ];
+    for (const r of data.rows) sheet.addRow(r);
+    const buf = await wb.xlsx.writeBuffer();
+    return Buffer.from(buf);
+  }
+
+  async exportMonthlyDetailExcel(params: {
+    month?: string;
+    contractorId?: string;
+    projectId?: string;
+    projectIds?: string[];
+  }): Promise<Buffer> {
+    const data = await this.monthlyDailyDetail(params);
+    const wb = new ExcelJS.Workbook();
+    const sheet = wb.addWorksheet(`Chi tiet ${data.month}`);
+    const dayCols = Array.from({ length: data.days }, (_, i) => ({
+      header: String(i + 1),
+      key: String(i + 1),
+      width: 12,
+    }));
+    sheet.columns = [
+      { header: 'Ma NV', key: 'employeeCode', width: 14 },
+      { header: 'Ho ten', key: 'fullName', width: 24 },
+      { header: 'CCCD', key: 'citizenId', width: 16 },
+      { header: 'Nha thau', key: 'contractorName', width: 20 },
+      { header: 'Du an', key: 'projectName', width: 18 },
+      ...dayCols,
+    ];
+    for (const r of data.rows) {
+      sheet.addRow({
+        employeeCode: r.employeeCode,
+        fullName: r.fullName,
+        citizenId: r.citizenId,
+        contractorName: r.contractorName,
+        projectName: r.projectName,
+        ...r.days,
       });
     }
     const buf = await wb.xlsx.writeBuffer();

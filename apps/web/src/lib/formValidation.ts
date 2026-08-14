@@ -193,7 +193,6 @@ export const hasUserFormErrors = hasFormErrors;
 
 export type DeviceFormFields = {
   name: string;
-  code: string;
   deviceType: 'AKUVOX' | 'DNAKE' | 'CAMERA';
   zoneId: string;
   ipAddress: string;
@@ -216,12 +215,6 @@ export function validateDeviceForm(form: DeviceFormFields): DeviceFormFieldError
   const errors: DeviceFormFieldErrors = {};
   const nameErr = requireTrimmed(form.name, 'tên thiết bị', 2, 100);
   if (nameErr) errors.name = nameErr;
-
-  const code = form.code.trim();
-  if (!code) errors.code = 'Vui lòng nhập mã thiết bị';
-  else if (!isValidCode(code)) {
-    errors.code = 'Mã chỉ gồm chữ/số/_/- (tối đa 32 ký tự)';
-  }
 
   if (isAttendancePanel(form.deviceType) && !form.zoneId.trim()) {
     errors.zoneId = 'Vui lòng chọn khu vực cho thiết bị chấm công';

@@ -12,10 +12,14 @@ import { QueryBoundary } from '@/components/ui/query-states';
 import {
   ApiError,
   downloadContractorAccessLogsExcel,
+  downloadContractorHeadcountExcel,
+  downloadContractorMonthlyDetailExcel,
+  downloadContractorMonthlyExcel,
   downloadContractorPersonnelExcel,
   downloadShiftPersonnelExcel,
   getContractorAccessLogs,
   getContractorHeadcount,
+  getContractorMonthly,
   getContractorPersonnel,
   getContractors,
   getProjects,
@@ -101,15 +105,18 @@ export default function ContractorReportsPage() {
   const searchParams = useSearchParams();
   const [from, setFrom] = useState(monthStart());
   const [to, setTo] = useState(today());
+  const [month, setMonth] = useState(() => today().slice(0, 7));
   const [contractorId, setContractorId] = useState('');
   const [projectId, setProjectId] = useState('');
   const [workShiftId, setWorkShiftId] = useState('');
+  const [userId, setUserId] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
   const [personnelPage, setPersonnelPage] = useState(1);
   const [accessPage, setAccessPage] = useState(1);
   const [shiftPage, setShiftPage] = useState(1);
+  const [monthlyPage, setMonthlyPage] = useState(1);
 
   const contractorsQuery = useQuery({
     queryKey: ['contractors'],
@@ -138,21 +145,32 @@ export default function ContractorReportsPage() {
       }),
   });
   const accessQuery = useQuery({
-    queryKey: ['contractor-access', from, to, contractorId, projectId],
+    queryKey: ['contractor-access', from, to, contractorId, projectId, userId],
     queryFn: () =>
       getContractorAccessLogs({
         from,
         to,
         contractorId: contractorId || undefined,
         projectId: projectId || undefined,
+        userId: userId || undefined,
       }),
   });
   const shiftQuery = useQuery({
-    queryKey: ['shift-personnel', contractorId, workShiftId],
+    queryKey: ['shift-personnel', contractorId, workShiftId, projectId],
     queryFn: () =>
       getShiftPersonnelReport({
         contractorId: contractorId || undefined,
         workShiftId: workShiftId || undefined,
+        projectId: projectId || undefined,
+      }),
+  });
+  const monthlyQuery = useQuery({
+    queryKey: ['contractor-monthly', month, contractorId, projectId],
+    queryFn: () =>
+      getContractorMonthly({
+        month,
+        contractorId: contractorId || undefined,
+        projectId: projectId || undefined,
       }),
   });
 
@@ -163,6 +181,17 @@ export default function ContractorReportsPage() {
   const personnelRows = personnelQuery.data?.rows ?? [];
   const accessRows = accessQuery.data?.rows ?? [];
   const shiftRows = shiftQuery.data?.rows ?? [];
+  const monthlyRows = monthlyQuery.data?.rows ?? [];
+  const personOptions = useMemo(
+    () =>
+      personnelRows
+        .map((r) => ({
+          id: String(r.userId ?? ''),
+          label: `${String(r.fullName ?? '')} (${String(r.employeeCode ?? '')})`,
+        }))
+        .filter((p) => p.id),
+    [personnelRows],
+  );
 
   useEffect(() => {
     const p = searchParams.get('projectId');
@@ -175,12 +204,31 @@ export default function ContractorReportsPage() {
   }, [from, to, contractorId, projectId]);
 
   useEffect(() => {
+    setUserId('');
+  }, [contractorId, projectId]);
+
+  useEffect(() => {
     setShiftPage(1);
   }, [contractorId, workShiftId]);
+
+  useEffect(() => {
+    setMonthlyPage(1);
+  }, [month, contractorId, projectId]);
 
   const personnelPaged = usePagedRows(personnelRows, personnelPage);
   const accessPaged = usePagedRows(accessRows, accessPage);
   const shiftPaged = usePagedRows(shiftRows, shiftPage);
+  const monthlyPaged = usePagedRows(monthlyRows, monthlyPage);
+
+  async function exportExcel(run: () => Promise<Blob>, filename: string) {
+    try {
+      const blob = await run();
+      downloadBlob(blob, filename);
+      setError(null);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Xuất Excel thất bại');
+    }
+  }
 
   const snapshotMutation = useMutation({
     mutationFn: () => runContractorSnapshot({ date: to, push: true }),
@@ -203,7 +251,7 @@ export default function ContractorReportsPage() {
     <PageShell
       badge="Báo cáo"
       title="Báo cáo nhà thầu"
-      subtitle="Headcount, nhân sự, vào/ra, ca làm — theo nhà thầu / dự án."
+      subtitle="Số lượng, nhân sự, vào/ra từng người, ca, ngày công tháng — xuất Excel đủ mẫu sếp yêu cầu."
       actions={
         <Button
           variant="outline"
@@ -213,6 +261,7 @@ export default function ContractorReportsPage() {
             void personnelQuery.refetch();
             void accessQuery.refetch();
             void shiftQuery.refetch();
+            void monthlyQuery.refetch();
           }}
         >
           <RefreshCw className="h-4 w-4" />
@@ -230,7 +279,7 @@ export default function ContractorReportsPage() {
       )}
 
       <DesignCard title="Bộ lọc">
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
           <div>
             <label className="mb-1 block text-xs text-muted-foreground">Từ ngày</label>
             <Input type="date" className="input-design h-10" value={from} onChange={(e) => setFrom(e.target.value)} />
@@ -238,6 +287,15 @@ export default function ContractorReportsPage() {
           <div>
             <label className="mb-1 block text-xs text-muted-foreground">Đến ngày</label>
             <Input type="date" className="input-design h-10" value={to} onChange={(e) => setTo(e.target.value)} />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs text-muted-foreground">Tháng (ngày công)</label>
+            <Input
+              type="month"
+              className="input-design h-10"
+              value={month}
+              onChange={(e) => setMonth(e.target.value)}
+            />
           </div>
           <div>
             <label className="mb-1 block text-xs text-muted-foreground">Nhà thầu</label>
@@ -279,15 +337,30 @@ export default function ContractorReportsPage() {
         title={`Số lượng theo nhà thầu (${to})`}
         description="Đăng ký vs có mặt (có AccessLog hợp lệ trong ngày)."
         actions={
-          <Button
-            variant="accent"
-            size="sm"
-            disabled={snapshotMutation.isPending}
-            onClick={() => snapshotMutation.mutate()}
-          >
-            <Send className="h-4 w-4" />
-            Snapshot + đẩy giám sát
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() =>
+                void exportExcel(
+                  () => downloadContractorHeadcountExcel({ date: to }),
+                  `so-luong-nha-thau-${to}.xlsx`,
+                )
+              }
+            >
+              <Download className="h-4 w-4" />
+              Excel
+            </Button>
+            <Button
+              variant="accent"
+              size="sm"
+              disabled={snapshotMutation.isPending}
+              onClick={() => snapshotMutation.mutate()}
+            >
+              <Send className="h-4 w-4" />
+              Snapshot + đẩy giám sát
+            </Button>
+          </div>
         }
       >
         <QueryBoundary isLoading={headcountQuery.isLoading} isEmpty={headcountRows.length === 0}>
@@ -322,11 +395,16 @@ export default function ContractorReportsPage() {
             variant="outline"
             size="sm"
             onClick={() =>
-              void downloadContractorPersonnelExcel({
-                from,
-                to,
-                contractorId: contractorId || undefined,
-              }).then((b) => downloadBlob(b, 'contractor-personnel.xlsx'))
+              void exportExcel(
+                () =>
+                  downloadContractorPersonnelExcel({
+                    from,
+                    to,
+                    contractorId: contractorId || undefined,
+                    projectId: projectId || undefined,
+                  }),
+                'contractor-personnel.xlsx',
+              )
             }
           >
             <Download className="h-4 w-4" />
@@ -377,21 +455,45 @@ export default function ContractorReportsPage() {
 
       <DesignCard
         title="Lịch sử vào/ra"
+        description="Chọn một người để xuất lịch sử riêng; để trống = toàn bộ nhà thầu."
         actions={
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() =>
-              void downloadContractorAccessLogsExcel({
-                from,
-                to,
-                contractorId: contractorId || undefined,
-              }).then((b) => downloadBlob(b, 'contractor-access-logs.xlsx'))
-            }
-          >
-            <Download className="h-4 w-4" />
-            Excel
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Select
+              className="h-9 min-w-[220px]"
+              value={userId}
+              onChange={(e) => {
+                setUserId(e.target.value);
+                setAccessPage(1);
+              }}
+            >
+              <option value="">Tất cả nhân sự</option>
+              {personOptions.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.label}
+                </option>
+              ))}
+            </Select>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() =>
+                void exportExcel(
+                  () =>
+                    downloadContractorAccessLogsExcel({
+                      from,
+                      to,
+                      contractorId: contractorId || undefined,
+                      projectId: projectId || undefined,
+                      userId: userId || undefined,
+                    }),
+                  userId ? 'lich-su-vao-ra-ca-nhan.xlsx' : 'contractor-access-logs.xlsx',
+                )
+              }
+            >
+              <Download className="h-4 w-4" />
+              Excel
+            </Button>
+          </div>
         }
       >
         <QueryBoundary isLoading={accessQuery.isLoading} isEmpty={accessRows.length === 0}>
@@ -443,10 +545,15 @@ export default function ContractorReportsPage() {
             variant="outline"
             size="sm"
             onClick={() =>
-              void downloadShiftPersonnelExcel({
-                contractorId: contractorId || undefined,
-                workShiftId: workShiftId || undefined,
-              }).then((b) => downloadBlob(b, 'shift-personnel.xlsx'))
+              void exportExcel(
+                () =>
+                  downloadShiftPersonnelExcel({
+                    contractorId: contractorId || undefined,
+                    workShiftId: workShiftId || undefined,
+                    projectId: projectId || undefined,
+                  }),
+                'shift-personnel.xlsx',
+              )
             }
           >
             <Download className="h-4 w-4" />
@@ -494,6 +601,99 @@ export default function ContractorReportsPage() {
             onPageChange={setShiftPage}
           />
         </QueryBoundary>
+      </DesignCard>
+
+      <DesignCard
+        title={`Ngày công theo tháng (${month})`}
+        description="Tổng kết vào/ra (ngày công) nhân sự nhà thầu trong tháng."
+        actions={
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() =>
+              void exportExcel(
+                () =>
+                  downloadContractorMonthlyExcel({
+                    month,
+                    contractorId: contractorId || undefined,
+                    projectId: projectId || undefined,
+                  }),
+                `ngay-cong-nha-thau-${month}.xlsx`,
+              )
+            }
+          >
+            <Download className="h-4 w-4" />
+            Excel
+          </Button>
+        }
+      >
+        <QueryBoundary isLoading={monthlyQuery.isLoading} isEmpty={monthlyRows.length === 0}>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border bg-muted/30 text-left">
+                  <th className="p-2 font-semibold">Mã</th>
+                  <th className="p-2 font-semibold">Họ tên</th>
+                  <th className="p-2 font-semibold">Nhà thầu</th>
+                  <th className="p-2 text-right font-semibold">Ngày công</th>
+                  <th className="p-2 text-right font-semibold">Ngày muộn</th>
+                  <th className="p-2 text-right font-semibold">Muộn (p)</th>
+                  <th className="p-2 text-right font-semibold">OT (p)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {monthlyPaged.pageRows.map((r) => (
+                  <tr key={r.userId} className="border-t border-border">
+                    <td className="p-2 font-mono text-xs">{r.employeeCode}</td>
+                    <td className="p-2">{r.fullName}</td>
+                    <td className="p-2 text-xs">{r.contractorName ?? '—'}</td>
+                    <td className="p-2 text-right font-semibold">{r.workDays}</td>
+                    <td className="p-2 text-right">{r.lateDays}</td>
+                    <td className="p-2 text-right">{r.lateMinutes}</td>
+                    <td className="p-2 text-right">{r.otMinutes}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <TablePager
+            currentPage={monthlyPaged.currentPage}
+            totalPages={monthlyPaged.totalPages}
+            total={monthlyPaged.total}
+            unit="nhân sự"
+            onPageChange={setMonthlyPage}
+          />
+        </QueryBoundary>
+      </DesignCard>
+
+      <DesignCard
+        title={`Chi tiết vào/ra từng ngày (${month})`}
+        description="Excel dạng lưới: mỗi cột một ngày trong tháng, ô = giờ vào–ra."
+        actions={
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() =>
+              void exportExcel(
+                () =>
+                  downloadContractorMonthlyDetailExcel({
+                    month,
+                    contractorId: contractorId || undefined,
+                    projectId: projectId || undefined,
+                  }),
+                `chi-tiet-ngay-trong-thang-${month}.xlsx`,
+              )
+            }
+          >
+            <Download className="h-4 w-4" />
+            Excel lưới tháng
+          </Button>
+        }
+      >
+        <p className="text-sm text-muted-foreground">
+          Xuất file Excel cột 1–{monthlyQuery.data?.days ?? 31}: mã NV, họ tên, CCCD, nhà thầu, rồi từng
+          ngày (ví dụ 08:01-17:05). Dùng bộ lọc Tháng / Nhà thầu / Dự án phía trên.
+        </p>
       </DesignCard>
     </PageShell>
   );

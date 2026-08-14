@@ -1,3 +1,4 @@
+import { randomInt } from 'crypto';
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Device, DeviceType, Prisma } from '@prisma/client';
@@ -228,8 +229,19 @@ export class DevicesService {
     return this.sanitize(device);
   }
 
+  private nextDeviceCode(deviceType: DeviceType) {
+    const prefix =
+      deviceType === DeviceType.DNAKE ? 'DNA' : deviceType === DeviceType.CAMERA ? 'CAM' : 'AKU';
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    let suffix = '';
+    for (let i = 0; i < 4; i += 1) {
+      suffix += alphabet[randomInt(alphabet.length)];
+    }
+    return `${prefix}${suffix}`;
+  }
+
   async create(dto: CreateDeviceDto) {
-    const { username: _u, password: _p, protocol: _pr, relay: _r, ...rest } = dto;
+    const { username: _u, password: _p, protocol: _pr, relay: _r, code: dtoCode, ...rest } = dto;
     const panelConfig = this.buildPanelConfig(dto);
     if (isPanelType(dto.deviceType)) {
       this.assertPanelCredentials(dto.deviceType, panelConfig ?? {}, true);
@@ -243,19 +255,32 @@ export class DevicesService {
       });
     }
 
-    const data: Prisma.DeviceUncheckedCreateInput = {
-      ...rest,
-      ...(dto.deviceType === DeviceType.AKUVOX && panelConfig ? { akuvoxConfig: panelConfig } : {}),
-      ...(dto.deviceType === DeviceType.DNAKE && panelConfig ? { dnakeConfig: panelConfig } : {}),
-    };
+    const providedCode = dtoCode?.trim();
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const data: Prisma.DeviceUncheckedCreateInput = {
+        ...rest,
+        code: providedCode || this.nextDeviceCode(dto.deviceType),
+        ...(dto.deviceType === DeviceType.AKUVOX && panelConfig ? { akuvoxConfig: panelConfig } : {}),
+        ...(dto.deviceType === DeviceType.DNAKE && panelConfig ? { dnakeConfig: panelConfig } : {}),
+      };
 
-    let device: Device;
-    try {
-      device = await this.prisma.device.create({ data });
-    } catch (err) {
-      this.rethrowKnownError(err);
+      try {
+        const device = await this.prisma.device.create({ data });
+        return this.sanitize(device);
+      } catch (err) {
+        if (
+          err instanceof Prisma.PrismaClientKnownRequestError &&
+          err.code === 'P2002' &&
+          !providedCode
+        ) {
+          const target = err.meta?.target;
+          const fields = Array.isArray(target) ? target.join(', ') : String(target ?? '');
+          if (fields.includes('code')) continue;
+        }
+        this.rethrowKnownError(err);
+      }
     }
-    return this.sanitize(device);
+    throw new ConflictException('Không thể tự sinh mã thiết bị, vui lòng thử lại');
   }
 
   async update(id: string, dto: UpdateDeviceDto) {
@@ -264,7 +289,7 @@ export class DevicesService {
     });
     if (!existing) throw new NotFoundException('Device not found');
 
-    const { username: _u, password: _p, protocol: _pr, relay: _r, ...rest } = dto;
+    const { username: _u, password: _p, protocol: _pr, relay: _r, code: _code, ...rest } = dto;
     const hasPanelFields =
       dto.username !== undefined ||
       dto.password !== undefined ||

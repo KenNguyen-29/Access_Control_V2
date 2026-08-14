@@ -36,12 +36,12 @@ export class CreateDeviceDto {
   @MaxLength(100)
   name!: string;
 
-  @ApiProperty()
+  @ApiPropertyOptional({ description: 'Tự sinh nếu bỏ trống' })
   @Transform(emptyToUndefined)
+  @IsOptional()
   @IsString()
-  @IsNotEmpty({ message: 'Vui lòng nhập mã thiết bị' })
   @Matches(CODE, { message: 'Mã thiết bị không hợp lệ' })
-  code!: string;
+  code?: string;
 
   @ApiProperty({ enum: DeviceType })
   @IsEnum(DeviceType)

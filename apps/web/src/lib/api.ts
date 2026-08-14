@@ -1296,10 +1296,12 @@ export async function getContractorAccessLogs(params?: {
 export async function getShiftPersonnelReport(params?: {
   contractorId?: string;
   workShiftId?: string;
+  projectId?: string;
 }) {
   const q = new URLSearchParams();
   if (params?.contractorId) q.set('contractorId', params.contractorId);
   if (params?.workShiftId) q.set('workShiftId', params.workShiftId);
+  if (params?.projectId) q.set('projectId', params.projectId);
   const qs = q.toString();
   return apiRequest<{ asOf: string; rows: Array<Record<string, unknown>> }>(
     `/contractor-reports/shift-personnel${qs ? `?${qs}` : ''}`,
@@ -1341,12 +1343,76 @@ export async function downloadContractorAccessLogsExcel(params?: {
 export async function downloadShiftPersonnelExcel(params?: {
   contractorId?: string;
   workShiftId?: string;
+  projectId?: string;
 }) {
   const q = new URLSearchParams();
   if (params?.contractorId) q.set('contractorId', params.contractorId);
   if (params?.workShiftId) q.set('workShiftId', params.workShiftId);
+  if (params?.projectId) q.set('projectId', params.projectId);
   const qs = q.toString();
   return apiRequest<Blob>(`/contractor-reports/export/shift-personnel${qs ? `?${qs}` : ''}`);
+}
+
+export async function downloadContractorHeadcountExcel(params?: { date?: string }) {
+  const q = new URLSearchParams();
+  if (params?.date) q.set('date', params.date);
+  const qs = q.toString();
+  return apiRequest<Blob>(`/contractor-reports/export/headcount${qs ? `?${qs}` : ''}`);
+}
+
+export async function getContractorMonthly(params?: {
+  month?: string;
+  contractorId?: string;
+  projectId?: string;
+}) {
+  const q = new URLSearchParams();
+  if (params?.month) q.set('month', params.month);
+  if (params?.contractorId) q.set('contractorId', params.contractorId);
+  if (params?.projectId) q.set('projectId', params.projectId);
+  const qs = q.toString();
+  return apiRequest<{
+    month: string;
+    days: number;
+    rows: Array<{
+      userId: string;
+      employeeCode: string;
+      fullName: string;
+      citizenId: string | null;
+      contractorName: string | null;
+      projectName: string | null;
+      workDays: number;
+      lateDays: number;
+      lateMinutes: number;
+      earlyLeaveMinutes: number;
+      otMinutes: number;
+    }>;
+  }>(`/contractor-reports/monthly${qs ? `?${qs}` : ''}`);
+}
+
+export async function downloadContractorMonthlyExcel(params?: {
+  month?: string;
+  contractorId?: string;
+  projectId?: string;
+}) {
+  const q = new URLSearchParams();
+  if (params?.month) q.set('month', params.month);
+  if (params?.contractorId) q.set('contractorId', params.contractorId);
+  if (params?.projectId) q.set('projectId', params.projectId);
+  const qs = q.toString();
+  return apiRequest<Blob>(`/contractor-reports/export/monthly${qs ? `?${qs}` : ''}`);
+}
+
+export async function downloadContractorMonthlyDetailExcel(params?: {
+  month?: string;
+  contractorId?: string;
+  projectId?: string;
+}) {
+  const q = new URLSearchParams();
+  if (params?.month) q.set('month', params.month);
+  if (params?.contractorId) q.set('contractorId', params.contractorId);
+  if (params?.projectId) q.set('projectId', params.projectId);
+  const qs = q.toString();
+  return apiRequest<Blob>(`/contractor-reports/export/monthly-detail${qs ? `?${qs}` : ''}`);
 }
 
 export async function runContractorSnapshot(params?: { date?: string; push?: boolean }) {

@@ -336,6 +336,164 @@ export class ContractorReportsController {
 
 
 
+  @Get('export/headcount')
+
+  async exportHeadcount(
+
+    @Res() res: Response,
+
+    @Query('date') date?: string,
+
+    @CurrentUser() user?: JwtPayload,
+
+  ) {
+
+    const buf = await this.service.exportHeadcountExcel({
+
+      date,
+
+      projectIds: this.scopedProjectIds(user!),
+
+    });
+
+    res.setHeader(
+
+      'Content-Type',
+
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+
+    );
+
+    res.setHeader('Content-Disposition', 'attachment; filename="contractor-headcount.xlsx"');
+
+    res.send(buf);
+
+  }
+
+
+
+  @Get('monthly')
+
+  async monthly(
+
+    @Query('month') month?: string,
+
+    @Query('contractorId') contractorId?: string,
+
+    @Query('projectId') projectId?: string,
+
+    @CurrentUser() user?: JwtPayload,
+
+  ) {
+
+    return successResponse(
+
+      await this.service.monthlyTimesheet({
+
+        month,
+
+        contractorId,
+
+        projectId: this.scopedProjectId(user!, projectId),
+
+        projectIds: this.scopedProjectIds(user!),
+
+      }),
+
+    );
+
+  }
+
+
+
+  @Get('export/monthly')
+
+  async exportMonthly(
+
+    @Res() res: Response,
+
+    @Query('month') month?: string,
+
+    @Query('contractorId') contractorId?: string,
+
+    @Query('projectId') projectId?: string,
+
+    @CurrentUser() user?: JwtPayload,
+
+  ) {
+
+    const buf = await this.service.exportMonthlyExcel({
+
+      month,
+
+      contractorId,
+
+      projectId: this.scopedProjectId(user!, projectId),
+
+      projectIds: this.scopedProjectIds(user!),
+
+    });
+
+    res.setHeader(
+
+      'Content-Type',
+
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+
+    );
+
+    res.setHeader('Content-Disposition', 'attachment; filename="contractor-monthly.xlsx"');
+
+    res.send(buf);
+
+  }
+
+
+
+  @Get('export/monthly-detail')
+
+  async exportMonthlyDetail(
+
+    @Res() res: Response,
+
+    @Query('month') month?: string,
+
+    @Query('contractorId') contractorId?: string,
+
+    @Query('projectId') projectId?: string,
+
+    @CurrentUser() user?: JwtPayload,
+
+  ) {
+
+    const buf = await this.service.exportMonthlyDetailExcel({
+
+      month,
+
+      contractorId,
+
+      projectId: this.scopedProjectId(user!, projectId),
+
+      projectIds: this.scopedProjectIds(user!),
+
+    });
+
+    res.setHeader(
+
+      'Content-Type',
+
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+
+    );
+
+    res.setHeader('Content-Disposition', 'attachment; filename="contractor-monthly-detail.xlsx"');
+
+    res.send(buf);
+
+  }
+
+
+
   @Post('snapshot')
 
   async snapshot(@Query('date') date?: string, @Query('push') push?: string) {

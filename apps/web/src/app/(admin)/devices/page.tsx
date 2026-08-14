@@ -73,7 +73,6 @@ function hasPanelPassword(device: Device, type: PanelDeviceType) {
 
 const EMPTY_FORM = {
   name: '',
-  code: '',
   deviceType: 'AKUVOX' as PanelDeviceType,
   ipAddress: '',
   location: '',
@@ -182,7 +181,6 @@ export default function DevicesPage() {
     setEditing(device);
     setForm({
       name: device.name,
-      code: device.code,
       deviceType: device.deviceType,
       ipAddress: device.ipAddress || '',
       location: device.location || '',
@@ -271,7 +269,6 @@ export default function DevicesPage() {
       const password = form.password.trim();
       const payload = {
         name: form.name.trim(),
-        code: form.code.trim(),
         deviceType: form.deviceType,
         ipAddress: form.ipAddress.trim() || undefined,
         location: form.location.trim() || undefined,
@@ -657,35 +654,19 @@ export default function DevicesPage() {
         description="Cấu hình thông tin thiết bị Akuvox hoặc camera."
       >
         <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="mb-1 block text-xs text-muted-foreground">
-                Tên thiết bị
-                <RequiredMark />
-              </label>
-              <Input
-                placeholder="Cổng chính"
-                className={cn('input-design h-10', fieldErrors.name && 'border-destructive')}
-                value={form.name}
-                onChange={(e) => patchForm({ name: e.target.value })}
-                aria-invalid={Boolean(fieldErrors.name)}
-              />
-              <FieldError message={fieldErrors.name} />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs text-muted-foreground">
-                Mã thiết bị
-                <RequiredMark />
-              </label>
-              <Input
-                placeholder="DEV001"
-                className={cn('input-design h-10', fieldErrors.code && 'border-destructive')}
-                value={form.code}
-                onChange={(e) => patchForm({ code: e.target.value })}
-                aria-invalid={Boolean(fieldErrors.code)}
-              />
-              <FieldError message={fieldErrors.code} />
-            </div>
+          <div>
+            <label className="mb-1 block text-xs text-muted-foreground">
+              Tên thiết bị
+              <RequiredMark />
+            </label>
+            <Input
+              placeholder="Cổng chính"
+              className={cn('input-design h-10', fieldErrors.name && 'border-destructive')}
+              value={form.name}
+              onChange={(e) => patchForm({ name: e.target.value })}
+              aria-invalid={Boolean(fieldErrors.name)}
+            />
+            <FieldError message={fieldErrors.name} />
           </div>
           <div>
             <label className="mb-1 block text-xs text-muted-foreground">Loại</label>
