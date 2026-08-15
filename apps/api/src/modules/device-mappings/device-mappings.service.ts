@@ -41,9 +41,10 @@ export class DeviceMappingsService {
   }
 
   async remove(id: string) {
-    return this.prisma.deviceCameraMapping.update({
-      where: { id },
-      data: { isDeleted: true },
-    });
+    const existing = await this.prisma.deviceCameraMapping.findUnique({ where: { id } });
+    if (!existing || existing.isDeleted) {
+      throw new NotFoundException('Không tìm thấy liên kết');
+    }
+    return this.prisma.deviceCameraMapping.delete({ where: { id } });
   }
 }

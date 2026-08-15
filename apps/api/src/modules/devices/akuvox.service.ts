@@ -476,4 +476,144 @@ export class AkuvoxService {
 
     return { synced, devices: devices.length, results };
   }
+
+  /**
+   * Remove a person from Akuvox panels in the given zones (or all panels if zoneIds empty → none).
+   * Used when deleting a user or revoking zone access.
+   */
+  async removeUserFromZones(params: {
+    employeeCode: string;
+    zoneIds: string[];
+  }) {
+    const employeeCode = params.employeeCode.trim();
+    if (!employeeCode || params.zoneIds.length === 0) {
+      return { removed: 0, devices: 0, results: [] as Array<{
+        deviceId: string;
+        deviceName: string;
+        zoneId: string | null;
+        ok: boolean;
+        error?: string;
+        skipped?: boolean;
+      }> };
+    }
+
+    const devices = await this.prisma.device.findMany({
+      where: {
+        deviceType: DeviceType.AKUVOX,
+        isDeleted: false,
+        zoneId: { in: params.zoneIds },
+      },
+    });
+
+    const results: Array<{
+      deviceId: string;
+      deviceName: string;
+      zoneId: string | null;
+      ok: boolean;
+      error?: string;
+      skipped?: boolean;
+    }> = [];
+    let removed = 0;
+
+    for (const device of devices) {
+      try {
+        const result = await this.removeUserFromDevice(device, employeeCode);
+        if (result.skipped) {
+          results.push({
+            deviceId: device.id,
+            deviceName: device.name,
+            zoneId: device.zoneId,
+            ok: true,
+            skipped: true,
+          });
+          continue;
+        }
+        if (this.isSuccessfulResponse(result) || this.mockMode) {
+          removed += 1;
+          results.push({
+            deviceId: device.id,
+            deviceName: device.name,
+            zoneId: device.zoneId,
+            ok: true,
+          });
+        } else {
+          results.push({
+            deviceId: device.id,
+            deviceName: device.name,
+            zoneId: device.zoneId,
+            ok: false,
+            error: this.buildErrorMessage(result),
+          });
+        }
+      } catch (err) {
+        results.push({
+          deviceId: device.id,
+          deviceName: device.name,
+          zoneId: device.zoneId,
+          ok: false,
+          error: err instanceof Error ? err.message : 'Unknown error',
+        });
+      }
+    }
+
+    return { removed, devices: devices.length, results, mock: this.mockMode };
+  }
+
+  private async removeUserFromDevice(device: Device, employeeCode: string) {
+    if (this.mockMode) {
+      this.logger.log(`[MOCK] remove user=${employeeCode} device=${device.code}`);
+      return { ok: true, status: 200, data: { mock: true }, skipped: false as const };
+    }
+
+    const cfg = this.parseConfig(device);
+    const existingId = await this.findModernUserId(device, employeeCode);
+
+    const tryModern = async () =>
+      this.request(device, '/api/user/del', {
+        method: 'POST',
+        body: JSON.stringify({
+          target: 'user',
+          action: 'del',
+          data: {
+            item: [
+              existingId
+                ? { ID: existingId, UserID: employeeCode }
+                : { UserID: employeeCode },
+            ],
+          },
+        }),
+      });
+
+    const tryLegacy = async () =>
+      this.request(
+        device,
+        `/fcgi/do?action=DelUser&UserID=${encodeURIComponent(employeeCode)}`,
+        { method: 'GET' },
+      );
+
+    // Already absent on modern lookup — treat as success (idempotent).
+    if (!existingId && cfg.apiVersion !== 'legacy') {
+      const legacy = await tryLegacy();
+      if (this.isSuccessfulResponse(legacy)) return { ...legacy, skipped: false as const };
+      // Panel may not have the user; don't fail hard.
+      this.logger.log(
+        `Akuvox remove: user=${employeeCode} not found on device=${device.code} (treat as removed)`,
+      );
+      return { ok: true, status: 200, data: { skipped: true }, skipped: true as const };
+    }
+
+    const preferLegacy = cfg.apiVersion === 'legacy';
+    let result = preferLegacy ? await tryLegacy() : await tryModern();
+    if (
+      !this.isSuccessfulResponse(result) &&
+      !preferLegacy &&
+      (result.status === 404 || result.status === 400 || result.status === 405)
+    ) {
+      this.logger.warn(
+        `Akuvox modern delete failed device=${device.code}, retrying legacy DelUser`,
+      );
+      result = await tryLegacy();
+    }
+    return { ...result, skipped: false as const };
+  }
 }

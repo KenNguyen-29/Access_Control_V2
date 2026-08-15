@@ -883,7 +883,7 @@ export default function DevicesPage() {
         onClose={() => setDeleteTarget(null)}
         onConfirm={() => onConfirmDelete()}
         title="Xóa thiết bị"
-        message={`Bạn có chắc muốn xóa thiết bị ${deleteTarget?.name ?? ''}?`}
+        message={`Bạn có chắc muốn xóa hẳn thiết bị ${deleteTarget?.name ?? ''}? Mapping camera và quyền gắn máy sẽ bị xóa — không khôi phục được.`}
         confirmLabel="Xóa"
         loading={deleting}
       />

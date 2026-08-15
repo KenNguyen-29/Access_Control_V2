@@ -504,11 +504,21 @@ export default function UsersPage() {
 
   const deleteMutation = useMutation({
     mutationFn: (target: User) => deleteUser(target.id),
-    onSuccess: () => {
+    onSuccess: (result) => {
       setDeleteTarget(null);
       void queryClient.invalidateQueries({ queryKey: ['users'] });
+      const failed = result?.deviceRemove?.failed ?? 0;
+      if (failed > 0) {
+        setError(
+          `Đã ẩn ${result.employeeCode}; ${failed} thiết bị gỡ Face thất bại — kiểm tra panel`,
+        );
+        setNotice(null);
+      } else {
+        setNotice(`Đã ẩn ${result.employeeCode} và gỡ Face trên thiết bị`);
+        setError(null);
+      }
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Xóa thất bại'),
+    onError: (e) => setError(e instanceof ApiError ? e.message : 'Ẩn nhân sự thất bại'),
   });
   const deleting = deleteMutation.isPending;
 
@@ -1294,9 +1304,9 @@ export default function UsersPage() {
         open={!!deleteTarget}
         onClose={() => setDeleteTarget(null)}
         onConfirm={() => onConfirmDelete()}
-        title="Xóa nhân viên"
-        message={`Bạn có chắc muốn xóa nhân viên ${deleteTarget?.fullName ?? ''}? Hành động này không thể hoàn tác.`}
-        confirmLabel="Xóa"
+        title="Ẩn nhân sự"
+        message={`Ẩn nhân sự ${deleteTarget?.fullName ?? ''} khỏi danh sách và gỡ Face trên thiết bị? Dữ liệu chấm công / nhật ký được giữ lại.`}
+        confirmLabel="Ẩn nhân sự"
         loading={deleting}
       />
     </PageShell>

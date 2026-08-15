@@ -164,7 +164,12 @@ export class UsersController {
       this.projectScope.scopeFromUser(user),
       existing.projectId,
     );
-    await this.usersService.remove(id);
-    return successResponse(null, 'User deleted');
+    const result = await this.usersService.remove(id);
+    const failed = result.deviceRemove?.failed ?? 0;
+    const message =
+      failed > 0
+        ? `Đã ẩn nhân sự; ${failed} thiết bị xóa Face thất bại — kiểm tra panel thủ công`
+        : 'Đã ẩn nhân sự và gỡ Face trên thiết bị';
+    return successResponse(result, message);
   }
 }

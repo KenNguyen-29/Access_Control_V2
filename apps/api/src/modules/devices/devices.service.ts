@@ -339,14 +339,31 @@ export class DevicesService {
   }
 
   async remove(id: string) {
-    const device = await this.findOne(id);
+    const device = await this.prisma.device.findFirst({
+      where: { id, isDeleted: false },
+    });
+    if (!device) throw new NotFoundException('Device not found');
+
     if (device.deviceType === DeviceType.CAMERA) {
       await this.go2rtc.removeStream(this.go2rtc.streamNameForDevice(device.id));
     }
-    return this.prisma.device.update({
-      where: { id },
-      data: { isDeleted: true },
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.deviceCameraMapping.deleteMany({
+        where: {
+          OR: [{ akuvoxDeviceId: id }, { cameraDeviceId: id }],
+        },
+      });
+      await tx.userDevicePermission.deleteMany({ where: { deviceId: id } });
+      // Giữ AccessLog giám sát, chỉ bỏ liên kết thiết bị
+      await tx.accessLog.updateMany({
+        where: { deviceId: id },
+        data: { deviceId: null },
+      });
+      await tx.device.delete({ where: { id } });
     });
+
+    return { id, code: device.code, name: device.name };
   }
 
   /** Resolve the host/port to probe for reachability, based on device type. */

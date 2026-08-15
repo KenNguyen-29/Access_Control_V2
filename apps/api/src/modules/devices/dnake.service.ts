@@ -424,6 +424,132 @@ export class DnakeService {
     };
   }
 
+  /**
+   * Remove a person from DNAKE panels in the given zones.
+   * DNAKE user API: action 1=add, 2=modify, 3=delete.
+   */
+  async removeUserFromZones(params: {
+    employeeCode: string;
+    fullName?: string;
+    zoneIds: string[];
+  }) {
+    const employeeCode = params.employeeCode.trim();
+    if (!employeeCode || params.zoneIds.length === 0) {
+      return {
+        removed: 0,
+        devices: 0,
+        results: [] as Array<{
+          deviceId: string;
+          deviceName: string;
+          zoneId: string | null;
+          ok: boolean;
+          error?: string;
+          skipped?: boolean;
+        }>,
+        mock: this.mockMode,
+      };
+    }
+
+    const devices = await this.prisma.device.findMany({
+      where: {
+        deviceType: DeviceType.DNAKE,
+        isDeleted: false,
+        zoneId: { in: params.zoneIds },
+      },
+    });
+
+    const results: Array<{
+      deviceId: string;
+      deviceName: string;
+      zoneId: string | null;
+      ok: boolean;
+      error?: string;
+      skipped?: boolean;
+    }> = [];
+    let removed = 0;
+
+    for (const device of devices) {
+      try {
+        const result = await this.removeUserFromDevice(
+          device,
+          employeeCode,
+          params.fullName,
+        );
+        if (result.skipped) {
+          results.push({
+            deviceId: device.id,
+            deviceName: device.name,
+            zoneId: device.zoneId,
+            ok: true,
+            skipped: true,
+          });
+          continue;
+        }
+        if (result.ok || this.mockMode) {
+          removed += 1;
+          results.push({
+            deviceId: device.id,
+            deviceName: device.name,
+            zoneId: device.zoneId,
+            ok: true,
+          });
+        } else {
+          results.push({
+            deviceId: device.id,
+            deviceName: device.name,
+            zoneId: device.zoneId,
+            ok: false,
+            error: 'DNAKE delete failed',
+          });
+        }
+      } catch (err) {
+        results.push({
+          deviceId: device.id,
+          deviceName: device.name,
+          zoneId: device.zoneId,
+          ok: false,
+          error: err instanceof Error ? err.message : 'error',
+        });
+      }
+    }
+
+    return { removed, devices: devices.length, results, mock: this.mockMode };
+  }
+
+  private async removeUserFromDevice(
+    device: Device,
+    employeeCode: string,
+    fullName?: string,
+  ) {
+    if (this.mockMode) {
+      this.logger.log(`[MOCK] remove user=${employeeCode} device=${device.code}`);
+      return { ok: true, status: 200, data: { code: 0 }, skipped: false as const };
+    }
+
+    const existing = await this.listUsers(device);
+    const index = this.findUserIndex(existing, employeeCode, fullName);
+    if (index === null) {
+      this.logger.log(
+        `DNAKE remove: user=${employeeCode} not on device=${device.code} (treat as removed)`,
+      );
+      return { ok: true, status: 200, data: { code: 0 }, skipped: true as const };
+    }
+
+    const form = new FormData();
+    form.append('action', '3'); // delete
+    form.append('group', '-1');
+    form.append('index', String(index));
+    form.append('name', fullName?.trim() || employeeCode);
+    form.append('user_id', employeeCode);
+
+    const result = await this.request(device, '/api/v1/device/user/list', {
+      method: 'POST',
+      body: form,
+    });
+    const ok = result.ok && (this.isOk(result.data) || this.mockMode);
+    return { ...result, ok, skipped: false as const };
+  }
+
   async fetchUnlockLogs(device: Device): Promise<
     Array<{
       group: string;

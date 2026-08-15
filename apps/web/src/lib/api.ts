@@ -545,7 +545,15 @@ export async function updateUser(id: string, data: Partial<User>) {
 }
 
 export async function deleteUser(id: string) {
-  return apiRequest<null>(`/users/${id}`, { method: 'DELETE' });
+  return apiRequest<{
+    id: string;
+    employeeCode: string;
+    deviceRemove?: {
+      failed: number;
+      akuvox?: { removed: number; devices: number };
+      dnake?: { removed: number; devices: number };
+    };
+  }>(`/users/${id}`, { method: 'DELETE' });
 }
 
 export type FaceEnrollResult = {

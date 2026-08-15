@@ -119,8 +119,8 @@ export class DevicesController {
 
   @Delete(':id')
   async remove(@Param('id') id: string) {
-    await this.service.remove(id);
-    return successResponse(null, 'Device deleted');
+    const result = await this.service.remove(id);
+    return successResponse(result, 'Đã xóa thiết bị');
   }
 
   @Post(':id/open-door')

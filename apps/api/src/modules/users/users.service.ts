@@ -1,5 +1,5 @@
 import { randomInt } from 'crypto';
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Prisma, UserType } from '@prisma/client';
 import * as ExcelJS from 'exceljs';
@@ -42,6 +42,8 @@ export type UsersImportResult = {
 
 @Injectable()
 export class UsersService {
+  private readonly logger = new Logger(UsersService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
@@ -233,11 +235,99 @@ export class UsersService {
   }
 
   async remove(id: string) {
-    await this.findOne(id);
-    return this.prisma.user.update({
-      where: { id },
-      data: { isDeleted: true },
+    const user = await this.prisma.user.findFirst({
+      where: { id, isDeleted: false },
+      include: {
+        userAccessPermissions: {
+          where: { isDeleted: false },
+          select: { zoneId: true },
+        },
+      },
     });
+    if (!user) throw new NotFoundException('User not found');
+
+    const zoneIds = [...new Set(user.userAccessPermissions.map((p) => p.zoneId))];
+
+    // Push delete to panels while we still know which zones they were on.
+    const [akuvoxRemove, dnakeRemove] = await Promise.all([
+      this.akuvox
+        .removeUserFromZones({ employeeCode: user.employeeCode, zoneIds })
+        .catch((err) => ({
+          removed: 0,
+          devices: 0,
+          results: [
+            {
+              deviceId: '',
+              deviceName: '',
+              zoneId: null as string | null,
+              ok: false,
+              error: err instanceof Error ? err.message : 'akuvox remove failed',
+            },
+          ],
+          mock: false,
+        })),
+      this.dnake
+        .removeUserFromZones({
+          employeeCode: user.employeeCode,
+          fullName: user.fullName,
+          zoneIds,
+        })
+        .catch((err) => ({
+          removed: 0,
+          devices: 0,
+          results: [
+            {
+              deviceId: '',
+              deviceName: '',
+              zoneId: null as string | null,
+              ok: false,
+              error: err instanceof Error ? err.message : 'dnake remove failed',
+            },
+          ],
+          mock: false,
+        })),
+    ]);
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.userAccessPermission.updateMany({
+        where: { userId: id, isDeleted: false },
+        data: { isDeleted: true },
+      });
+      await tx.userDevicePermission.updateMany({
+        where: { userId: id, isDeleted: false },
+        data: { isDeleted: true },
+      });
+      await tx.credential.updateMany({
+        where: { userId: id, isDeleted: false },
+        data: { isDeleted: true, isActive: false },
+      });
+      // Soft-delete user — keep attendance / access logs / shifts for history
+      await tx.user.update({
+        where: { id },
+        data: { isDeleted: true, isActive: false },
+      });
+    });
+
+    const deviceFailures = [...akuvoxRemove.results, ...dnakeRemove.results].filter(
+      (r) => !r.ok,
+    );
+    if (deviceFailures.length > 0) {
+      this.logger.warn(
+        `User ${user.employeeCode} soft-deleted but panel remove failed: ${deviceFailures
+          .map((f) => `${f.deviceName || '?'}: ${f.error || 'fail'}`)
+          .join('; ')}`,
+      );
+    }
+
+    return {
+      id,
+      employeeCode: user.employeeCode,
+      deviceRemove: {
+        akuvox: akuvoxRemove,
+        dnake: dnakeRemove,
+        failed: deviceFailures.length,
+      },
+    };
   }
 
   /** Assign access zones and optionally push FaceID to each zone's Akuvox. */
@@ -452,6 +542,34 @@ export class UsersService {
         });
       }
     });
+
+    const oldZoneIds = oldPerms.map((p) => p.zoneId).filter((zid) => zid !== dto.zoneId);
+    if (oldZoneIds.length > 0) {
+      await Promise.all([
+        this.akuvox
+          .removeUserFromZones({ employeeCode: user.employeeCode, zoneIds: oldZoneIds })
+          .catch((err) => {
+            this.logger.warn(
+              `Transfer: Akuvox remove old zones failed user=${user.employeeCode}: ${
+                err instanceof Error ? err.message : err
+              }`,
+            );
+          }),
+        this.dnake
+          .removeUserFromZones({
+            employeeCode: user.employeeCode,
+            fullName: user.fullName,
+            zoneIds: oldZoneIds,
+          })
+          .catch((err) => {
+            this.logger.warn(
+              `Transfer: DNAKE remove old zones failed user=${user.employeeCode}: ${
+                err instanceof Error ? err.message : err
+              }`,
+            );
+          }),
+      ]);
+    }
 
     const [akuvoxResult, dnakeResult] = await Promise.all([
       this.akuvox.syncUserCredentials(userId, dto.zoneId).catch((err) => ({
