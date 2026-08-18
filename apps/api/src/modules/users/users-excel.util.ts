@@ -133,60 +133,10 @@ export function basenamePath(raw: string): string {
   return parts[parts.length - 1] || cleaned;
 }
 
-/**
- * Map worksheet embedded images to Excel row numbers (1-based).
- * Uses image anchor nativeRow (0-based) when available.
- * Prefer images whose left column is near the "Ảnh" column when provided.
- */
-export function mapEmbeddedImagesByRow(
-  workbook: ExcelJS.Workbook,
-  sheet: ExcelJS.Worksheet,
-  preferCol?: number,
-): Map<number, Buffer> {
-  const byRow = new Map<number, Buffer>();
-  const images = sheet.getImages?.() ?? [];
-  type Cand = { row: number; col: number; buf: Buffer };
-  const cands: Cand[] = [];
-
-  for (const img of images) {
-    try {
-      const media = workbook.getImage(Number(img.imageId));
-      const buf = Buffer.isBuffer(media.buffer)
-        ? media.buffer
-        : Buffer.from(media.buffer as ArrayBuffer);
-      const tl = img.range?.tl as
-        | { nativeRow?: number; nativeCol?: number; row?: number; col?: number }
-        | undefined;
-      const row =
-        typeof tl?.nativeRow === 'number'
-          ? tl.nativeRow + 1
-          : typeof tl?.row === 'number'
-            ? Math.floor(tl.row) + 1
-            : null;
-      const col =
-        typeof tl?.nativeCol === 'number'
-          ? tl.nativeCol + 1
-          : typeof tl?.col === 'number'
-            ? Math.floor(tl.col) + 1
-            : 0;
-      if (row != null && buf.length > 0) {
-        cands.push({ row, col, buf });
-      }
-    } catch {
-      /* skip broken media */
-    }
-  }
-
-  // Prefer images closest to the face column; otherwise first per row
-  cands.sort((a, b) => {
-    if (a.row !== b.row) return a.row - b.row;
-    if (preferCol) {
-      return Math.abs(a.col - preferCol) - Math.abs(b.col - preferCol);
-    }
-    return a.col - b.col;
-  });
-  for (const c of cands) {
-    if (!byRow.has(c.row)) byRow.set(c.row, c.buf);
-  }
-  return byRow;
+/** Match Excel "Ảnh" cell (filename or folder/file.jpg) against ZIP image index. */
+export function lookupZipImage(zipImages: Map<string, Buffer>, faceRaw: string): Buffer | null {
+  const trimmed = faceRaw.trim().replace(/\\/g, '/');
+  if (!trimmed) return null;
+  const base = basenamePath(trimmed).toLowerCase();
+  return zipImages.get(base) ?? zipImages.get(trimmed.toLowerCase()) ?? null;
 }

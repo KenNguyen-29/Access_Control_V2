@@ -28,7 +28,6 @@ import {
   type StatsOverview,
 } from '@/lib/api';
 import { usePermissions } from '@/hooks/usePermissions';
-import { canAccessRoute } from '@/lib/permissions';
 
 type NavItem = {
   icon: LucideIcon;
@@ -118,13 +117,13 @@ function ClockCard() {
 }
 
 export default function HomePage() {
-  const { role } = usePermissions();
+  const { canAccess } = usePermissions();
   const [stats, setStats] = useState<StatsOverview | null>(null);
   const [logs, setLogs] = useState<AccessLog[]>([]);
   const [deniedNotice, setDeniedNotice] = useState(false);
 
-  const visibleOperations = operations.filter((item) => canAccessRoute(role, item.path));
-  const visibleConfigs = configs.filter((item) => canAccessRoute(role, item.path));
+  const visibleOperations = operations.filter((item) => canAccess(item.path));
+  const visibleConfigs = configs.filter((item) => canAccess(item.path));
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -173,7 +172,7 @@ export default function HomePage() {
             </div>
           )}
 
-          {(stats?.unassignedEmployees ?? 0) > 0 && canAccessRoute(role, '/shifts') && (
+          {(stats?.unassignedEmployees ?? 0) > 0 && canAccess('/shifts') && (
             <Link
               href="/shifts"
               className="flex flex-col gap-2 rounded-sm border border-amber-300 bg-amber-50 px-4 py-3 text-amber-900 transition-colors hover:bg-amber-100 sm:flex-row sm:items-center sm:justify-between"

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -189,7 +189,9 @@ export default function UsersPage() {
   });
   const [importing, setImporting] = useState(false);
   const [importErrors, setImportErrors] = useState<string | null>(null);
-  const importInputRef = useRef<HTMLInputElement>(null);
+  const [importOpen, setImportOpen] = useState(false);
+  const [importExcel, setImportExcel] = useState<File | null>(null);
+  const [importZip, setImportZip] = useState<File | null>(null);
 
   const departmentId = deptFilter === 'all' ? undefined : deptFilter;
   const contractorId = contractorFilter === 'all' ? undefined : contractorFilter;
@@ -430,7 +432,9 @@ export default function UsersPage() {
 
   function toggleZone(zoneId: string) {
     setForm((prev) => {
-      const zoneIds = prev.zoneIds.includes(zoneId) ? [] : [zoneId];
+      const zoneIds = prev.zoneIds.includes(zoneId)
+        ? prev.zoneIds.filter((id) => id !== zoneId)
+        : [...prev.zoneIds, zoneId];
       const hasFace = Boolean(prev.faceImageFile || prev.facePreviewUrl);
       return {
         ...prev,
@@ -578,14 +582,24 @@ export default function UsersPage() {
     }
   }
 
-  async function onImportFile(file: File | undefined) {
-    if (!file) return;
+  function closeImportDialog() {
+    if (importing) return;
+    setImportOpen(false);
+    setImportExcel(null);
+    setImportZip(null);
+  }
+
+  async function onImportSubmit() {
+    if (!importExcel || !importZip) {
+      setError('Chọn cả file Excel và file ZIP ảnh');
+      return;
+    }
     setImporting(true);
     setError(null);
     setImportErrors(null);
     setNotice(null);
     try {
-      const result = await importUsers(file);
+      const result = await importUsers(importExcel, importZip);
       const facePart =
         result.facesEnrolled != null ? `, FaceID ${result.facesEnrolled}` : '';
       const zonePart =
@@ -604,11 +618,13 @@ export default function UsersPage() {
       }
       void queryClient.invalidateQueries({ queryKey: ['users'] });
       setPage(1);
+      setImportOpen(false);
+      setImportExcel(null);
+      setImportZip(null);
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Nhập Excel thất bại');
+      setError(e instanceof ApiError ? e.message : 'Nhập nhân sự thất bại');
     } finally {
       setImporting(false);
-      if (importInputRef.current) importInputRef.current.value = '';
     }
   }
 
@@ -620,19 +636,12 @@ export default function UsersPage() {
       actions={
         writeEnabled ? (
           <>
-            <input
-              ref={importInputRef}
-              type="file"
-              accept=".xlsx,.xls,.zip"
-              className="hidden"
-              onChange={(e) => void onImportFile(e.target.files?.[0])}
-            />
             <Button
               variant="outline"
               size="sm"
               onClick={() => void onDownloadTemplate()}
               disabled={loading || importing}
-              title="Mẫu: mã NV tự sinh; dán ảnh vào cột Ảnh; khu vực nhiều tên cách nhau bởi ;. ZIP = Excel + ảnh."
+              title="Mẫu Excel: cột Ảnh ghi tên file (vd. nguyen-van-a.jpg). Import kèm ZIP ảnh."
             >
               <Download className="h-4 w-4" />
               Tải mẫu Excel
@@ -640,12 +649,16 @@ export default function UsersPage() {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => importInputRef.current?.click()}
+              onClick={() => {
+                setImportExcel(null);
+                setImportZip(null);
+                setImportOpen(true);
+              }}
               disabled={loading || importing}
-              title="Nhận .xlsx (ảnh dán trong file) hoặc .zip (Excel + ảnh)"
+              title="Chọn file Excel và ZIP ảnh"
             >
               <Upload className="h-4 w-4" />
-              {importing ? 'Đang import...' : 'Import Excel'}
+              {importing ? 'Đang import...' : 'Import'}
             </Button>
             <Button variant="outline" size="sm" onClick={() => load()} disabled={loading}>
               <RefreshCw className={loading ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
@@ -960,6 +973,56 @@ export default function UsersPage() {
       </DesignCard>
 
       <Dialog
+        open={importOpen}
+        onClose={closeImportDialog}
+        title="Import nhân sự"
+        description="Chọn file Excel và ZIP chứa ảnh. Cột Ảnh ghi tên file trong ZIP (vd. nguyen-van-a.jpg)."
+      >
+        <div className="space-y-4">
+          <div>
+            <label className="mb-1 block text-xs font-medium">File Excel (.xlsx)</label>
+            <Input
+              type="file"
+              accept=".xlsx,.xls"
+              disabled={importing}
+              onChange={(e) => setImportExcel(e.target.files?.[0] ?? null)}
+            />
+            {importExcel && (
+              <p className="mt-1 text-xs text-muted-foreground">{importExcel.name}</p>
+            )}
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium">File ZIP ảnh (JPG/PNG)</label>
+            <Input
+              type="file"
+              accept=".zip"
+              disabled={importing}
+              onChange={(e) => setImportZip(e.target.files?.[0] ?? null)}
+            />
+            {importZip && (
+              <p className="mt-1 text-xs text-muted-foreground">{importZip.name}</p>
+            )}
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            Không dán ảnh vào Excel. Hệ thống tìm ảnh trong ZIP theo tên ở cột Ảnh.
+          </p>
+          <div className="flex justify-end gap-2 pt-1">
+            <Button variant="outline" size="sm" onClick={closeImportDialog} disabled={importing}>
+              Hủy
+            </Button>
+            <Button
+              variant="accent"
+              size="sm"
+              disabled={importing || !importExcel || !importZip}
+              onClick={() => void onImportSubmit()}
+            >
+              {importing ? 'Đang import...' : 'Import'}
+            </Button>
+          </div>
+        </div>
+      </Dialog>
+
+      <Dialog
         open={open}
         onClose={() => setOpen(false)}
         title={editing ? 'Sửa nhân viên' : 'Thêm nhân viên'}
@@ -1149,7 +1212,7 @@ export default function UsersPage() {
             <>
               <div>
                 <label className="mb-1 block text-xs text-muted-foreground">
-                  Khu vực ra vào (mặc định 1 khu)
+                  Khu vực ra vào (có thể chọn nhiều khu)
                   {(form.faceImageFile || form.facePreviewUrl) && (
                     <span className="text-destructive"> *</span>
                   )}
@@ -1161,8 +1224,7 @@ export default function UsersPage() {
                     zones.map((z) => (
                       <label key={z.id} className="flex cursor-pointer items-center gap-2 text-sm">
                         <input
-                          type="radio"
-                          name="user-zone"
+                          type="checkbox"
                           className="h-3.5 w-3.5 accent-primary"
                           checked={form.zoneIds.includes(z.id)}
                           onChange={() => toggleZone(z.id)}
@@ -1173,7 +1235,7 @@ export default function UsersPage() {
                   )}
                 </div>
                 <p className="mt-1 text-[11px] text-muted-foreground">
-                  Nhân sự chỉ được tính chấm công tại khu vực đã chọn.
+                  Nhân sự chỉ được tính chấm công tại các khu vực đã chọn.
                 </p>
               </div>
               <label className="flex cursor-pointer items-center gap-2 text-sm">

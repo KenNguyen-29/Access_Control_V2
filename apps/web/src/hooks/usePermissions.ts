@@ -2,7 +2,7 @@
 
 import { useMemo } from 'react';
 import {
-  canAccessRoute,
+  canAccessRouteWithAllowed,
   canManageAccounts,
   canManageProjects,
   canWriteUsers,
@@ -14,17 +14,20 @@ export function usePermissions() {
   const { account } = useAuth();
   const role = account?.role ?? '';
   const projectIds = account?.projectIds ?? [];
+  const allowedRoutes = account?.allowedRoutes;
 
   return useMemo(
     () => ({
       role,
       projectIds,
-      canAccess: (path: string) => (role ? canAccessRoute(role, path) : false),
+      allowedRoutes,
+      canAccess: (path: string) =>
+        role ? canAccessRouteWithAllowed(role, path, allowedRoutes) : false,
       canWriteUsers: () => canWriteUsers(role),
       canManageAccounts: () => canManageAccounts(role),
       canManageProjects: () => canManageProjects(role),
       isProjectScoped: () => isProjectScopedRole(role),
     }),
-    [role, projectIds],
+    [role, projectIds, allowedRoutes],
   );
 }

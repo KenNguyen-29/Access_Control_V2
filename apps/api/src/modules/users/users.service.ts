@@ -22,7 +22,7 @@ import {
   isHttpUrl,
   isValidImportEmail,
   isValidImportPhone,
-  mapEmbeddedImagesByRow,
+  lookupZipImage,
   mapUserHeaderRow,
   normalizePhone,
   parseUserType,
@@ -634,62 +634,59 @@ export class UsersService {
       contractor: 'NhaThauA',
       project: 'DuAn1',
       userType: 'CONTRACTOR',
-      faceImage: '',
+      faceImage: 'nguyen-van-a.jpg',
       zones: 'Khu vực chính; Khu văn phòng',
     });
-    // Instruction row note in column headers is enough; add a second sheet tip
     const tip = workbook.addWorksheet('Huong_dan');
     tip.getCell('A1').value =
-      'Mã nhân viên được hệ thống tự sinh (không cần cột Mã NV). Cập nhật nhân viên cũ theo Email.';
+      'Import gồm 2 file: Excel này + ZIP chứa ảnh JPG/PNG. Không dán ảnh vào sheet.';
     tip.getCell('A2').value =
-      'Cột Ảnh: dán (Ctrl+V) ảnh vào ô, hoặc chèn ảnh vào dòng đó. Không dùng URL.';
+      'Mã nhân viên được hệ thống tự sinh (không cần cột Mã NV). Cập nhật nhân viên cũ theo Email.';
     tip.getCell('A3').value =
-      'Hoặc import file ZIP chứa Excel + ảnh JPG/PNG (cột Ảnh ghi tên file, vd. anh1.jpg).';
+      'Cột Ảnh: ghi đúng tên file trong ZIP (vd. nguyen-van-a.jpg). Có thể ghi folder/anh.jpg — hệ thống lấy tên file. Không dùng URL.';
     tip.getCell('A4').value =
-      'Cột Khu vực: nhiều khu vực, phân tách bằng dấu ; hoặc , (đúng tên khu vực trên hệ thống).';
+      'Ô Ảnh trống = import nhân sự không gắn FaceID. Tên file không có trong ZIP = lỗi dòng đó.';
     tip.getCell('A5').value =
+      'Cột Khu vực: nhiều khu vực, phân tách bằng dấu ; hoặc , (đúng tên khu vực trên hệ thống).';
+    tip.getCell('A6').value =
       'Phòng ban / Nhà thầu / Dự án: ghi đúng tên hoặc mã đã tạo trên hệ thống. CCCD tùy chọn.';
     tip.getColumn(1).width = 110;
     return workbookToBuffer(workbook);
   }
 
-  /** Accept raw .xlsx or .zip (xlsx + jpg files). */
-  async importFromUpload(file: Express.Multer.File): Promise<UsersImportResult> {
-    const name = (file.originalname || '').toLowerCase();
-    if (name.endsWith('.zip')) {
-      return this.importFromZipBuffer(file.buffer);
+  async importFromExcelAndPhotos(
+    excel: Express.Multer.File,
+    photosZip: Express.Multer.File,
+  ): Promise<UsersImportResult> {
+    const excelName = (excel.originalname || '').toLowerCase();
+    if (!excelName.endsWith('.xlsx') && !excelName.endsWith('.xls')) {
+      throw new BadRequestException('File nhân sự phải là Excel (.xlsx)');
     }
-    if (name.endsWith('.xlsx') || name.endsWith('.xls')) {
-      return this.importFromExcelBuffer(file.buffer, new Map());
+    const zipName = (photosZip.originalname || '').toLowerCase();
+    if (!zipName.endsWith('.zip')) {
+      throw new BadRequestException('File ảnh phải là ZIP (.zip)');
     }
-    throw new BadRequestException('Chỉ hỗ trợ file Excel (.xlsx) hoặc ZIP (Excel + ảnh JPG)');
+    const zipImages = await this.indexPhotosZip(photosZip.buffer);
+    if (zipImages.size === 0) {
+      throw new BadRequestException('ZIP không chứa ảnh JPG/PNG');
+    }
+    return this.importFromExcelBuffer(excel.buffer, zipImages);
   }
 
-  private async importFromZipBuffer(buffer: Buffer): Promise<UsersImportResult> {
+  private async indexPhotosZip(buffer: Buffer): Promise<Map<string, Buffer>> {
     const zip = await JSZip.loadAsync(buffer);
     const imageFiles = new Map<string, Buffer>();
-    let xlsxBuf: Buffer | null = null;
-
     for (const [path, entry] of Object.entries(zip.files)) {
       if (entry.dir) continue;
-      const lower = path.toLowerCase();
-      const base = basenamePath(path).toLowerCase();
-      if (lower.endsWith('.xlsx') || lower.endsWith('.xls')) {
-        if (!xlsxBuf) xlsxBuf = Buffer.from(await entry.async('nodebuffer'));
+      const lower = path.replace(/\\/g, '/').toLowerCase();
+      if (!lower.endsWith('.jpg') && !lower.endsWith('.jpeg') && !lower.endsWith('.png')) {
         continue;
       }
-      if (lower.endsWith('.jpg') || lower.endsWith('.jpeg') || lower.endsWith('.png')) {
-        const data = Buffer.from(await entry.async('nodebuffer'));
-        imageFiles.set(base, data);
-        // also key by relative path without leading folders for flexibility
-        imageFiles.set(path.replace(/\\/g, '/').toLowerCase(), data);
-      }
+      const data = Buffer.from(await entry.async('nodebuffer'));
+      imageFiles.set(basenamePath(path).toLowerCase(), data);
+      imageFiles.set(lower, data);
     }
-
-    if (!xlsxBuf) {
-      throw new BadRequestException('ZIP phải chứa một file Excel (.xlsx)');
-    }
-    return this.importFromExcelBuffer(xlsxBuf, imageFiles);
+    return imageFiles;
   }
 
   async importFromExcelBuffer(
@@ -753,8 +750,6 @@ export class UsersService {
       select: { id: true, name: true },
     });
     const zoneByName = new Map(zones.map((z) => [z.name.trim().toLowerCase(), z.id] as const));
-
-    const embeddedByRow = mapEmbeddedImagesByRow(workbook, sheet, headerMap.faceImage);
 
     const cell = (row: ExcelJS.Row, key: UserExcelColumnKey): string => {
       const col = headerMap[key];
@@ -942,34 +937,21 @@ export class UsersService {
           result.created += 1;
         }
 
-        // Face image: ảnh dán/chèn trong Excel (ưu tiên) hoặc tên file trong ZIP — không dùng URL
-        let faceBuf = embeddedByRow.get(rowNumber) ?? null;
-        if (!faceBuf && faceRaw) {
+        // Face: cột Ảnh = tên file trong ZIP. Ô trống = bỏ qua FaceID.
+        let faceBuf: Buffer | null = null;
+        if (faceRaw) {
           if (isHttpUrl(faceRaw)) {
             result.errors.push({
               row: rowNumber,
-              message:
-                'Không hỗ trợ URL ảnh. Hãy dán/chèn ảnh vào cột Ảnh, hoặc import ZIP kèm file ảnh',
+              message: 'Không hỗ trợ URL ảnh. Ghi tên file trong ZIP vào cột Ảnh (vd. anh1.jpg)',
             });
             continue;
           }
-          const base = basenamePath(faceRaw).toLowerCase();
-          faceBuf =
-            zipImages.get(base) ??
-            zipImages.get(faceRaw.trim().replace(/\\/g, '/').toLowerCase()) ??
-            null;
-          if (!faceBuf && zipImages.size > 0) {
+          faceBuf = lookupZipImage(zipImages, faceRaw);
+          if (!faceBuf) {
             result.errors.push({
               row: rowNumber,
               message: `Không tìm thấy ảnh "${faceRaw}" trong ZIP`,
-            });
-            continue;
-          }
-          if (!faceBuf && zipImages.size === 0) {
-            result.errors.push({
-              row: rowNumber,
-              message:
-                'Không có ảnh nhúng trên dòng này. Dán ảnh vào ô cột Ảnh, hoặc dùng ZIP (Excel + file ảnh)',
             });
             continue;
           }

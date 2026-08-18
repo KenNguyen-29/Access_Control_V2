@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { changePassword, login, logout as apiLogout } from '@/lib/api';
+import { changePassword, getMe, login, logout as apiLogout } from '@/lib/api';
 
 export type Account = {
   id: string;
@@ -11,6 +11,7 @@ export type Account = {
   mustChangePassword?: boolean;
   mfaEnabled?: boolean;
   projectIds?: string[];
+  allowedRoutes?: string[];
 };
 
 export function useAuth() {
@@ -29,6 +30,16 @@ export function useAuth() {
       } catch {
         setAccount(null);
       }
+    }
+    if (token) {
+      getMe()
+        .then((me) => {
+          localStorage.setItem('account', JSON.stringify(me));
+          setAccount(me);
+        })
+        .catch(() => {
+          /* keep cached account */
+        });
     }
     setLoading(false);
   }, []);

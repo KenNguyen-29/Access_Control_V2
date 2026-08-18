@@ -9,11 +9,11 @@ import {
   Post,
   Query,
   Res,
-  UploadedFile,
+  UploadedFiles,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { FileFieldsInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiBody, ApiConsumes, ApiTags } from '@nestjs/swagger';
 import { Response } from 'express';
 import { UserRole } from '@prisma/client';
@@ -72,17 +72,34 @@ export class UsersController {
     schema: {
       type: 'object',
       properties: {
-        file: { type: 'string', format: 'binary' },
+        excel: { type: 'string', format: 'binary', description: 'File Excel (.xlsx)' },
+        photos: { type: 'string', format: 'binary', description: 'ZIP chứa ảnh JPG/PNG' },
       },
-      required: ['file'],
+      required: ['excel', 'photos'],
     },
   })
-  @UseInterceptors(FileInterceptor('file'))
-  async import(@UploadedFile() file?: Express.Multer.File) {
-    if (!file?.buffer?.length) {
-      throw new BadRequestException('Vui lòng chọn file Excel (.xlsx) hoặc ZIP');
+  @UseInterceptors(
+    FileFieldsInterceptor(
+      [
+        { name: 'excel', maxCount: 1 },
+        { name: 'photos', maxCount: 1 },
+      ],
+      { limits: { fileSize: 80 * 1024 * 1024 } },
+    ),
+  )
+  async import(
+    @UploadedFiles()
+    files?: { excel?: Express.Multer.File[]; photos?: Express.Multer.File[] },
+  ) {
+    const excel = files?.excel?.[0];
+    const photos = files?.photos?.[0];
+    if (!excel?.buffer?.length) {
+      throw new BadRequestException('Vui lòng chọn file Excel (.xlsx)');
     }
-    const result = await this.usersService.importFromUpload(file);
+    if (!photos?.buffer?.length) {
+      throw new BadRequestException('Vui lòng chọn file ZIP chứa ảnh');
+    }
+    const result = await this.usersService.importFromExcelAndPhotos(excel, photos);
     return successResponse(result);
   }
 

@@ -1,5 +1,6 @@
 export {
   canAccessRoute,
+  canAccessRouteWithAllowed,
   canAccessNavTab,
   canWriteUsers,
   canManageAccounts,
@@ -7,5 +8,8 @@ export {
   isProjectScopedRole,
   rolesRequiringProjects,
   normalizePath,
+  resolveAllowedRoutes,
+  defaultAllowedRoutesForRole,
+  CONFIGURABLE_ROUTES,
   type AppRole,
 } from '@acv2/shared';

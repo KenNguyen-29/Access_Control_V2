@@ -47,6 +47,14 @@ export class CreateAccountDto {
   @Type(() => String)
   projectIds?: string[];
 
+  @ApiPropertyOptional({ type: [String], description: 'Route prefixes this account may open' })
+  @IsOptional()
+  @IsArray()
+  @ArrayUnique()
+  @IsString({ each: true })
+  @Type(() => String)
+  allowedRoutes?: string[];
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsBoolean()
@@ -73,6 +81,14 @@ export class UpdateAccountDto {
   @IsString({ each: true })
   @Type(() => String)
   projectIds?: string[];
+
+  @ApiPropertyOptional({ type: [String], description: 'Route prefixes this account may open' })
+  @IsOptional()
+  @IsArray()
+  @ArrayUnique()
+  @IsString({ each: true })
+  @Type(() => String)
+  allowedRoutes?: string[];
 
   @ApiPropertyOptional()
   @IsOptional()

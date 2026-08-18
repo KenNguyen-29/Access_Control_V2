@@ -104,6 +104,7 @@ export type AuthAccount = {
   mustChangePassword?: boolean;
   mfaEnabled?: boolean;
   projectIds?: string[];
+  allowedRoutes?: string[];
 };
 
 export async function login(username: string, password: string) {
@@ -463,9 +464,10 @@ export async function downloadUsersImportTemplate() {
   return apiRequest<Blob>('/users/import-template');
 }
 
-export async function importUsers(file: File) {
+export async function importUsers(excel: File, photosZip: File) {
   const form = new FormData();
-  form.append('file', file);
+  form.append('excel', excel);
+  form.append('photos', photosZip);
   return apiRequest<UsersImportResult>('/users/import', {
     method: 'POST',
     body: form,
@@ -1463,6 +1465,7 @@ export type SystemAccount = {
   role: Role;
   projectIds: string[];
   projects: Array<{ id: string; name: string; code: string }>;
+  allowedRoutes: string[];
 };
 
 export async function getRoles() {
@@ -1483,6 +1486,7 @@ export async function createAccount(data: {
   password: string;
   roleId: string;
   projectIds?: string[];
+  allowedRoutes?: string[];
   isActive?: boolean;
 }) {
   return apiRequest<SystemAccount>('/accounts', {
@@ -1497,6 +1501,7 @@ export async function updateAccount(
     roleId?: string;
     password?: string;
     projectIds?: string[];
+    allowedRoutes?: string[];
     isActive?: boolean;
     mustChangePassword?: boolean;
   },

@@ -9,6 +9,7 @@ import {
   parseZoneNames,
   USER_EXCEL_COLUMNS,
   USER_HEADER_ALIASES,
+  lookupZipImage,
 } from './users-excel.util';
 import * as ExcelJS from 'exceljs';
 
@@ -77,5 +78,17 @@ describe('users-excel util', () => {
         'zones',
       ],
     );
+  });
+
+  it('looks up ZIP images by basename or relative path', () => {
+    const buf = Buffer.from('jpg');
+    const zip = new Map<string, Buffer>([
+      ['nguyen-van-a.jpg', buf],
+      ['photos/nguyen-van-a.jpg', buf],
+    ]);
+    assert.equal(lookupZipImage(zip, 'Nguyen-Van-A.JPG'), buf);
+    assert.equal(lookupZipImage(zip, 'photos/nguyen-van-a.jpg'), buf);
+    assert.equal(lookupZipImage(zip, 'missing.jpg'), null);
+    assert.equal(lookupZipImage(zip, ''), null);
   });
 });

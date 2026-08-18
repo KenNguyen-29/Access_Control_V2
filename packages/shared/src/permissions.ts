@@ -1,6 +1,11 @@
+import {
+  defaultAllowedRoutesForRole,
+  normalizeAllowedRoutes,
+} from './route-catalog';
+
 export type AppRole = 'ADMIN' | 'HR' | 'SECURITY' | 'TECHNICIAN' | 'STAFF';
 
-/** Routes → roles allowed (prefix match, longest wins). */
+/** Routes → roles allowed (prefix match, longest wins). Fallback khi DB chưa có allowedRoutes. */
 const ROUTE_RULES: Array<{ prefix: string; roles: AppRole[] }> = [
   { prefix: '/settings/accounts', roles: ['ADMIN'] },
   { prefix: '/settings', roles: ['ADMIN', 'HR'] },
@@ -31,6 +36,21 @@ export function normalizePath(path: string): string {
   return p.replace(/\/$/, '') || '/home';
 }
 
+function matchesAllowedPrefix(normalized: string, allowedPrefixes: string[]): boolean {
+  let bestLen = -1;
+  let matched = false;
+  for (const prefix of allowedPrefixes) {
+    if (normalized === prefix || normalized.startsWith(`${prefix}/`)) {
+      if (prefix.length > bestLen) {
+        bestLen = prefix.length;
+        matched = true;
+      }
+    }
+  }
+  return matched;
+}
+
+/** Static rules — dùng khi chưa có cấu hình DB. */
 export function canAccessRoute(role: string, path: string): boolean {
   const normalized = normalizePath(path);
   let matched: AppRole[] | null = null;
@@ -45,6 +65,27 @@ export function canAccessRoute(role: string, path: string): boolean {
   }
   if (!matched) return role === 'ADMIN';
   return matched.includes(role as AppRole);
+}
+
+/** Kiểm tra quyền màn theo danh sách prefix từ DB (admin luôn full). */
+export function canAccessRouteWithAllowed(
+  role: string,
+  path: string,
+  allowedRoutes?: string[] | null,
+): boolean {
+  if (role === 'ADMIN') return true;
+  const normalized = normalizePath(path);
+  const routes = normalizeAllowedRoutes(allowedRoutes);
+  if (routes.length > 0) {
+    return matchesAllowedPrefix(normalized, routes);
+  }
+  return canAccessRoute(role, path);
+}
+
+export function resolveAllowedRoutes(role: string, stored: unknown): string[] {
+  const routes = normalizeAllowedRoutes(stored);
+  if (routes.length > 0) return routes;
+  return defaultAllowedRoutesForRole(role);
 }
 
 export function canAccessNavTab(role: string, href: string): boolean {

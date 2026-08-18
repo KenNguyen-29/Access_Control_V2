@@ -169,6 +169,8 @@ model Role {
   name        String
   code        UserRole @unique
   description String?
+  /// @deprecated Per-account screens live on Account.allowedRoutes.
+  allowedRoutes Json?
   isDeleted   Boolean  @default(false)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -231,6 +233,8 @@ model Account {
   mfaBackupCodes      String?
   failedLoginCount    Int       @default(0)
   lockedUntil         DateTime?
+  /// Route prefixes this login may open (e.g. "/users"). Admin always has all screens.
+  allowedRoutes       Json?
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
 

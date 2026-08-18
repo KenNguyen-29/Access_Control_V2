@@ -6,8 +6,13 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
-import { UserRole } from '@prisma/client';
-import { rolesRequiringProjects } from '@acv2/shared';
+import { Prisma, UserRole } from '@prisma/client';
+import {
+  defaultAllowedRoutesForRole,
+  normalizeAllowedRoutes,
+  resolveAllowedRoutes,
+  rolesRequiringProjects,
+} from '@acv2/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AccountsQueryDto, CreateAccountDto, UpdateAccountDto } from './dto/account.dto';
 
@@ -31,6 +36,7 @@ export class AccountsService {
     mustChangePassword: boolean;
     passwordChangedAt: Date | null;
     createdAt: Date;
+    allowedRoutes?: unknown;
     role: { id: string; name: string; code: UserRole };
     projectLinks: Array<{ projectId: string; project: { id: string; name: string; code: string } }>;
   }) {
@@ -44,7 +50,20 @@ export class AccountsService {
       role: row.role,
       projectIds: row.projectLinks.map((l) => l.projectId),
       projects: row.projectLinks.map((l) => l.project),
+      allowedRoutes: resolveAllowedRoutes(row.role.code, row.allowedRoutes),
     };
+  }
+
+  private routesForSave(roleCode: UserRole, input?: string[]): Prisma.InputJsonValue {
+    if (roleCode === UserRole.ADMIN) {
+      return defaultAllowedRoutesForRole('ADMIN');
+    }
+    const routes = normalizeAllowedRoutes(input);
+    if (routes.length === 0) {
+      throw new BadRequestException('Cần chọn ít nhất một màn hình hợp lệ');
+    }
+    if (!routes.includes('/home')) routes.unshift('/home');
+    return routes;
   }
 
   private async assertRoleAndProjects(roleId: string, projectIds: string[]) {
@@ -110,7 +129,11 @@ export class AccountsService {
 
   async create(dto: CreateAccountDto) {
     const projectIds = [...new Set(dto.projectIds ?? [])];
-    await this.assertRoleAndProjects(dto.roleId, projectIds);
+    const role = await this.assertRoleAndProjects(dto.roleId, projectIds);
+    const allowedRoutes = this.routesForSave(
+      role.code,
+      dto.allowedRoutes ?? defaultAllowedRoutesForRole(role.code),
+    );
 
     const existing = await this.prisma.account.findUnique({
       where: { username: dto.username },
@@ -129,6 +152,7 @@ export class AccountsService {
           roleId: dto.roleId,
           isActive: dto.isActive ?? true,
           mustChangePassword: true,
+          allowedRoutes,
         },
       });
       if (projectIds.length) {
@@ -158,6 +182,13 @@ export class AccountsService {
         : existing.projectLinks.map((l) => l.projectId);
 
     const role = await this.assertRoleAndProjects(roleId, projectIds);
+    const roleChanged = Boolean(dto.roleId && dto.roleId !== existing.roleId);
+    const nextRoutes =
+      dto.allowedRoutes !== undefined
+        ? this.routesForSave(role.code, dto.allowedRoutes)
+        : roleChanged
+          ? this.routesForSave(role.code, defaultAllowedRoutesForRole(role.code))
+          : undefined;
 
     if (dto.isActive === false && id === actorId) {
       throw new ForbiddenException('Không thể tự vô hiệu hóa tài khoản của mình');
@@ -172,6 +203,7 @@ export class AccountsService {
           ...(dto.mustChangePassword !== undefined
             ? { mustChangePassword: dto.mustChangePassword }
             : {}),
+          ...(nextRoutes !== undefined ? { allowedRoutes: nextRoutes } : {}),
           ...(dto.password
             ? {
                 passwordHash: await bcrypt.hash(dto.password, 12),

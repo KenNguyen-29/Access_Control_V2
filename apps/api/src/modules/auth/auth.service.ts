@@ -11,6 +11,7 @@ import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ProjectScopeService } from '../../common/services/project-scope.service';
+import { resolveAllowedRoutes } from '@acv2/shared';
 import { LoginDto } from './dto/login.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import type { JwtPayload } from './jwt.strategy';
@@ -94,12 +95,14 @@ export class AuthService {
     username: string;
     mustChangePassword: boolean;
     mfaEnabled: boolean;
+    allowedRoutes?: unknown;
     role: { code: string };
   }) {
     const projectIds = await this.projectScope.loadProjectIdsForAccount(
       account.id,
       account.role.code,
     );
+    const allowedRoutes = resolveAllowedRoutes(account.role.code, account.allowedRoutes);
     const payload: JwtPayload = {
       sub: account.id,
       username: account.username,
@@ -115,6 +118,7 @@ export class AuthService {
         mustChangePassword: account.mustChangePassword,
         mfaEnabled: account.mfaEnabled,
         projectIds: projectIds ?? [],
+        allowedRoutes,
       },
     };
   }

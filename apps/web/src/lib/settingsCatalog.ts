@@ -119,7 +119,7 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
         path: '/settings/accounts',
         icon: KeyRound,
         title: 'Tài khoản hệ thống',
-        description: 'Quản lý tài khoản',
+        description: 'Tài khoản đăng nhập và quyền màn hình',
       },
       {
         id: 'storage',
