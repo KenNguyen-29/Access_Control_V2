@@ -56,10 +56,10 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
       },
       {
         id: 'contractors',
-        path: '/settings/contractors',
+        path: '/projects',
         icon: HardDrive,
-        title: 'Nhà thầu & Dự án',
-        description: 'Tổ chức công trường theo nhà thầu',
+        title: 'Dự án & Nhà thầu',
+        description: 'Tổ chức công trường theo dự án và nhà thầu',
       },
     ],
   },

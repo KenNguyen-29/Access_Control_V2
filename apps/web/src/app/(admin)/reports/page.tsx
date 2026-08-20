@@ -18,6 +18,7 @@ import {
   FileSpreadsheet,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { TablePager } from '@/components/ui/table-pager';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Avatar } from '@/components/ui/avatar';
@@ -1104,33 +1105,14 @@ export default function ReportsPage() {
                 </table>
               </div>
 
-              {recordsTotalPages > 1 && (
-                <div className="mt-4 flex items-center justify-between border-t border-border pt-4">
-                  <p className="text-xs text-muted-foreground">
-                    Trang {recordsCurrentPage} / {recordsTotalPages} · {recordsTotal} bản ghi
-                  </p>
-                  <div className="flex items-center gap-1">
-                    <Button
-                      variant="outline"
-                      size="icon"
-                      className="h-8 w-8"
-                      disabled={recordsCurrentPage <= 1}
-                      onClick={() => setRecordsPage((p) => Math.max(1, p - 1))}
-                    >
-                      <ChevronLeft className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="icon"
-                      className="h-8 w-8"
-                      disabled={recordsCurrentPage >= recordsTotalPages}
-                      onClick={() => setRecordsPage((p) => Math.min(recordsTotalPages, p + 1))}
-                    >
-                      <ChevronRight className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
-              )}
+              <TablePager
+                className="mt-4 pt-4"
+                currentPage={recordsCurrentPage}
+                totalPages={recordsTotalPages}
+                total={recordsTotal}
+                unit="bản ghi"
+                onPageChange={setRecordsPage}
+              />
             </QueryBoundary>
           </DesignCard>
 

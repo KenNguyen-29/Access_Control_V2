@@ -19,12 +19,12 @@ export class CreateContractorDto {
   @MaxLength(100)
   name!: string;
 
-  @ApiProperty()
+  @ApiPropertyOptional()
   @Transform(emptyToUndefined)
+  @IsOptional()
   @IsString()
-  @IsNotEmpty({ message: 'Vui lòng nhập mã nhà thầu' })
   @Matches(CODE, { message: 'Mã nhà thầu không hợp lệ' })
-  code!: string;
+  code?: string;
 
   @ApiPropertyOptional()
   @Transform(emptyToUndefined)

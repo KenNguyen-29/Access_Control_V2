@@ -3,10 +3,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { ChevronLeft, ChevronRight, Download, RefreshCw, Send } from 'lucide-react';
+import { Download, RefreshCw, Send } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
+import { TablePager } from '@/components/ui/table-pager';
 import { DesignCard, PageShell } from '@/components/design/PageShell';
 import { QueryBoundary } from '@/components/ui/query-states';
 import {
@@ -58,49 +59,6 @@ function usePagedRows<T>(rows: T[], page: number) {
   return { pageRows, total, totalPages, currentPage };
 }
 
-function TablePager({
-  currentPage,
-  totalPages,
-  total,
-  unit,
-  onPageChange,
-}: {
-  currentPage: number;
-  totalPages: number;
-  total: number;
-  unit: string;
-  onPageChange: (page: number) => void;
-}) {
-  if (total <= PAGE_SIZE) return null;
-  return (
-    <div className="mt-3 flex items-center justify-between border-t border-border pt-3">
-      <p className="text-xs text-muted-foreground">
-        Trang {currentPage} / {totalPages} · {total} {unit}
-      </p>
-      <div className="flex items-center gap-1">
-        <Button
-          variant="outline"
-          size="icon"
-          className="h-8 w-8"
-          disabled={currentPage <= 1}
-          onClick={() => onPageChange(currentPage - 1)}
-        >
-          <ChevronLeft className="h-4 w-4" />
-        </Button>
-        <Button
-          variant="outline"
-          size="icon"
-          className="h-8 w-8"
-          disabled={currentPage >= totalPages}
-          onClick={() => onPageChange(currentPage + 1)}
-        >
-          <ChevronRight className="h-4 w-4" />
-        </Button>
-      </div>
-    </div>
-  );
-}
-
 export default function ContractorReportsPage() {
   const searchParams = useSearchParams();
   const [from, setFrom] = useState(monthStart());
@@ -113,6 +71,7 @@ export default function ContractorReportsPage() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
+  const [headcountPage, setHeadcountPage] = useState(1);
   const [personnelPage, setPersonnelPage] = useState(1);
   const [accessPage, setAccessPage] = useState(1);
   const [shiftPage, setShiftPage] = useState(1);
@@ -199,6 +158,10 @@ export default function ContractorReportsPage() {
   }, [searchParams]);
 
   useEffect(() => {
+    setHeadcountPage(1);
+  }, [to]);
+
+  useEffect(() => {
     setPersonnelPage(1);
     setAccessPage(1);
   }, [from, to, contractorId, projectId]);
@@ -215,6 +178,7 @@ export default function ContractorReportsPage() {
     setMonthlyPage(1);
   }, [month, contractorId, projectId]);
 
+  const headcountPaged = usePagedRows(headcountRows, headcountPage);
   const personnelPaged = usePagedRows(personnelRows, personnelPage);
   const accessPaged = usePagedRows(accessRows, accessPage);
   const shiftPaged = usePagedRows(shiftRows, shiftPage);
@@ -363,7 +327,7 @@ export default function ContractorReportsPage() {
           </div>
         }
       >
-        <QueryBoundary isLoading={headcountQuery.isLoading} isEmpty={headcountRows.length === 0}>
+        <QueryBoundary isLoading={headcountQuery.isLoading}>
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border bg-muted/30 text-left">
@@ -373,18 +337,33 @@ export default function ContractorReportsPage() {
               </tr>
             </thead>
             <tbody>
-              {headcountRows.map((r) => (
-                <tr key={r.contractorId} className="border-t border-border">
-                  <td className="p-2">
-                    <span className="font-semibold">{r.name}</span>
-                    <span className="ml-2 font-mono text-xs text-muted-foreground">{r.code}</span>
+              {headcountPaged.pageRows.length === 0 ? (
+                <tr>
+                  <td colSpan={3} className="p-4 text-center text-sm text-muted-foreground">
+                    Chưa có dữ liệu
                   </td>
-                  <td className="p-2 text-right">{r.registeredCount}</td>
-                  <td className="p-2 text-right font-semibold">{r.presentCount}</td>
                 </tr>
-              ))}
+              ) : (
+                headcountPaged.pageRows.map((r) => (
+                  <tr key={r.contractorId} className="border-t border-border">
+                    <td className="p-2">
+                      <span className="font-semibold">{r.name}</span>
+                      <span className="ml-2 font-mono text-xs text-muted-foreground">{r.code}</span>
+                    </td>
+                    <td className="p-2 text-right">{r.registeredCount}</td>
+                    <td className="p-2 text-right font-semibold">{r.presentCount}</td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
+          <TablePager
+            currentPage={headcountPaged.currentPage}
+            totalPages={headcountPaged.totalPages}
+            total={headcountPaged.total}
+            unit="nhà thầu"
+            onPageChange={setHeadcountPage}
+          />
         </QueryBoundary>
       </DesignCard>
 
@@ -412,7 +391,7 @@ export default function ContractorReportsPage() {
           </Button>
         }
       >
-        <QueryBoundary isLoading={personnelQuery.isLoading} isEmpty={personnelRows.length === 0}>
+        <QueryBoundary isLoading={personnelQuery.isLoading}>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
@@ -426,20 +405,28 @@ export default function ContractorReportsPage() {
                 </tr>
               </thead>
               <tbody>
-                {personnelPaged.pageRows.map((r) => (
-                  <tr key={String(r.userId)} className="border-t border-border">
-                    <td className="p-2 font-mono text-xs">{String(r.employeeCode ?? '')}</td>
-                    <td className="p-2">{String(r.fullName ?? '')}</td>
-                    <td className="p-2 font-mono text-xs">{String(r.citizenId ?? '—')}</td>
-                    <td className="p-2 text-xs">{String(r.contractorName ?? '—')}</td>
-                    <td className="p-2 text-xs">
-                      {r.firstCheckInAt ? new Date(String(r.firstCheckInAt)).toLocaleString('vi-VN') : '—'}
-                    </td>
-                    <td className="p-2 text-xs">
-                      {r.lastCheckOutAt ? new Date(String(r.lastCheckOutAt)).toLocaleString('vi-VN') : '—'}
+                {personnelPaged.pageRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="p-4 text-center text-sm text-muted-foreground">
+                      Chưa có dữ liệu
                     </td>
                   </tr>
-                ))}
+                ) : (
+                  personnelPaged.pageRows.map((r) => (
+                    <tr key={String(r.userId)} className="border-t border-border">
+                      <td className="p-2 font-mono text-xs">{String(r.employeeCode ?? '')}</td>
+                      <td className="p-2">{String(r.fullName ?? '')}</td>
+                      <td className="p-2 font-mono text-xs">{String(r.citizenId ?? '—')}</td>
+                      <td className="p-2 text-xs">{String(r.contractorName ?? '—')}</td>
+                      <td className="p-2 text-xs">
+                        {r.firstCheckInAt ? new Date(String(r.firstCheckInAt)).toLocaleString('vi-VN') : '—'}
+                      </td>
+                      <td className="p-2 text-xs">
+                        {r.lastCheckOutAt ? new Date(String(r.lastCheckOutAt)).toLocaleString('vi-VN') : '—'}
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
@@ -496,7 +483,7 @@ export default function ContractorReportsPage() {
           </div>
         }
       >
-        <QueryBoundary isLoading={accessQuery.isLoading} isEmpty={accessRows.length === 0}>
+        <QueryBoundary isLoading={accessQuery.isLoading}>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
@@ -509,22 +496,30 @@ export default function ContractorReportsPage() {
                 </tr>
               </thead>
               <tbody>
-                {accessPaged.pageRows.map((r) => (
-                  <tr key={String(r.id)} className="border-t border-border">
-                    <td className="p-2 text-xs">
-                      {r.eventAt ? new Date(String(r.eventAt)).toLocaleString('vi-VN') : '—'}
+                {accessPaged.pageRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="p-4 text-center text-sm text-muted-foreground">
+                      Chưa có dữ liệu
                     </td>
-                    <td className="p-2 text-xs">
-                      {String(r.fullName ?? '')}{' '}
-                      <span className="font-mono text-muted-foreground">
-                        ({String(r.employeeCode ?? '')})
-                      </span>
-                    </td>
-                    <td className="p-2 text-xs">{String(r.action ?? '')}</td>
-                    <td className="p-2 text-xs">{String(r.contractorName ?? '—')}</td>
-                    <td className="p-2 text-xs">{String(r.deviceName ?? '—')}</td>
                   </tr>
-                ))}
+                ) : (
+                  accessPaged.pageRows.map((r) => (
+                    <tr key={String(r.id)} className="border-t border-border">
+                      <td className="p-2 text-xs">
+                        {r.eventAt ? new Date(String(r.eventAt)).toLocaleString('vi-VN') : '—'}
+                      </td>
+                      <td className="p-2 text-xs">
+                        {String(r.fullName ?? '')}{' '}
+                        <span className="font-mono text-muted-foreground">
+                          ({String(r.employeeCode ?? '')})
+                        </span>
+                      </td>
+                      <td className="p-2 text-xs">{String(r.action ?? '')}</td>
+                      <td className="p-2 text-xs">{String(r.contractorName ?? '—')}</td>
+                      <td className="p-2 text-xs">{String(r.deviceName ?? '—')}</td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
@@ -561,7 +556,7 @@ export default function ContractorReportsPage() {
           </Button>
         }
       >
-        <QueryBoundary isLoading={shiftQuery.isLoading} isEmpty={shiftRows.length === 0}>
+        <QueryBoundary isLoading={shiftQuery.isLoading}>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
@@ -574,22 +569,30 @@ export default function ContractorReportsPage() {
                 </tr>
               </thead>
               <tbody>
-                {shiftPaged.pageRows.map((r) => (
-                  <tr key={String(r.assignmentId)} className="border-t border-border">
-                    <td className="p-2 text-xs">{String(r.shiftName ?? '')}</td>
-                    <td className="p-2 text-xs">
-                      {String(r.fullName ?? '')}{' '}
-                      <span className="font-mono text-muted-foreground">
-                        ({String(r.employeeCode ?? '')})
-                      </span>
-                    </td>
-                    <td className="p-2 font-mono text-xs">{String(r.citizenId ?? '—')}</td>
-                    <td className="p-2 text-xs">{String(r.contractorName ?? '—')}</td>
-                    <td className="p-2 font-mono text-xs">
-                      {String(r.startTime ?? '')}–{String(r.endTime ?? '')}
+                {shiftPaged.pageRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="p-4 text-center text-sm text-muted-foreground">
+                      Chưa có dữ liệu
                     </td>
                   </tr>
-                ))}
+                ) : (
+                  shiftPaged.pageRows.map((r) => (
+                    <tr key={String(r.assignmentId)} className="border-t border-border">
+                      <td className="p-2 text-xs">{String(r.shiftName ?? '')}</td>
+                      <td className="p-2 text-xs">
+                        {String(r.fullName ?? '')}{' '}
+                        <span className="font-mono text-muted-foreground">
+                          ({String(r.employeeCode ?? '')})
+                        </span>
+                      </td>
+                      <td className="p-2 font-mono text-xs">{String(r.citizenId ?? '—')}</td>
+                      <td className="p-2 text-xs">{String(r.contractorName ?? '—')}</td>
+                      <td className="p-2 font-mono text-xs">
+                        {String(r.startTime ?? '')}–{String(r.endTime ?? '')}
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
@@ -627,7 +630,7 @@ export default function ContractorReportsPage() {
           </Button>
         }
       >
-        <QueryBoundary isLoading={monthlyQuery.isLoading} isEmpty={monthlyRows.length === 0}>
+        <QueryBoundary isLoading={monthlyQuery.isLoading}>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
@@ -642,17 +645,25 @@ export default function ContractorReportsPage() {
                 </tr>
               </thead>
               <tbody>
-                {monthlyPaged.pageRows.map((r) => (
-                  <tr key={r.userId} className="border-t border-border">
-                    <td className="p-2 font-mono text-xs">{r.employeeCode}</td>
-                    <td className="p-2">{r.fullName}</td>
-                    <td className="p-2 text-xs">{r.contractorName ?? '—'}</td>
-                    <td className="p-2 text-right font-semibold">{r.workDays}</td>
-                    <td className="p-2 text-right">{r.lateDays}</td>
-                    <td className="p-2 text-right">{r.lateMinutes}</td>
-                    <td className="p-2 text-right">{r.otMinutes}</td>
+                {monthlyPaged.pageRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="p-4 text-center text-sm text-muted-foreground">
+                      Chưa có dữ liệu
+                    </td>
                   </tr>
-                ))}
+                ) : (
+                  monthlyPaged.pageRows.map((r) => (
+                    <tr key={r.userId} className="border-t border-border">
+                      <td className="p-2 font-mono text-xs">{r.employeeCode}</td>
+                      <td className="p-2">{r.fullName}</td>
+                      <td className="p-2 text-xs">{r.contractorName ?? '—'}</td>
+                      <td className="p-2 text-right font-semibold">{r.workDays}</td>
+                      <td className="p-2 text-right">{r.lateDays}</td>
+                      <td className="p-2 text-right">{r.lateMinutes}</td>
+                      <td className="p-2 text-right">{r.otMinutes}</td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>

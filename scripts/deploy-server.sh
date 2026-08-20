@@ -58,6 +58,8 @@ if [ "$MIGRATE_EC" -ne 0 ]; then
       psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c 'DELETE FROM "_prisma_migrations";'
     docker compose -f docker-compose.prod.yml run --rm --no-deps api \
       npx prisma migrate resolve --applied 20260811120000_init
+    echo "==> Applying remaining migrations after baseline..."
+    docker compose -f docker-compose.prod.yml run --rm --no-deps api npx prisma migrate deploy
   else
     exit "$MIGRATE_EC"
   fi

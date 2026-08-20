@@ -10,13 +10,12 @@ import {
   Search,
   X,
   RefreshCw,
-  ChevronLeft,
-  ChevronRight,
   Download,
   Upload,
   ArrowLeftRight,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { TablePager } from '@/components/ui/table-pager';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Dialog, ConfirmDialog } from '@/components/ui/dialog';
@@ -846,7 +845,7 @@ export default function UsersPage() {
                   <th className="p-3 text-left font-semibold">Loại</th>
                   <th className="p-3 text-left font-semibold">Email</th>
                   <th className="p-3 text-left font-semibold">SĐT</th>
-                  <th className="p-3 text-right font-semibold">Thao tác</th>
+                  <th className="w-[120px] min-w-[120px] p-3 text-right font-semibold">Thao tác</th>
                 </tr>
               </thead>
               <tbody>
@@ -899,7 +898,7 @@ export default function UsersPage() {
                     <td className="truncate p-3 text-xs">{u.phone || '—'}</td>
                     <td className="p-3">
                       {writeEnabled ? (
-                        <div className="flex justify-end gap-1">
+                        <div className="flex items-center justify-end gap-2">
                           {u.userType === 'CONTRACTOR' && (
                             <Button
                               variant="ghost"
@@ -942,33 +941,14 @@ export default function UsersPage() {
             </table>
           </div>
 
-          {totalPages > 1 && (
-            <div className="mt-4 flex items-center justify-between border-t border-border pt-4">
-              <p className="text-xs text-muted-foreground">
-                Trang {currentPage} / {totalPages} · {total} nhân viên
-              </p>
-              <div className="flex items-center gap-1">
-                <Button
-                  variant="outline"
-                  size="icon"
-                  className="h-8 w-8"
-                  disabled={currentPage <= 1}
-                  onClick={() => setPage((p) => Math.max(1, p - 1))}
-                >
-                  <ChevronLeft className="h-4 w-4" />
-                </Button>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  className="h-8 w-8"
-                  disabled={currentPage >= totalPages}
-                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                >
-                  <ChevronRight className="h-4 w-4" />
-                </Button>
-              </div>
-            </div>
-          )}
+          <TablePager
+            className="mt-4 pt-4"
+            currentPage={currentPage}
+            totalPages={totalPages}
+            total={total}
+            unit="nhân viên"
+            onPageChange={setPage}
+          />
         </QueryBoundary>
       </DesignCard>
 

@@ -121,7 +121,7 @@ export function AccessGroupPanel() {
 
   return (
     <QueryBoundary isLoading={loading} error={error} onRetry={refetch}>
-      <div className="relative flex h-full min-h-0">
+      <div className="flex h-full min-h-0">
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border bg-card p-2">
             <Button

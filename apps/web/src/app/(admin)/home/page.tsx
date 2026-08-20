@@ -59,14 +59,13 @@ const operations: NavItem[] = [
   { icon: Monitor, label: 'Giám sát', path: '/dashboard', description: 'Camera live & FaceID realtime' },
   { icon: CalendarClock, label: 'Chấm công', path: '/reports', description: 'Bảng công, thống kê IN/OUT' },
   { icon: HardHat, label: 'BC nhà thầu', path: '/reports/contractors', description: 'Số lượng nhân sự & xuất báo cáo' },
-  { icon: Building2, label: 'Dự án', path: '/projects', description: 'Danh sách dự án công trường' },
+  { icon: Building2, label: 'Dự án', path: '/projects', description: 'Dự án, nhà thầu và nhân sự công trường' },
   { icon: Siren, label: 'Sơ tán', path: '/muster', description: 'Điểm danh khẩn cấp FACP' },
 ];
 
 const configs: NavItem[] = [
   { icon: Users, label: 'Nhân sự', path: '/users', description: 'Quản lý nhân viên' },
   { icon: Clock, label: 'Ca làm', path: '/shifts', description: 'Cấu hình & gán ca' },
-  { icon: Building2, label: 'Nhà thầu', path: '/settings/contractors', description: 'Nhà thầu & dự án' },
   { icon: LayoutGrid, label: 'Thiết bị', path: '/devices', description: 'Akuvox & Camera' },
   { icon: Shield, label: 'Kiểm soát ra vào', path: '/access-control', description: 'Phân quyền khu vực' },
   { icon: Settings, label: 'Cài đặt', path: '/settings', description: 'Hệ thống & cấu hình' },

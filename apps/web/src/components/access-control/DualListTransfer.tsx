@@ -2,12 +2,14 @@
 
 import { useMemo, useState } from 'react';
 import { Search, Trash2 } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
 import { Input } from '@/components/ui/input';
+import { Select } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { UserInfiniteList } from '@/components/users/UserInfiniteList';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { cn } from '@/lib/utils';
-import type { User } from '@/lib/api';
+import { getDepartments, type User } from '@/lib/api';
 
 export interface DualListItem {
   id: string;
@@ -31,15 +33,23 @@ export function DualListTransfer({
   const [availSearch, setAvailSearch] = useState('');
   const [selSearch, setSelSearch] = useState('');
   const [checkedAvail, setCheckedAvail] = useState<string[]>([]);
+  const [groupFilter, setGroupFilter] = useState('all');
+
+  const groupOptions = useMemo(() => {
+    const set = new Set<string>();
+    available.forEach((a) => { if (a.subLabel) set.add(a.subLabel); });
+    return [...set].sort();
+  }, [available]);
 
   const filteredAvail = useMemo(
     () =>
       available.filter(
         (a) =>
           !selected.some((s) => s.id === a.id) &&
-          a.label.toLowerCase().includes(availSearch.toLowerCase()),
+          a.label.toLowerCase().includes(availSearch.toLowerCase()) &&
+          (groupFilter === 'all' || a.subLabel === groupFilter),
       ),
-    [available, selected, availSearch],
+    [available, selected, availSearch, groupFilter],
   );
 
   const filteredSel = useMemo(
@@ -63,6 +73,20 @@ export function DualListTransfer({
       title={title}
       availSearch={availSearch}
       onAvailSearchChange={setAvailSearch}
+      availFilter={
+        groupOptions.length > 1 ? (
+          <Select
+            className="h-7 text-xs"
+            value={groupFilter}
+            onChange={(e) => setGroupFilter(e.target.value)}
+          >
+            <option value="all">Tất cả nhóm</option>
+            {groupOptions.map((g) => (
+              <option key={g} value={g}>{g}</option>
+            ))}
+          </Select>
+        ) : undefined
+      }
       selSearch={selSearch}
       onSelSearchChange={setSelSearch}
       availContent={
@@ -141,7 +165,14 @@ export function UserDualListTransfer({
   const [search, setSearch] = useState('');
   const [selSearch, setSelSearch] = useState('');
   const [checkedAvail, setCheckedAvail] = useState<DualListItem[]>([]);
+  const [deptFilter, setDeptFilter] = useState('all');
   const debouncedSearch = useDebouncedValue(search);
+
+  const departmentsQuery = useQuery({
+    queryKey: ['departments'],
+    queryFn: () => getDepartments(),
+  });
+  const departments = departmentsQuery.data ?? [];
 
   const selectedIds = useMemo(() => new Set(selected.map((s) => s.id)), [selected]);
 
@@ -164,18 +195,35 @@ export function UserDualListTransfer({
 
   const removeOne = (id: string) => onChange(selected.filter((s) => s.id !== id));
 
+  const departmentId = deptFilter === 'all' ? undefined : deptFilter;
+
   return (
     <DualListLayout
       title={title}
       availSearch={search}
       onAvailSearchChange={setSearch}
       availSearchPlaceholder="Tìm tên hoặc mã..."
+      availFilter={
+        departments.length > 0 ? (
+          <Select
+            className="h-7 text-xs"
+            value={deptFilter}
+            onChange={(e) => setDeptFilter(e.target.value)}
+          >
+            <option value="all">Tất cả phòng ban</option>
+            {departments.map((d) => (
+              <option key={d.id} value={d.id}>{d.name}</option>
+            ))}
+          </Select>
+        ) : undefined
+      }
       selSearch={selSearch}
       onSelSearchChange={setSelSearch}
       availContent={
         <UserInfiniteList
           enabled={enabled}
           search={debouncedSearch}
+          departmentId={departmentId}
           emptyText="Không có nhân viên"
           renderItem={(user) => {
             if (selectedIds.has(user.id)) return null;
@@ -242,6 +290,7 @@ function DualListLayout({
   availSearch,
   onAvailSearchChange,
   availSearchPlaceholder = 'Lọc...',
+  availFilter,
   selSearch,
   onSelSearchChange,
   availContent,
@@ -254,6 +303,7 @@ function DualListLayout({
   availSearch: string;
   onAvailSearchChange: (v: string) => void;
   availSearchPlaceholder?: string;
+  availFilter?: React.ReactNode;
   selSearch: string;
   onSelSearchChange: (v: string) => void;
   availContent: React.ReactNode;
@@ -270,16 +320,19 @@ function DualListLayout({
           <div className="border-b border-border bg-muted/50 px-2 py-1.5 text-xs font-semibold">
             Có sẵn
           </div>
-          <div className="border-b border-border p-2">
-            <div className="relative">
-              <Search className="absolute left-2 top-2 h-3.5 w-3.5 text-muted-foreground" />
-              <Input
-                className="h-8 pl-7 text-xs"
-                placeholder={availSearchPlaceholder}
-                value={availSearch}
-                onChange={(e) => onAvailSearchChange(e.target.value)}
-              />
+          <div className="space-y-1.5 border-b border-border p-2">
+            <div className="flex items-center gap-1.5">
+              <div className="relative flex-1">
+                <Search className="absolute left-2 top-2 h-3.5 w-3.5 text-muted-foreground" />
+                <Input
+                  className="h-8 pl-7 text-xs"
+                  placeholder={availSearchPlaceholder}
+                  value={availSearch}
+                  onChange={(e) => onAvailSearchChange(e.target.value)}
+                />
+              </div>
             </div>
+            {availFilter}
           </div>
           <div className="max-h-40 flex-1 space-y-1 overflow-y-auto p-2">{availContent}</div>
         </div>

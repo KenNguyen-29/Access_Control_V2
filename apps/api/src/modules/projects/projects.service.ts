@@ -15,7 +15,40 @@ const projectInclude = {
 export class ProjectsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  findAll(contractorId?: string, scopeProjectIds: string[] | null = null) {
+  private async withContractorUserCounts<
+    T extends {
+      id: string;
+      contractors: Array<{ contractorId: string }>;
+    },
+  >(rows: T[]) {
+    if (rows.length === 0) return rows.map((row) => ({
+      ...row,
+      contractors: row.contractors.map((link) => ({ ...link, userCount: 0 })),
+    }));
+
+    const counts = await this.prisma.user.groupBy({
+      by: ['projectId', 'contractorId'],
+      where: {
+        isDeleted: false,
+        projectId: { in: rows.map((r) => r.id) },
+        contractorId: { not: null },
+      },
+      _count: { _all: true },
+    });
+    const countMap = new Map(
+      counts.map((c) => [`${c.projectId}:${c.contractorId ?? ''}`, c._count._all]),
+    );
+
+    return rows.map((row) => ({
+      ...row,
+      contractors: row.contractors.map((link) => ({
+        ...link,
+        userCount: countMap.get(`${row.id}:${link.contractorId}`) ?? 0,
+      })),
+    }));
+  }
+
+  async findAll(contractorId?: string, scopeProjectIds: string[] | null = null) {
     const scopeFilter =
       scopeProjectIds === null
         ? {}
@@ -23,7 +56,7 @@ export class ProjectsService {
           ? { id: { in: [] as string[] } }
           : { id: { in: scopeProjectIds } };
 
-    return this.prisma.project.findMany({
+    const rows = await this.prisma.project.findMany({
       where: {
         isDeleted: false,
         ...scopeFilter,
@@ -34,6 +67,7 @@ export class ProjectsService {
       include: projectInclude,
       orderBy: { name: 'asc' },
     });
+    return this.withContractorUserCounts(rows);
   }
 
   async findOne(id: string) {
@@ -42,7 +76,8 @@ export class ProjectsService {
       include: projectInclude,
     });
     if (!row) throw new NotFoundException('Không tìm thấy dự án');
-    return row;
+    const [withCounts] = await this.withContractorUserCounts([row]);
+    return withCounts;
   }
 
   private async assertContractorsExist(contractorIds: string[]) {
@@ -56,15 +91,25 @@ export class ProjectsService {
     }
   }
 
+  private async generateProjectCode(): Promise<string> {
+    const count = await this.prisma.project.count();
+    const seq = String(count + 1).padStart(4, '0');
+    const base = `DA${seq}`;
+    const exists = await this.prisma.project.findUnique({ where: { code: base } });
+    if (!exists) return base;
+    return `DA${Date.now().toString(36).toUpperCase()}`;
+  }
+
   async create(dto: CreateProjectDto) {
     const contractorIds = [...new Set(dto.contractorIds ?? [])];
     await this.assertContractorsExist(contractorIds);
+    const code = dto.code || (await this.generateProjectCode());
 
-    return this.prisma.$transaction(async (tx) => {
+    const created = await this.prisma.$transaction(async (tx) => {
       const project = await tx.project.create({
         data: {
           name: dto.name,
-          code: dto.code,
+          code,
           siteName: dto.siteName,
           description: dto.description,
         },
@@ -82,6 +127,8 @@ export class ProjectsService {
         include: projectInclude,
       });
     });
+    const [withCounts] = await this.withContractorUserCounts([created]);
+    return withCounts;
   }
 
   async update(id: string, dto: UpdateProjectDto) {
@@ -94,7 +141,7 @@ export class ProjectsService {
       await this.assertContractorsExist(contractorIds);
     }
 
-    return this.prisma.$transaction(async (tx) => {
+    const updated = await this.prisma.$transaction(async (tx) => {
       await tx.project.update({
         where: { id },
         data: rest,
@@ -115,6 +162,8 @@ export class ProjectsService {
         include: projectInclude,
       });
     });
+    const [withCounts] = await this.withContractorUserCounts([updated]);
+    return withCounts;
   }
 
   async remove(id: string) {

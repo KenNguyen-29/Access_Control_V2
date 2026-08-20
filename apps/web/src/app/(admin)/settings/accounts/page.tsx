@@ -3,15 +3,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import {
-  ChevronLeft,
-  ChevronRight,
-  Plus,
-  Pencil,
-  Trash2,
-  RefreshCw,
-} from 'lucide-react';
+import { ChevronLeft, Plus, Pencil, Trash2, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { TablePager } from '@/components/ui/table-pager';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Dialog, ConfirmDialog } from '@/components/ui/dialog';
@@ -321,33 +315,13 @@ export default function AccountsSettingsPage() {
             </table>
           </div>
 
-          {total > PAGE_SIZE && (
-            <div className="mt-3 flex items-center justify-between border-t border-border pt-3">
-              <p className="text-xs text-muted-foreground">
-                Trang {page} / {totalPages} · {total} tài khoản
-              </p>
-              <div className="flex items-center gap-1">
-                <Button
-                  variant="outline"
-                  size="icon"
-                  className="h-8 w-8"
-                  disabled={page <= 1}
-                  onClick={() => setPage(page - 1)}
-                >
-                  <ChevronLeft className="h-4 w-4" />
-                </Button>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  className="h-8 w-8"
-                  disabled={page >= totalPages}
-                  onClick={() => setPage(page + 1)}
-                >
-                  <ChevronRight className="h-4 w-4" />
-                </Button>
-              </div>
-            </div>
-          )}
+          <TablePager
+            currentPage={page}
+            totalPages={totalPages}
+            total={total}
+            unit="tài khoản"
+            onPageChange={setPage}
+          />
         </DesignCard>
       </QueryBoundary>
 

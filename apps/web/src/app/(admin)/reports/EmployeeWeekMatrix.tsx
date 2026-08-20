@@ -1,10 +1,10 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { ChevronLeft, ChevronRight, Search } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { Search } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
+import { TablePager } from '@/components/ui/table-pager';
 import { QueryBoundary } from '@/components/ui/query-states';
 import { DesignCard } from '@/components/design/PageShell';
 import { cn } from '@/lib/utils';
@@ -532,33 +532,14 @@ export default function EmployeeWeekMatrix({
           ))}
         </div>
 
-        {totalPages > 1 && (
-          <div className="mt-4 flex items-center justify-between border-t border-border pt-4">
-            <p className="text-xs text-muted-foreground">
-              Trang {currentPage} / {totalPages} · {employees.length} nhân viên
-            </p>
-            <div className="flex items-center gap-1">
-              <Button
-                variant="outline"
-                size="icon"
-                className="h-8 w-8"
-                disabled={currentPage <= 1}
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-              >
-                <ChevronLeft className="h-4 w-4" />
-              </Button>
-              <Button
-                variant="outline"
-                size="icon"
-                className="h-8 w-8"
-                disabled={currentPage >= totalPages}
-                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-              >
-                <ChevronRight className="h-4 w-4" />
-              </Button>
-            </div>
-          </div>
-        )}
+        <TablePager
+          className="mt-4 pt-4"
+          currentPage={currentPage}
+          totalPages={totalPages}
+          total={employees.length}
+          unit="nhân viên"
+          onPageChange={setPage}
+        />
       </QueryBoundary>
     </DesignCard>
   );

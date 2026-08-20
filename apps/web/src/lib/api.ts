@@ -76,6 +76,12 @@ export async function apiRequest<T>(
     if (next) {
       return apiRequest<T>(path, options, true);
     }
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('accessToken');
+      localStorage.removeItem('account');
+      document.cookie = 'acv2_session=; path=/; Max-Age=0';
+      window.location.href = '/login';
+    }
   }
 
   const contentType = res.headers.get('content-type') || '';
@@ -237,6 +243,7 @@ export type Project = {
     id: string;
     contractorId: string;
     contractor: Contractor;
+    userCount?: number;
   }>;
   _count?: { users: number };
 };
@@ -350,7 +357,7 @@ export async function getContractors() {
 
 export async function createContractor(data: {
   name: string;
-  code: string;
+  code?: string;
   description?: string;
 }) {
   return apiRequest<Contractor>('/contractors', {
@@ -373,6 +380,26 @@ export async function deleteContractor(id: string) {
   return apiRequest<null>(`/contractors/${id}`, { method: 'DELETE' });
 }
 
+export type ContractorProjectTransferResult = {
+  contractorId: string;
+  fromProjectId: string;
+  toProjectId: string;
+  usersMoved: number;
+};
+
+export async function transferContractorProject(
+  contractorId: string,
+  data: { fromProjectId: string; toProjectId: string },
+) {
+  return apiRequest<ContractorProjectTransferResult>(
+    `/contractors/${contractorId}/transfer-project`,
+    {
+      method: 'POST',
+      body: JSON.stringify(data),
+    },
+  );
+}
+
 export async function getProjects(params?: { contractorId?: string }) {
   const q = new URLSearchParams();
   if (params?.contractorId) q.set('contractorId', params.contractorId);
@@ -382,7 +409,7 @@ export async function getProjects(params?: { contractorId?: string }) {
 
 export async function createProject(data: {
   name: string;
-  code: string;
+  code?: string;
   siteName?: string;
   description?: string;
   contractorIds?: string[];

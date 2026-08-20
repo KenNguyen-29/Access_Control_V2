@@ -11,10 +11,9 @@ import {
   RefreshCw,
   StopCircle,
   AlertTriangle,
-  ChevronLeft,
-  ChevronRight,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { TablePager } from '@/components/ui/table-pager';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Dialog, ConfirmDialog } from '@/components/ui/dialog';
@@ -23,8 +22,8 @@ import { Badge } from '@/components/ui/badge';
 import { Collapsible } from '@/components/ui/collapsible';
 import { QueryBoundary } from '@/components/ui/query-states';
 import { DesignCard, PageShell } from '@/components/design/PageShell';
-import { UserInfiniteList } from '@/components/users/UserInfiniteList';
-import { useDebouncedValue } from '@/hooks/useDebouncedValue';
+import { ShiftAssignTree } from '@/components/shifts/ShiftAssignTree';
+
 import { queryKeys } from '@/lib/queryKeys';
 import {
   ApiError,
@@ -33,7 +32,6 @@ import {
   deleteEmployeeShift,
   deleteWorkShift,
   endEmployeeShift,
-  getDepartments,
   getEmployeeShifts,
   getUserIds,
   getUsers,
@@ -145,9 +143,6 @@ export default function ShiftsPage() {
     FieldErrors<'workShiftId' | 'startDate' | 'endDate' | 'selectedUserIds' | 'mode'>
   >({});
   const [selectedUserIds, setSelectedUserIds] = useState<Set<string>>(new Set());
-  const [assignSearch, setAssignSearch] = useState('');
-  const debouncedAssignSearch = useDebouncedValue(assignSearch);
-  const [assignDept, setAssignDept] = useState('');
   const [assignResult, setAssignResult] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<WorkShift | null>(null);
   const [endAssignmentTarget, setEndAssignmentTarget] = useState<EmployeeShift | null>(null);
@@ -170,30 +165,12 @@ export default function ShiftsPage() {
     queryKey: ['users', 'shifts-coverage'],
     queryFn: () => getUsers({ page: 1, pageSize: 500 }),
   });
-  const departmentsQuery = useQuery({
-    queryKey: queryKeys.departments(),
-    queryFn: () => getDepartments(),
-    enabled: assignOpen,
-  });
   const overviewQuery = useQuery({
     queryKey: ['stats', 'overview', 'shifts'],
     queryFn: () => getStatsOverview(),
   });
-  const filterIdsQuery = useQuery({
-    queryKey: ['userIds', debouncedAssignSearch, assignDept],
-    queryFn: () =>
-      getUserIds({
-        search: debouncedAssignSearch.trim() || undefined,
-        departmentId: assignDept || undefined,
-      }),
-    enabled: assignOpen,
-  });
-
   const shifts = useMemo(() => shiftsQuery.data ?? [], [shiftsQuery.data]);
   const assignments = useMemo(() => assignmentsQuery.data ?? [], [assignmentsQuery.data]);
-  const deptOptions = departmentsQuery.data ?? [];
-  const filterIds = filterIdsQuery.data?.ids ?? [];
-  const filterTotal = filterIdsQuery.data?.total ?? 0;
   const loading = shiftsQuery.isLoading || assignmentsQuery.isLoading;
   const queryError = shiftsQuery.error ?? assignmentsQuery.error;
   const listError =
@@ -297,27 +274,11 @@ export default function ShiftsPage() {
     [filteredUnassigned, listCurrentPage],
   );
 
-  const allFilteredSelected =
-    filterIds.length > 0 && filterIds.every((id) => selectedUserIds.has(id));
-
   function toggleUser(id: string) {
     setSelectedUserIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
-      return next;
-    });
-    setAssignFieldErrors((prev) => clearFieldError(prev, 'selectedUserIds'));
-  }
-
-  function toggleAllFiltered() {
-    setSelectedUserIds((prev) => {
-      const next = new Set(prev);
-      if (allFilteredSelected) {
-        for (const id of filterIds) next.delete(id);
-      } else {
-        for (const id of filterIds) next.add(id);
-      }
       return next;
     });
     setAssignFieldErrors((prev) => clearFieldError(prev, 'selectedUserIds'));
@@ -447,8 +408,6 @@ export default function ShiftsPage() {
     setAssignFieldErrors({});
     setAssignTargetUser(null);
     setSelectedUserIds(new Set());
-    setAssignSearch('');
-    setAssignDept('');
     setAssignResult(null);
     setError(null);
     setAssignOpen(true);
@@ -464,8 +423,6 @@ export default function ShiftsPage() {
     setAssignFieldErrors({});
     setAssignTargetUser(user);
     setSelectedUserIds(new Set([user.id]));
-    setAssignSearch('');
-    setAssignDept('');
     setAssignResult(null);
     setError(null);
     setAssignOpen(true);
@@ -866,34 +823,14 @@ export default function ShiftsPage() {
                     })}
               </tbody>
             </table>
-            {listTotalPages > 1 && (
-              <div className="mt-4 flex items-center justify-between border-t border-border pt-4">
-                <p className="text-xs text-muted-foreground">
-                  Trang {listCurrentPage} / {listTotalPages} · {listTotal}{' '}
-                  {assignmentFilter === 'UNASSIGNED' ? 'nhân viên' : 'phân ca'}
-                </p>
-                <div className="flex items-center gap-1">
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    className="h-8 w-8"
-                    disabled={listCurrentPage <= 1}
-                    onClick={() => setListPage((p) => Math.max(1, p - 1))}
-                  >
-                    <ChevronLeft className="h-4 w-4" />
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    className="h-8 w-8"
-                    disabled={listCurrentPage >= listTotalPages}
-                    onClick={() => setListPage((p) => Math.min(listTotalPages, p + 1))}
-                  >
-                    <ChevronRight className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
-            )}
+            <TablePager
+              className="mt-4 pt-4"
+              currentPage={listCurrentPage}
+              totalPages={listTotalPages}
+              total={listTotal}
+              unit={assignmentFilter === 'UNASSIGNED' ? 'nhân viên' : 'phân ca'}
+              onPageChange={setListPage}
+            />
           </div>
         </QueryBoundary>
       </DesignCard>
@@ -1044,7 +981,7 @@ export default function ShiftsPage() {
             ? `Phân ca riêng cho ${assignTargetUser.employeeCode ? `${assignTargetUser.fullName} (${assignTargetUser.employeeCode})` : assignTargetUser.fullName}.`
             : 'Chọn kiểu gán, ca làm việc và nhân viên.'
         }
-        className={assignTargetUser ? 'max-w-lg' : 'max-w-2xl'}
+        className={assignTargetUser ? 'max-w-lg' : 'w-[min(96vw,780px)] max-w-none'}
       >
         <div className="space-y-3">
           {assignTargetUser && (
@@ -1181,71 +1118,26 @@ export default function ShiftsPage() {
 
           {!assignTargetUser && (
             <div className="border-t border-border pt-3">
-              <label className="mb-1 block text-xs text-muted-foreground">
-                Nhân viên
+              <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
+                Chọn nhân viên (Dự án → Nhà thầu → Nhân viên)
                 <RequiredMark />
               </label>
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_200px]">
-                <div className="relative">
-                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    placeholder="Tìm theo tên hoặc mã..."
-                    className="input-design h-10 pl-10"
-                    value={assignSearch}
-                    onChange={(e) => setAssignSearch(e.target.value)}
-                  />
-                </div>
-                <Select value={assignDept} onChange={(e) => setAssignDept(e.target.value)}>
-                  <option value="">Tất cả phòng ban</option>
-                  {deptOptions.map((d) => (
-                    <option key={d.id} value={d.id}>
-                      {d.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-
-              <div className="mt-2 flex items-center justify-between rounded-t-sm border border-border bg-muted/30 px-3 py-2">
-                <label className="flex items-center gap-2 text-sm font-medium">
-                  <input
-                    type="checkbox"
-                    checked={allFilteredSelected}
-                    onChange={toggleAllFiltered}
-                    disabled={filterTotal === 0 || filterIdsQuery.isLoading}
-                  />
-                  Chọn tất cả ({filterTotal})
-                </label>
-                <span className="text-xs text-muted-foreground">
-                  Đã chọn <strong className="text-foreground">{selectedUserIds.size}</strong>
-                </span>
-              </div>
-              <div
-                className={cn(
-                  'max-h-72 overflow-y-auto rounded-b-sm border border-t-0 border-border',
-                  assignFieldErrors.selectedUserIds && 'border-destructive',
-                )}
-              >
-                <UserInfiniteList
-                  enabled={assignOpen && !assignTargetUser}
-                  search={debouncedAssignSearch}
-                  departmentId={assignDept || undefined}
-                  emptyText="Không có nhân viên phù hợp."
-                  renderItem={(u: User) => (
-                    <label className="flex cursor-pointer items-center gap-3 border-b border-border px-3 py-2 text-sm last:border-b-0 hover:bg-muted/20">
-                      <input
-                        type="checkbox"
-                        checked={selectedUserIds.has(u.id)}
-                        onChange={() => toggleUser(u.id)}
-                      />
-                      <span className="flex-1 font-medium">{u.fullName}</span>
-                      <span className="font-mono text-xs text-muted-foreground">{u.employeeCode}</span>
-                      <span className="w-32 truncate text-right text-xs text-muted-foreground">
-                        {u.department?.name ?? '—'}
-                      </span>
-                    </label>
-                  )}
-                />
-              </div>
+              <ShiftAssignTree
+                enabled={assignOpen && !assignTargetUser}
+                selectedUserIds={selectedUserIds}
+                onToggleUser={toggleUser}
+                onToggleMany={(ids, checked) => {
+                  setSelectedUserIds((prev) => {
+                    const next = new Set(prev);
+                    for (const id of ids) {
+                      if (checked) next.add(id);
+                      else next.delete(id);
+                    }
+                    return next;
+                  });
+                  setAssignFieldErrors((prev) => clearFieldError(prev, 'selectedUserIds'));
+                }}
+              />
               <FieldError message={assignFieldErrors.selectedUserIds} />
             </div>
           )}

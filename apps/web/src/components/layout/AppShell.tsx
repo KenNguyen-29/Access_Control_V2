@@ -13,7 +13,7 @@ export function AppShell({
   return (
     <div className="flex h-screen w-full flex-col overflow-hidden bg-neutral font-body antialiased">
       <AppNav />
-      <main className="relative flex flex-1 flex-col overflow-hidden pt-16">
+      <main className="relative flex flex-1 flex-col overflow-hidden pt-[4.5rem]">
         <div
           className={
             fullBleed

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
 import {
   Monitor,
@@ -10,6 +10,7 @@ import {
   ChevronRight,
   LayoutGrid,
   Maximize,
+  Minimize,
 } from 'lucide-react';
 import { useSocket } from '@/hooks/useSocket';
 import { cn } from '@/lib/utils';
@@ -95,6 +96,26 @@ export default function DashboardPage() {
   const [detailCam, setDetailCam] = useState<CameraItem | null>(null);
   const [emergencyOpen, setEmergencyOpen] = useState(false);
   const [emergencyPeople, setEmergencyPeople] = useState<EmergencyOverlayPerson[]>([]);
+  const gridAreaRef = useRef<HTMLElement>(null);
+  const [isGridFullscreen, setIsGridFullscreen] = useState(false);
+
+  useEffect(() => {
+    const onFullscreenChange = () => {
+      setIsGridFullscreen(document.fullscreenElement === gridAreaRef.current);
+    };
+    document.addEventListener('fullscreenchange', onFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', onFullscreenChange);
+  }, []);
+
+  const toggleGridFullscreen = useCallback(() => {
+    const el = gridAreaRef.current;
+    if (!el) return;
+    if (document.fullscreenElement === el) {
+      void document.exitFullscreen();
+    } else {
+      void el.requestFullscreen();
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -323,12 +344,21 @@ export default function DashboardPage() {
         </div>
       </aside>
 
-      {/* Center grid */}
-      <section className="relative flex min-w-0 flex-1 flex-col bg-slate-100">
+      {/* Center grid — fullscreen targets this area only, not the whole browser page */}
+      <section
+        ref={gridAreaRef}
+        className={cn(
+          'relative flex min-w-0 flex-1 flex-col bg-slate-100',
+          isGridFullscreen && 'bg-black',
+        )}
+      >
         <button
           type="button"
           onClick={() => setSidebarOpen((v) => !v)}
-          className="absolute left-0 top-1/2 z-20 flex h-10 w-3 -translate-y-1/2 items-center justify-center rounded-r border border-l-0 border-slate-200 bg-white shadow-sm hover:bg-slate-50"
+          className={cn(
+            'absolute left-0 top-1/2 z-20 flex h-10 w-3 -translate-y-1/2 items-center justify-center rounded-r border border-l-0 border-slate-200 bg-white shadow-sm hover:bg-slate-50',
+            isGridFullscreen && 'hidden',
+          )}
           title={sidebarOpen ? 'Ẩn danh sách' : 'Hiện danh sách'}
         >
           {sidebarOpen ? (
@@ -338,9 +368,9 @@ export default function DashboardPage() {
           )}
         </button>
 
-        <CheckinToast event={lastEvent} autoHideMs={popupTimeoutMs} />
+        {!isGridFullscreen && <CheckinToast event={lastEvent} autoHideMs={popupTimeoutMs} />}
 
-        <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className={cn('min-h-0 flex-1 overflow-y-auto', isGridFullscreen && 'overflow-hidden')}>
           <CameraGrid
             cameras={gridCameras}
             layout={layout}
@@ -351,8 +381,18 @@ export default function DashboardPage() {
         </div>
 
         {/* Bottom toolbar */}
-        <div className="flex h-12 shrink-0 items-center justify-between border-t border-slate-300 bg-[#f0f2f5] px-4">
-          <span className="truncate text-xs font-medium text-slate-600">
+        <div
+          className={cn(
+            'flex h-12 shrink-0 items-center justify-between border-t border-slate-300 bg-[#f0f2f5] px-4',
+            isGridFullscreen && 'border-slate-800 bg-[#0a0c10] text-white',
+          )}
+        >
+          <span
+            className={cn(
+              'truncate text-xs font-medium',
+              isGridFullscreen ? 'text-slate-300' : 'text-slate-600',
+            )}
+          >
             {selectedCam?.name ?? 'Giám sát'}
             {selectedCam?.location ? ` · ${selectedCam.location}` : ''}
           </span>
@@ -405,14 +445,14 @@ export default function DashboardPage() {
               <Maximize className="h-4 w-4" />
               Chi tiết
             </button>
-            <button
-              type="button"
-              onClick={() => document.documentElement.requestFullscreen?.()}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-sm border border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
-              title="Toàn màn hình"
-            >
-              <Maximize className="h-4 w-4" />
-            </button>
+        <button
+          type="button"
+          onClick={() => void toggleGridFullscreen()}
+          className="inline-flex h-8 w-8 items-center justify-center rounded-sm border border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
+          title={isGridFullscreen ? 'Thoát toàn màn hình lưới camera' : 'Toàn màn hình lưới camera'}
+        >
+          {isGridFullscreen ? <Minimize className="h-4 w-4" /> : <Maximize className="h-4 w-4" />}
+        </button>
           </div>
         </div>
       </section>

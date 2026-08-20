@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import { RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { TablePager } from '@/components/ui/table-pager';
 import { PageShell, DesignCard } from '@/components/design/PageShell';
 import { QueryBoundary } from '@/components/ui/query-states';
 import { queryKeys } from '@/lib/queryKeys';
@@ -120,29 +121,13 @@ export default function AuditSettingsPage() {
           </table>
         </div>
 
-        <div className="mt-3 flex items-center justify-between text-sm">
-          <span className="text-muted-foreground">
-            Trang {page}/{totalPages} · {total} bản ghi
-          </span>
-          <div className="flex gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={page <= 1}
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-            >
-              Trước
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={page >= totalPages}
-              onClick={() => setPage((p) => p + 1)}
-            >
-              Sau
-            </Button>
-          </div>
-        </div>
+        <TablePager
+          currentPage={page}
+          totalPages={totalPages}
+          total={Number(total)}
+          unit="bản ghi"
+          onPageChange={setPage}
+        />
       </QueryBoundary>
     </PageShell>
   );

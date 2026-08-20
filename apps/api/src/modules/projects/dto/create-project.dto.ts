@@ -28,12 +28,12 @@ export class CreateProjectDto {
   @MaxLength(100)
   name!: string;
 
-  @ApiProperty()
+  @ApiPropertyOptional()
   @Transform(emptyToUndefined)
+  @IsOptional()
   @IsString()
-  @IsNotEmpty({ message: 'Vui lòng nhập mã dự án' })
   @Matches(CODE, { message: 'Mã dự án không hợp lệ' })
-  code!: string;
+  code?: string;
 
   @ApiPropertyOptional()
   @Transform(emptyToUndefined)

@@ -50,6 +50,16 @@ function matchesAllowedPrefix(normalized: string, allowedPrefixes: string[]): bo
   return matched;
 }
 
+/** /projects và /settings/contractors đã gộp một màn — quyền một bên mở được cả hai URL. */
+function withMergedProjectRoutes(prefixes: string[]): string[] {
+  const set = new Set(prefixes);
+  if (set.has('/projects') || set.has('/settings/contractors')) {
+    set.add('/projects');
+    set.add('/settings/contractors');
+  }
+  return [...set];
+}
+
 /** Static rules — dùng khi chưa có cấu hình DB. */
 export function canAccessRoute(role: string, path: string): boolean {
   const normalized = normalizePath(path);
@@ -75,7 +85,7 @@ export function canAccessRouteWithAllowed(
 ): boolean {
   if (role === 'ADMIN') return true;
   const normalized = normalizePath(path);
-  const routes = normalizeAllowedRoutes(allowedRoutes);
+  const routes = withMergedProjectRoutes(normalizeAllowedRoutes(allowedRoutes));
   if (routes.length > 0) {
     return matchesAllowedPrefix(normalized, routes);
   }

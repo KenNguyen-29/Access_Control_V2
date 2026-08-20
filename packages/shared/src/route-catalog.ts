@@ -4,7 +4,7 @@ export const CONFIGURABLE_ROUTES: Array<{ prefix: string; label: string; group: 
   { prefix: '/dashboard', label: 'Giám sát', group: 'Vận hành' },
   { prefix: '/reports', label: 'Chấm công', group: 'Vận hành' },
   { prefix: '/reports/contractors', label: 'BC nhà thầu', group: 'Vận hành' },
-  { prefix: '/projects', label: 'Dự án', group: 'Vận hành' },
+  { prefix: '/projects', label: 'Dự án & Nhà thầu', group: 'Vận hành' },
   { prefix: '/muster', label: 'Sơ tán khẩn cấp', group: 'Vận hành' },
   { prefix: '/users', label: 'Nhân sự', group: 'Quản lý' },
   { prefix: '/shifts', label: 'Ca làm', group: 'Quản lý' },

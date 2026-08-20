@@ -1,10 +1,10 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
+import { Dialog } from '@/components/ui/dialog';
 import { FieldError, RequiredMark } from '@/components/ui/field-error';
 import { DualListTransfer, UserDualListTransfer } from '@/components/access-control/DualListTransfer';
 import type { AccessGroup, AccessPerson, AccessPoint } from '@/lib/accessControl';
@@ -109,21 +109,13 @@ export function AddAccessGroupPanel({
   };
 
   return (
-    <div className="absolute inset-y-0 right-0 z-20 flex w-[480px] max-w-full flex-col border-l border-border bg-white shadow-xl">
-      <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
-        <h3 className="font-bold text-foreground">
-          {editGroup ? 'Sửa nhóm khu vực' : 'Thêm nhóm khu vực'}
-        </h3>
-        <button
-          type="button"
-          onClick={onClose}
-          className="text-muted-foreground hover:text-foreground"
-        >
-          <X className="h-5 w-5" />
-        </button>
-      </div>
-
-      <div className="flex-1 space-y-5 overflow-y-auto bg-white p-4">
+    <Dialog
+      open={open}
+      onClose={onClose}
+      title={editGroup ? 'Sửa nhóm khu vực' : 'Thêm nhóm khu vực'}
+      className="w-[min(96vw,560px)] max-w-none"
+    >
+      <div className="max-h-[70vh] space-y-5 overflow-y-auto">
         <div className="space-y-1.5">
           <label className="text-sm font-medium">
             Tên khu vực
@@ -135,7 +127,7 @@ export function AddAccessGroupPanel({
               setName(e.target.value);
               setFieldErrors((prev) => clearFieldError(prev, 'name'));
             }}
-            className={cn('bg-white', fieldErrors.name && 'border-destructive')}
+            className={cn(fieldErrors.name && 'border-destructive')}
             aria-invalid={Boolean(fieldErrors.name)}
           />
           <FieldError message={fieldErrors.name} />
@@ -151,7 +143,7 @@ export function AddAccessGroupPanel({
               setScheduleTemplate(e.target.value);
               setFieldErrors((prev) => clearFieldError(prev, 'scheduleTemplate'));
             }}
-            className={cn('bg-white', fieldErrors.scheduleTemplate && 'border-destructive')}
+            className={cn(fieldErrors.scheduleTemplate && 'border-destructive')}
             aria-invalid={Boolean(fieldErrors.scheduleTemplate)}
           >
             {scheduleTemplates.map((s) => (
@@ -178,7 +170,7 @@ export function AddAccessGroupPanel({
         />
       </div>
 
-      <div className="flex shrink-0 justify-end gap-2 border-t border-border bg-white px-4 py-3">
+      <div className="flex justify-end gap-2 pt-4">
         <Button type="button" variant="outline" onClick={onClose} disabled={saving}>
           Hủy
         </Button>
@@ -191,6 +183,6 @@ export function AddAccessGroupPanel({
           Lưu
         </Button>
       </div>
-    </div>
+    </Dialog>
   );
 }
