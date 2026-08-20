@@ -288,28 +288,77 @@ export class AttendanceService {
 
   findAccessLogs(query: {
     limit?: number;
+    page?: number;
+    pageSize?: number;
+    from?: string;
+    to?: string;
+    search?: string;
+    departmentId?: string;
     deviceId?: string;
     zoneId?: string;
     action?: AccessAction;
     isValid?: boolean;
     unknownOnly?: boolean;
   } = {}) {
+    const search = query.search?.trim();
+    const where = {
+      ...(query.deviceId ? { deviceId: query.deviceId } : {}),
+      ...(query.zoneId ? { zoneId: query.zoneId } : {}),
+      ...(query.action ? { action: query.action } : {}),
+      ...(query.isValid !== undefined ? { isValid: query.isValid } : {}),
+      ...(query.unknownOnly ? { userId: null } : {}),
+      ...(query.from || query.to
+        ? {
+            eventAt: {
+              ...(query.from ? { gte: new Date(`${query.from}T00:00:00`) } : {}),
+              ...(query.to ? { lte: new Date(`${query.to}T23:59:59.999`) } : {}),
+            },
+          }
+        : {}),
+      ...(query.departmentId || search
+        ? {
+            user: {
+              ...(query.departmentId ? { departmentId: query.departmentId } : {}),
+              ...(search
+                ? {
+                    OR: [
+                      { fullName: { contains: search, mode: 'insensitive' as const } },
+                      { employeeCode: { contains: search, mode: 'insensitive' as const } },
+                    ],
+                  }
+                : {}),
+            },
+          }
+        : {}),
+    };
+
+    const include = {
+      user: { include: { department: true } },
+      device: true,
+      zone: { select: { id: true, name: true } },
+    } as const;
+
+    if (query.page != null) {
+      const page = Math.max(1, query.page);
+      const pageSize = Math.min(100, Math.max(1, query.pageSize ?? 10));
+      return this.prisma.$transaction([
+        this.prisma.accessLog.findMany({
+          where,
+          skip: (page - 1) * pageSize,
+          take: pageSize,
+          orderBy: { eventAt: 'desc' },
+          include,
+        }),
+        this.prisma.accessLog.count({ where }),
+      ]).then(([items, total]) => ({ items, total, page, pageSize }));
+    }
+
     const limit = query.limit ?? 50;
     return this.prisma.accessLog.findMany({
-      where: {
-        ...(query.deviceId ? { deviceId: query.deviceId } : {}),
-        ...(query.zoneId ? { zoneId: query.zoneId } : {}),
-        ...(query.action ? { action: query.action } : {}),
-        ...(query.isValid !== undefined ? { isValid: query.isValid } : {}),
-        ...(query.unknownOnly ? { userId: null } : {}),
-      },
+      where,
       take: limit,
       orderBy: { eventAt: 'desc' },
-      include: {
-        user: { include: { department: true } },
-        device: true,
-        zone: { select: { id: true, name: true } },
-      },
+      include,
     });
   }
 

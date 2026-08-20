@@ -1,13 +1,14 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { RolesGuard } from '../../common/guards/roles.guard';
-import { successResponse } from '../../common/utils/response.util';
+import { paginatedResponse, successResponse } from '../../common/utils/response.util';
 import { ContractorsService } from './contractors.service';
 import { CreateContractorDto } from './dto/create-contractor.dto';
 import { TransferContractorProjectDto } from './dto/transfer-contractor-project.dto';
 import { UpdateContractorDto } from './dto/update-contractor.dto';
+import { ContractorsQueryDto } from './dto/contractors-query.dto';
 
 @ApiTags('contractors')
 @ApiBearerAuth()
@@ -16,8 +17,12 @@ export class ContractorsController {
   constructor(private readonly service: ContractorsService) {}
 
   @Get()
-  async findAll() {
-    return successResponse(await this.service.findAll());
+  async findAll(@Query() query: ContractorsQueryDto) {
+    const result = await this.service.findAll(query);
+    if (Array.isArray(result)) {
+      return successResponse(result);
+    }
+    return paginatedResponse(result.items, result.total, result.page, result.pageSize);
   }
 
   @Get(':id')

@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Eye } from 'lucide-react';
 import type { CheckinEvent } from '@acv2/shared';
 import {
   getAccessLogs,
@@ -10,6 +11,8 @@ import {
   type Device,
 } from '@/lib/api';
 import { Select } from '@/components/ui/select';
+import { Button } from '@/components/ui/button';
+import { AccessLogDetailDialog } from '@/components/attendance/AccessLogDetailDialog';
 import { cn } from '@/lib/utils';
 
 const ACTION_OPTIONS = [
@@ -90,6 +93,7 @@ export default function MiniAccessLog({ lastEvent }: Props) {
   const [action, setAction] = useState('');
   const [validity, setValidity] = useState('');
   const [loading, setLoading] = useState(true);
+  const [selectedLog, setSelectedLog] = useState<AccessLog | null>(null);
   const lastHandledEventKey = useRef<string | null>(null);
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -171,6 +175,15 @@ export default function MiniAccessLog({ lastEvent }: Props) {
     loadDebounced();
   }, [lastEvent, zoneId, deviceId, action, validity, loadDebounced]);
 
+  const detailExtras =
+    selectedLog && lastEvent?.id === selectedLog.id
+      ? {
+          snapshotUrl: lastEvent.snapshotUrl,
+          faceImageUrl: lastEvent.faceImageUrl,
+          departmentName: lastEvent.departmentName,
+        }
+      : null;
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="shrink-0 space-y-2 border-b border-border px-3 py-2.5">
@@ -240,11 +253,11 @@ export default function MiniAccessLog({ lastEvent }: Props) {
           <div
             key={log.id}
             className={cn(
-              'flex items-center justify-between border-b border-border/60 px-4 py-2.5 text-sm hover:bg-muted/30',
+              'flex items-center gap-2 border-b border-border/60 px-3 py-2.5 text-sm hover:bg-muted/30',
               log.isValid === false && 'bg-destructive/5',
             )}
           >
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <p className="truncate font-medium text-foreground">
                 {log.user?.fullName ?? 'Không xác định'}
               </p>
@@ -255,13 +268,28 @@ export default function MiniAccessLog({ lastEvent }: Props) {
                   ? ` · ${log.action === 'CHECK_IN' ? 'Check-in' : log.action === 'CHECK_OUT' ? 'Check-out' : log.action}`
                   : ''}
               </p>
+              <p className="mt-0.5 text-[10px] text-muted-foreground">{formatEventAt(log.eventAt)}</p>
             </div>
-            <span className="ml-2 shrink-0 text-right text-xs text-muted-foreground">
-              {formatEventAt(log.eventAt)}
-            </span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7 shrink-0 gap-1 px-2 text-xs"
+              onClick={() => setSelectedLog(log)}
+            >
+              <Eye className="h-3.5 w-3.5" />
+              Chi tiết
+            </Button>
           </div>
         ))}
       </div>
+
+      <AccessLogDetailDialog
+        open={!!selectedLog}
+        log={selectedLog}
+        extras={detailExtras}
+        onClose={() => setSelectedLog(null)}
+      />
     </div>
   );
 }

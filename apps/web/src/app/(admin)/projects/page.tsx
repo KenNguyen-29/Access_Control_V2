@@ -40,19 +40,6 @@ const EMPTY_P = {
 };
 const PAGE_SIZE = 10;
 
-function usePagedRows<T>(rows: T[], page: number) {
-  const total = rows.length;
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const currentPage = Math.min(Math.max(1, page), totalPages);
-  const start = (currentPage - 1) * PAGE_SIZE;
-  return {
-    pageRows: rows.slice(start, start + PAGE_SIZE),
-    total,
-    totalPages,
-    currentPage,
-  };
-}
-
 export default function ProjectsPage() {
   const queryClient = useQueryClient();
   const { canManageProjects } = usePermissions();
@@ -72,29 +59,45 @@ export default function ProjectsPage() {
   const [transferForm, setTransferForm] = useState({ fromProjectId: '', toProjectId: '' });
   const [filterContractor, setFilterContractor] = useState('');
   const [projectPage, setProjectPage] = useState(1);
+  const [projectSearch, setProjectSearch] = useState('');
 
   const contractorsQuery = useQuery({
-    queryKey: ['contractors'],
+    queryKey: ['contractors', 'all'],
     queryFn: () => getContractors(),
   });
   const projectsQuery = useQuery({
-    queryKey: ['projects', filterContractor || 'all'],
-    queryFn: () => getProjects(filterContractor ? { contractorId: filterContractor } : undefined),
+    queryKey: [
+      'projects',
+      'paged',
+      projectPage,
+      PAGE_SIZE,
+      filterContractor || 'all',
+      projectSearch.trim(),
+    ],
+    queryFn: () =>
+      getProjects({
+        page: projectPage,
+        pageSize: PAGE_SIZE,
+        contractorId: filterContractor || undefined,
+        search: projectSearch.trim() || undefined,
+      }),
   });
   const allProjectsQuery = useQuery({
     queryKey: ['projects', 'all'],
     queryFn: () => getProjects(),
+    enabled: !!transferC || pOpen,
   });
 
   const contractors = contractorsQuery.data ?? [];
-  const projects = projectsQuery.data ?? [];
-  const allProjects = allProjectsQuery.data ?? projects;
+  const projects = projectsQuery.data?.items ?? [];
+  const projectsTotal = projectsQuery.data?.total ?? 0;
+  const projectsTotalPages = Math.max(1, projectsQuery.data?.totalPages ?? 1);
+  const projectsCurrentPage = Math.min(projectPage, projectsTotalPages);
+  const allProjects = allProjectsQuery.data ?? [];
 
   useEffect(() => {
     setProjectPage(1);
-  }, [filterContractor]);
-
-  const projectsPaged = usePagedRows(projects, projectPage);
+  }, [filterContractor, projectSearch]);
 
   const displayError =
     error ??
@@ -252,10 +255,16 @@ export default function ProjectsPage() {
       )}
 
       <DesignCard
-        title={`Dự án (${projects.length})`}
+        title={`Dự án (${projectsTotal})`}
         description="Bấm mũi tên trên dòng dự án để liệt kê nhà thầu; bấm tiếp nhà thầu để xem nhân sự."
         actions={
           <div className="flex flex-wrap items-center gap-2">
+            <Input
+              placeholder="Tìm dự án..."
+              className="input-design h-9 w-44"
+              value={projectSearch}
+              onChange={(e) => setProjectSearch(e.target.value)}
+            />
             <Select
               value={filterContractor}
               onChange={(e) => setFilterContractor(e.target.value)}
@@ -309,7 +318,7 @@ export default function ProjectsPage() {
           emptyDescription={canEdit ? 'Tạo dự án và gắn nhà thầu.' : 'Chưa có dự án trong phạm vi của bạn.'}
         >
           <ProjectHierarchyTable
-            projects={projectsPaged.pageRows}
+            projects={projects}
             canEdit={canEdit}
             onEditProject={(p) => {
               setEditingP(p);
@@ -331,9 +340,9 @@ export default function ProjectsPage() {
             onTransferContractor={openTransfer}
           />
           <TablePager
-            currentPage={projectsPaged.currentPage}
-            totalPages={projectsPaged.totalPages}
-            total={projectsPaged.total}
+            currentPage={projectsCurrentPage}
+            totalPages={projectsTotalPages}
+            total={projectsTotal}
             unit="dự án"
             onPageChange={setProjectPage}
           />

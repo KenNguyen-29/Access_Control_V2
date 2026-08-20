@@ -5,6 +5,7 @@ import { Prisma, UserType } from '@prisma/client';
 import * as ExcelJS from 'exceljs';
 import JSZip from 'jszip';
 import { PrismaService } from '../../prisma/prisma.service';
+import { vietnamDateOnlyString } from '../../common/utils/vn-time.util';
 import { StorageService } from '../storage/storage.service';
 import { AkuvoxService } from '../devices/akuvox.service';
 import { DnakeService } from '../devices/dnake.service';
@@ -60,9 +61,13 @@ export class UsersService {
       departmentId?: string;
       contractorId?: string;
       projectId?: string;
+      withoutActiveShift?: boolean;
     },
     scope?: { projectId?: string | { in: string[] } },
   ) {
+    const today = vietnamDateOnlyString(new Date());
+    const todayDate = new Date(`${today}T00:00:00.000Z`);
+
     return {
       isDeleted: false,
       ...(query.departmentId ? { departmentId: query.departmentId } : {}),
@@ -75,6 +80,16 @@ export class UsersService {
               { employeeCode: { contains: query.search, mode: 'insensitive' as const } },
               { citizenId: { contains: query.search, mode: 'insensitive' as const } },
             ],
+          }
+        : {}),
+      ...(query.withoutActiveShift
+        ? {
+            employeeShifts: {
+              none: {
+                isDeleted: false,
+                OR: [{ endDate: null }, { endDate: { gt: todayDate } }],
+              },
+            },
           }
         : {}),
     };

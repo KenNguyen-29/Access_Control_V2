@@ -1,7 +1,8 @@
 'use client';
 
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useSocket } from '@/hooks/useSocket';
 import {
   Download,
   Search,
@@ -16,6 +17,7 @@ import {
   ChevronRight,
   Upload,
   FileSpreadsheet,
+  Eye,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { TablePager } from '@/components/ui/table-pager';
@@ -40,13 +42,17 @@ import {
   ApiError,
   downloadAttendanceTemplate,
   exportAttendance,
+  getAccessLogs,
   getAttendanceRecords,
   getAttendanceSummary,
   getDepartments,
   getWeeklyTimesheet,
   importAttendance,
+  type AccessLog,
   type WeeklyRow,
 } from '@/lib/api';
+import { AccessLogDetailDialog } from '@/components/attendance/AccessLogDetailDialog';
+import { ReportsLogsConfigPanel } from '@/components/reports/ReportsLogsConfigPanel';
 import EmployeeWeekMatrix from './EmployeeWeekMatrix';
 
 function downloadBlob(blob: Blob, filename: string) {
@@ -169,6 +175,8 @@ function FlagCheckbox({
 
 export default function ReportsPage() {
   const queryClient = useQueryClient();
+  const { lastEvent } = useSocket();
+  const lastHandledLogEventKey = useRef<string | null>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
   const [tab, setTab] = useState('stats');
 
@@ -204,12 +212,19 @@ export default function ReportsPage() {
   const [recordsLate, setRecordsLate] = useState<TriFilter>('');
   const [recordsOt, setRecordsOt] = useState<TriFilter>('');
   const debouncedRecordsSearch = useDebouncedValue(recordsSearch, 300);
+  const [logsPage, setLogsPage] = useState(1);
+  const [logsSearch, setLogsSearch] = useState('');
+  const [logsAction, setLogsAction] = useState('');
+  const [logsValidity, setLogsValidity] = useState('');
+  const debouncedLogsSearch = useDebouncedValue(logsSearch, 300);
+  const [selectedAccessLog, setSelectedAccessLog] = useState<AccessLog | null>(null);
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   const [importNotice, setImportNotice] = useState<string | null>(null);
 
   const RECORDS_PAGE_SIZE = 10;
+  const LOGS_PAGE_SIZE = 10;
   const MATRIX_DAY_COUNT = 30;
   const matrixRange = useMemo(() => {
     const to = applied.to || formatDateOnly(new Date());
@@ -234,8 +249,8 @@ export default function ReportsPage() {
         to: applied.to,
         departmentId: applied.departmentId || undefined,
       }),
-    enabled: tab === 'stats',
-    refetchInterval: tab === 'stats' ? 30_000 : false,
+    enabled: tab === 'stats' || tab === 'summary',
+    refetchInterval: tab === 'stats' || tab === 'summary' ? 30_000 : false,
     refetchIntervalInBackground: true,
   });
   const summary = summaryQuery.data ?? null;
@@ -301,6 +316,48 @@ export default function ReportsPage() {
   });
   const detailWeekly = detailWeeklyQuery.data ?? null;
 
+  const logsQuery = useQuery({
+    queryKey: queryKeys.accessLogs({
+      from: applied.from,
+      to: applied.to,
+      departmentId: applied.departmentId,
+      page: logsPage,
+      pageSize: LOGS_PAGE_SIZE,
+      search: debouncedLogsSearch.trim() || undefined,
+      action: logsAction || undefined,
+      isValid: logsValidity === '' ? undefined : logsValidity === 'true',
+    }),
+    queryFn: () =>
+      getAccessLogs({
+        page: logsPage,
+        pageSize: LOGS_PAGE_SIZE,
+        from: applied.from || undefined,
+        to: applied.to || undefined,
+        departmentId: applied.departmentId || undefined,
+        search: debouncedLogsSearch.trim() || undefined,
+        action: logsAction === 'UNKNOWN' ? undefined : logsAction || undefined,
+        unknownOnly: logsAction === 'UNKNOWN' || undefined,
+        isValid: logsValidity === '' ? undefined : logsValidity === 'true',
+      }),
+    enabled: tab === 'logs',
+    refetchInterval: tab === 'logs' ? 30_000 : false,
+    refetchIntervalInBackground: true,
+  });
+  const accessLogs = logsQuery.data?.items ?? [];
+  const logsTotal = logsQuery.data?.total ?? 0;
+  const logsTotalPages = Math.max(1, logsQuery.data?.totalPages ?? 1);
+  const logsCurrentPage = Math.min(logsPage, logsTotalPages);
+
+  // Real-time: refresh log list when a new check-in/out arrives via socket.
+  useEffect(() => {
+    if (tab !== 'logs' || !lastEvent?.id) return;
+    const eventKey = `${lastEvent.id}:${lastEvent.timestamp}`;
+    if (lastHandledLogEventKey.current === eventKey) return;
+    lastHandledLogEventKey.current = eventKey;
+    setLogsPage(1);
+    void queryClient.invalidateQueries({ queryKey: queryKeys.accessLogs() });
+  }, [lastEvent, tab, queryClient]);
+
   const statsLoading = summaryQuery.isLoading;
   const statsError = errMsg(summaryQuery.error, 'Không tải được thống kê');
   const weeklyLoading = weeklyQuery.isLoading;
@@ -309,6 +366,8 @@ export default function ReportsPage() {
   const detailError = exportError ?? errMsg(recordsQuery.error, 'Không tải được báo cáo');
   const matrixLoading = detailWeeklyQuery.isLoading;
   const matrixError = errMsg(detailWeeklyQuery.error, 'Không tải được bảng 30 ngày');
+  const logsLoading = logsQuery.isLoading;
+  const logsError = errMsg(logsQuery.error, 'Không tải được log ra vào');
 
   function loadSummary() {
     void summaryQuery.refetch();
@@ -321,6 +380,9 @@ export default function ReportsPage() {
   }
   function loadMatrix() {
     void detailWeeklyQuery.refetch();
+  }
+  function loadLogs() {
+    void logsQuery.refetch();
   }
 
   function applyWeekRange(start: string, dept = departmentId) {
@@ -336,6 +398,7 @@ export default function ReportsPage() {
     setDateErrors(errors);
     if (hasFormErrors(errors)) return;
     setRecordsPage(1);
+    setLogsPage(1);
     setMatrixDeptId(departmentId);
     setApplied({ from, to, departmentId });
     setWeekStart(formatDateOnly(mondayOfWeek(parseDateOnly(from))));
@@ -506,12 +569,14 @@ export default function ReportsPage() {
     <PageShell
       badge="Báo cáo"
       title="Báo cáo chấm công"
-      subtitle="Thống kê chấm công và chi tiết nhân viên 30 ngày gần nhất."
+      subtitle="Thống kê, bảng tổng hợp công, chi tiết nhân viên và log ra vào."
     >
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList className="flex w-full max-w-sm">
+        <TabsList className="flex w-full max-w-xl">
           <TabsTrigger value="stats">Thống kê</TabsTrigger>
+          <TabsTrigger value="summary">Tổng hợp</TabsTrigger>
           <TabsTrigger value="detail">Chi tiết</TabsTrigger>
+          <TabsTrigger value="logs">Log ra vào</TabsTrigger>
         </TabsList>
 
         {/* ── Filter card (shared) ── */}
@@ -611,122 +676,6 @@ export default function ReportsPage() {
               </div>
             ))}
           </div>
-
-          <DesignCard
-            title={`Bảng tổng hợp công (${sortedTimesheet.length})`}
-            description="Tổng hợp công theo từng nhân viên trong khoảng thời gian đã chọn (đồng bộ với tuần đang xem). Giờ làm cập nhật liên tục kể cả khi chưa check-out."
-            actions={
-              <div className="w-[180px]">
-                <Select
-                  id="timesheet-sort"
-                  className="h-9"
-                  value={timesheetSort}
-                  onChange={(e) =>
-                    setTimesheetSort(e.target.value as 'name' | 'least' | 'most')
-                  }
-                  aria-label="Sắp xếp bảng tổng hợp công"
-                >
-                  <option value="name">Mặc định (A–Z)</option>
-                  <option value="least">Làm ít nhất</option>
-                  <option value="most">Làm nhiều nhất</option>
-                </Select>
-              </div>
-            }
-          >
-            <div className="mb-4 grid grid-cols-1 items-end gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-              <div className="sm:col-span-2 xl:col-span-2">
-                <label htmlFor="timesheet-search" className="mb-1 block text-xs text-muted-foreground">
-                  Tìm kiếm
-                </label>
-                <div className="relative">
-                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    id="timesheet-search"
-                    placeholder="Tên, mã NV, phòng ban..."
-                    className="input-design h-10 pl-10"
-                    value={timesheetSearch}
-                    onChange={(e) => setTimesheetSearch(e.target.value)}
-                  />
-                </div>
-              </div>
-              <div className="flex flex-wrap items-end gap-2 sm:col-span-2 lg:col-span-3 xl:col-span-4">
-                <FlagCheckbox
-                  id="timesheet-late"
-                  label="Đi muộn"
-                  value={timesheetLate}
-                  onChange={setTimesheetLate}
-                />
-                <FlagCheckbox
-                  id="timesheet-early-arrival"
-                  label="Đi sớm"
-                  value={timesheetEarlyArrival}
-                  onChange={setTimesheetEarlyArrival}
-                />
-                <FlagCheckbox
-                  id="timesheet-ot"
-                  label="Tăng ca"
-                  value={timesheetOt}
-                  onChange={setTimesheetOt}
-                />
-              </div>
-            </div>
-            <QueryBoundary
-              isLoading={statsLoading}
-              error={statsError}
-              isEmpty={sortedTimesheet.length === 0}
-              onRetry={() => loadSummary()}
-              emptyTitle="Chưa có dữ liệu"
-              emptyDescription="Chọn khoảng thời gian khác hoặc nới bộ lọc bảng tổng hợp."
-            >
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[860px] text-sm">
-                  <thead>
-                    <tr className="border-b border-border bg-muted/30 text-left">
-                      <th className="p-2 font-semibold">Nhân viên</th>
-                      <th className="p-2 font-semibold">Phòng ban</th>
-                      <th className="p-2 text-right font-semibold">Ngày công</th>
-                      <th className="p-2 text-right font-semibold">Giờ làm</th>
-                      <th className="p-2 text-right font-semibold">Đi muộn</th>
-                      <th className="p-2 text-right font-semibold">Đi sớm</th>
-                      <th className="p-2 text-right font-semibold">OT</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {sortedTimesheet.map((t) => (
-                      <tr key={t.userId} className="border-t border-border hover:bg-muted/20">
-                        <td className="p-2">
-                          <div className="flex items-center gap-2.5">
-                            <Avatar name={t.fullName} />
-                            <div>
-                              <p className="font-semibold">{t.fullName}</p>
-                              <p className="font-mono text-xs text-muted-foreground">{t.employeeCode}</p>
-                            </div>
-                          </div>
-                        </td>
-                        <td className="p-2 text-muted-foreground">{t.departmentName ?? '—'}</td>
-                        <td className="p-2 text-right font-semibold">{t.daysWorked}</td>
-                        <td className="p-2 text-right">{formatMinutes(t.workedMinutes)}</td>
-                        <td className={cn('p-2 text-right', t.lateCount > 0 && 'text-orange-600')}>
-                          {t.lateCount}
-                        </td>
-                        <td
-                          className={cn(
-                            'p-2 text-right',
-                            (t.earlyArrivalCount ?? 0) > 0 && 'text-sky-600',
-                          )}
-                        >
-                          {t.earlyArrivalCount ?? 0}
-                        </td>
-                        <td className={cn('p-2 text-right', t.otMinutes > 0 && 'text-emerald-600')}>
-                          {formatMinutes(t.otMinutes)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </QueryBoundary>
-          </DesignCard>
 
           <DesignCard
             title={`Chấm công theo tuần (${weeklyFilteredCount})`}
@@ -902,6 +851,125 @@ export default function ReportsPage() {
                         </tr>
                       )),
                     )}
+                  </tbody>
+                </table>
+              </div>
+            </QueryBoundary>
+          </DesignCard>
+        </TabsContent>
+
+        {/* ═══ TAB: TỔNG HỢP ═══ */}
+        <TabsContent value="summary" className="space-y-6">
+          <DesignCard
+            title={`Bảng tổng hợp công (${sortedTimesheet.length})`}
+            description="Tổng hợp công theo từng nhân viên trong khoảng thời gian đã chọn. Giờ làm cập nhật liên tục kể cả khi chưa check-out."
+            actions={
+              <div className="w-[180px]">
+                <Select
+                  id="timesheet-sort"
+                  className="h-9"
+                  value={timesheetSort}
+                  onChange={(e) =>
+                    setTimesheetSort(e.target.value as 'name' | 'least' | 'most')
+                  }
+                  aria-label="Sắp xếp bảng tổng hợp công"
+                >
+                  <option value="name">Mặc định (A–Z)</option>
+                  <option value="least">Làm ít nhất</option>
+                  <option value="most">Làm nhiều nhất</option>
+                </Select>
+              </div>
+            }
+          >
+            <div className="mb-4 grid grid-cols-1 items-end gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+              <div className="sm:col-span-2 xl:col-span-2">
+                <label htmlFor="timesheet-search" className="mb-1 block text-xs text-muted-foreground">
+                  Tìm kiếm
+                </label>
+                <div className="relative">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    id="timesheet-search"
+                    placeholder="Tên, mã NV, phòng ban..."
+                    className="input-design h-10 pl-10"
+                    value={timesheetSearch}
+                    onChange={(e) => setTimesheetSearch(e.target.value)}
+                  />
+                </div>
+              </div>
+              <div className="flex flex-wrap items-end gap-2 sm:col-span-2 lg:col-span-3 xl:col-span-4">
+                <FlagCheckbox
+                  id="timesheet-late"
+                  label="Đi muộn"
+                  value={timesheetLate}
+                  onChange={setTimesheetLate}
+                />
+                <FlagCheckbox
+                  id="timesheet-early-arrival"
+                  label="Đi sớm"
+                  value={timesheetEarlyArrival}
+                  onChange={setTimesheetEarlyArrival}
+                />
+                <FlagCheckbox
+                  id="timesheet-ot"
+                  label="Tăng ca"
+                  value={timesheetOt}
+                  onChange={setTimesheetOt}
+                />
+              </div>
+            </div>
+            <QueryBoundary
+              isLoading={statsLoading}
+              error={statsError}
+              isEmpty={sortedTimesheet.length === 0}
+              onRetry={() => loadSummary()}
+              emptyTitle="Chưa có dữ liệu"
+              emptyDescription="Chọn khoảng thời gian khác hoặc nới bộ lọc bảng tổng hợp."
+            >
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[860px] text-sm">
+                  <thead>
+                    <tr className="border-b border-border bg-muted/30 text-left">
+                      <th className="p-2 font-semibold">Nhân viên</th>
+                      <th className="p-2 font-semibold">Phòng ban</th>
+                      <th className="p-2 text-right font-semibold">Ngày công</th>
+                      <th className="p-2 text-right font-semibold">Giờ làm</th>
+                      <th className="p-2 text-right font-semibold">Đi muộn</th>
+                      <th className="p-2 text-right font-semibold">Đi sớm</th>
+                      <th className="p-2 text-right font-semibold">OT</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sortedTimesheet.map((t) => (
+                      <tr key={t.userId} className="border-t border-border hover:bg-muted/20">
+                        <td className="p-2">
+                          <div className="flex items-center gap-2.5">
+                            <Avatar name={t.fullName} />
+                            <div>
+                              <p className="font-semibold">{t.fullName}</p>
+                              <p className="font-mono text-xs text-muted-foreground">{t.employeeCode}</p>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="p-2 text-muted-foreground">{t.departmentName ?? '—'}</td>
+                        <td className="p-2 text-right font-semibold">{t.daysWorked}</td>
+                        <td className="p-2 text-right">{formatMinutes(t.workedMinutes)}</td>
+                        <td className={cn('p-2 text-right', t.lateCount > 0 && 'text-orange-600')}>
+                          {t.lateCount}
+                        </td>
+                        <td
+                          className={cn(
+                            'p-2 text-right',
+                            (t.earlyArrivalCount ?? 0) > 0 && 'text-sky-600',
+                          )}
+                        >
+                          {t.earlyArrivalCount ?? 0}
+                        </td>
+                        <td className={cn('p-2 text-right', t.otMinutes > 0 && 'text-emerald-600')}>
+                          {formatMinutes(t.otMinutes)}
+                        </td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>
@@ -1128,7 +1196,172 @@ export default function ReportsPage() {
             onRetry={loadMatrix}
           />
         </TabsContent>
+
+        {/* ═══ TAB: LOG RA VÀO ═══ */}
+        <TabsContent value="logs" className="space-y-6">
+          <ReportsLogsConfigPanel />
+
+          <DesignCard
+            title="Log ra vào"
+            description="Danh sách sự kiện check-in / check-out theo khoảng ngày đã lọc."
+            actions={
+              <Button variant="outline" size="sm" onClick={loadLogs} disabled={logsLoading}>
+                <RefreshCw className={logsLoading ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
+                Làm mới
+              </Button>
+            }
+          >
+            <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center">
+              <div className="relative max-w-md flex-1">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  placeholder="Tìm theo tên hoặc mã NV..."
+                  className="input-design h-10 pl-10"
+                  value={logsSearch}
+                  onChange={(e) => {
+                    setLogsSearch(e.target.value);
+                    setLogsPage(1);
+                  }}
+                />
+              </div>
+              <Select
+                value={logsAction}
+                onChange={(e) => {
+                  setLogsAction(e.target.value);
+                  setLogsPage(1);
+                }}
+                className="h-10 w-full sm:w-40"
+              >
+                <option value="">Tất cả loại</option>
+                <option value="CHECK_IN">Check-in</option>
+                <option value="CHECK_OUT">Check-out</option>
+                <option value="UNKNOWN">Người lạ</option>
+              </Select>
+              <Select
+                value={logsValidity}
+                onChange={(e) => {
+                  setLogsValidity(e.target.value);
+                  setLogsPage(1);
+                }}
+                className="h-10 w-full sm:w-36"
+              >
+                <option value="">Tất cả</option>
+                <option value="true">Hợp lệ</option>
+                <option value="false">Cảnh báo</option>
+              </Select>
+            </div>
+
+            <QueryBoundary
+              isLoading={logsLoading}
+              error={logsError}
+              isEmpty={accessLogs.length === 0}
+              onRetry={loadLogs}
+              emptyTitle="Không có log ra vào"
+              emptyDescription="Thử đổi khoảng ngày hoặc bộ lọc."
+            >
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border bg-muted/30 text-left">
+                      <th className="p-2 font-semibold">Thời gian</th>
+                      <th className="p-2 font-semibold">Nhân viên</th>
+                      <th className="p-2 font-semibold">Mã NV</th>
+                      <th className="p-2 font-semibold">Phòng ban</th>
+                      <th className="p-2 font-semibold">Hành động</th>
+                      <th className="p-2 font-semibold">Khu vực</th>
+                      <th className="p-2 font-semibold">Thiết bị</th>
+                      <th className="p-2 font-semibold">Trạng thái</th>
+                      <th className="p-2 text-right font-semibold">Thao tác</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {accessLogs.map((log) => (
+                      <tr
+                        key={log.id}
+                        className={cn(
+                          'border-t border-border hover:bg-muted/20',
+                          log.isValid === false && 'bg-destructive/5',
+                        )}
+                      >
+                        <td className="p-2 font-mono text-xs text-muted-foreground">
+                          {formatDt(log.eventAt)}
+                        </td>
+                        <td className="p-2 font-semibold">
+                          {log.user?.fullName ?? 'Không xác định'}
+                        </td>
+                        <td className="p-2 font-mono text-xs text-muted-foreground">
+                          {log.user?.employeeCode || '—'}
+                        </td>
+                        <td className="p-2 text-muted-foreground">
+                          {log.user?.department?.name ?? '—'}
+                        </td>
+                        <td className="p-2">
+                          <Badge variant="outline" className="text-xs font-normal">
+                            {log.action === 'CHECK_IN'
+                              ? 'Check-in'
+                              : log.action === 'CHECK_OUT'
+                                ? 'Check-out'
+                                : log.action === 'UNKNOWN'
+                                  ? 'Người lạ'
+                                  : log.action || '—'}
+                          </Badge>
+                        </td>
+                        <td className="p-2 text-xs text-muted-foreground">
+                          {log.zone?.name || '—'}
+                        </td>
+                        <td className="p-2 text-xs text-muted-foreground">
+                          {log.device?.name || '—'}
+                        </td>
+                        <td className="p-2">
+                          {log.isValid === false ? (
+                            <Badge className="border-transparent bg-destructive/15 text-xs text-destructive">
+                              Cảnh báo
+                            </Badge>
+                          ) : log.warningMessage ? (
+                            <Badge className="border-transparent bg-amber-100 text-xs text-amber-800">
+                              Chưa tính
+                            </Badge>
+                          ) : (
+                            <Badge className="border-transparent bg-emerald-100 text-xs text-emerald-700">
+                              Hợp lệ
+                            </Badge>
+                          )}
+                        </td>
+                        <td className="p-2 text-right">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-8 gap-1"
+                            onClick={() => setSelectedAccessLog(log)}
+                          >
+                            <Eye className="h-3.5 w-3.5" />
+                            Chi tiết
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <TablePager
+                className="mt-4 pt-4"
+                currentPage={logsCurrentPage}
+                totalPages={logsTotalPages}
+                total={logsTotal}
+                unit="log"
+                onPageChange={setLogsPage}
+              />
+            </QueryBoundary>
+          </DesignCard>
+        </TabsContent>
       </Tabs>
+
+      <AccessLogDetailDialog
+        open={!!selectedAccessLog}
+        log={selectedAccessLog}
+        onClose={() => setSelectedAccessLog(null)}
+      />
     </PageShell>
   );
 }

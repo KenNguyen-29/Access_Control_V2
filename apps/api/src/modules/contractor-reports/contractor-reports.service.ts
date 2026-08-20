@@ -87,18 +87,42 @@ export class ContractorReportsService {
     return {};
   }
 
-  async headcountByContractor(params: { date?: string; projectIds?: string[] }) {
+  /** When `page` is set, return skip/take meta; otherwise export/full mode (no slice). */
+  private resolvePaging(params: { page?: number; pageSize?: number }) {
+    if (params.page == null) return null;
+    const page = Math.max(1, params.page);
+    const pageSize = Math.min(100, Math.max(1, params.pageSize ?? 10));
+    return { page, pageSize, skip: (page - 1) * pageSize };
+  }
+
+  private pageMeta(total: number, paging: { page: number; pageSize: number } | null) {
+    if (!paging) return {};
+    return {
+      total,
+      page: paging.page,
+      pageSize: paging.pageSize,
+      totalPages: Math.ceil(total / paging.pageSize) || 1,
+    };
+  }
+
+  async headcountByContractor(params: {
+    date?: string;
+    projectIds?: string[];
+    page?: number;
+    pageSize?: number;
+  }) {
     const day = params.date ? parseDateOnly(params.date, new Date()) : startOfLocalDay();
     const next = new Date(day);
     next.setDate(next.getDate() + 1);
     const projectFilter = this.projectUserFilter(undefined, params.projectIds);
+    const paging = this.resolvePaging(params);
 
     const contractors = await this.prisma.contractor.findMany({
       where: { isDeleted: false },
       orderBy: { name: 'asc' },
     });
 
-    const rows = await Promise.all(
+    const allRows = await Promise.all(
       contractors.map(async (c) => {
         const userWhere = {
           isDeleted: false,
@@ -128,9 +152,15 @@ export class ContractorReportsService {
       }),
     );
 
+    const filtered = allRows.filter((r) => r.registeredCount > 0 || r.presentCount > 0);
+    const rows = paging
+      ? filtered.slice(paging.skip, paging.skip + paging.pageSize)
+      : filtered;
+
     return {
       date: formatDateOnly(day),
-      rows: rows.filter((r) => r.registeredCount > 0 || r.presentCount > 0),
+      rows,
+      ...this.pageMeta(filtered.length, paging),
     };
   }
 
@@ -140,28 +170,37 @@ export class ContractorReportsService {
     contractorId?: string;
     projectId?: string;
     projectIds?: string[];
+    page?: number;
+    pageSize?: number;
   }) {
     const now = new Date();
     const from = params.from ? parseDateOnly(params.from, now) : startOfLocalDay(now);
     const toBase = params.to ? parseDateOnly(params.to, now) : startOfLocalDay(now);
     const to = new Date(toBase);
     to.setDate(to.getDate() + 1);
+    const paging = this.resolvePaging(params);
 
-    const users = await this.prisma.user.findMany({
-      where: {
-        isDeleted: false,
-        ...(params.contractorId
-          ? { contractorId: params.contractorId }
-          : { contractorId: { not: null } }),
-        ...this.projectUserFilter(params.projectId, params.projectIds),
-      },
-      include: {
-        contractor: true,
-        project: true,
-        department: true,
-      },
-      orderBy: [{ fullName: 'asc' }],
-    });
+    const where = {
+      isDeleted: false,
+      ...(params.contractorId
+        ? { contractorId: params.contractorId }
+        : { contractorId: { not: null } }),
+      ...this.projectUserFilter(params.projectId, params.projectIds),
+    };
+
+    const [total, users] = await Promise.all([
+      this.prisma.user.count({ where }),
+      this.prisma.user.findMany({
+        where,
+        include: {
+          contractor: true,
+          project: true,
+          department: true,
+        },
+        orderBy: [{ fullName: 'asc' }],
+        ...(paging ? { skip: paging.skip, take: paging.pageSize } : {}),
+      }),
+    ]);
 
     const userIds = users.map((u) => u.id);
     const logs = userIds.length
@@ -213,6 +252,7 @@ export class ContractorReportsService {
       from: formatDateOnly(from),
       to: formatDateOnly(toBase),
       rows,
+      ...this.pageMeta(total, paging),
     };
   }
 
@@ -223,33 +263,42 @@ export class ContractorReportsService {
     projectId?: string;
     projectIds?: string[];
     userId?: string;
+    page?: number;
+    pageSize?: number;
   }) {
     const now = new Date();
     const from = params.from ? parseDateOnly(params.from, now) : startOfLocalDay(now);
     const toBase = params.to ? parseDateOnly(params.to, now) : startOfLocalDay(now);
     const to = new Date(toBase);
     to.setDate(to.getDate() + 1);
+    const paging = this.resolvePaging(params);
 
-    const logs = await this.prisma.accessLog.findMany({
-      where: {
-        eventAt: { gte: from, lt: to },
-        ...(params.userId ? { userId: params.userId } : {}),
-        user: {
-          isDeleted: false,
-          ...(params.contractorId ? { contractorId: params.contractorId } : {}),
-          ...this.projectUserFilter(params.projectId, params.projectIds),
-        },
+    const where = {
+      eventAt: { gte: from, lt: to },
+      ...(params.userId ? { userId: params.userId } : {}),
+      user: {
+        isDeleted: false,
+        ...(params.contractorId ? { contractorId: params.contractorId } : {}),
+        ...this.projectUserFilter(params.projectId, params.projectIds),
       },
-      include: {
-        user: {
-          include: { contractor: true, project: true, department: true },
+    };
+
+    const [total, logs] = await Promise.all([
+      this.prisma.accessLog.count({ where }),
+      this.prisma.accessLog.findMany({
+        where,
+        include: {
+          user: {
+            include: { contractor: true, project: true, department: true },
+          },
+          device: true,
+          zone: true,
         },
-        device: true,
-        zone: true,
-      },
-      orderBy: { eventAt: 'asc' },
-      take: 10_000,
-    });
+        orderBy: { eventAt: 'asc' },
+        skip: paging?.skip,
+        take: paging ? paging.pageSize : 50_000,
+      }),
+    ]);
 
     return {
       from: formatDateOnly(from),
@@ -268,6 +317,7 @@ export class ContractorReportsService {
         deviceName: l.device?.name ?? null,
         zoneName: l.zone?.name ?? null,
       })),
+      ...this.pageMeta(total, paging),
     };
   }
 
@@ -276,26 +326,35 @@ export class ContractorReportsService {
     workShiftId?: string;
     projectId?: string;
     projectIds?: string[];
+    page?: number;
+    pageSize?: number;
   }) {
     const today = startOfLocalDay();
-    const assignments = await this.prisma.employeeShift.findMany({
-      where: {
+    const paging = this.resolvePaging(params);
+    const where = {
+      isDeleted: false,
+      startDate: { lte: today },
+      OR: [{ endDate: null }, { endDate: { gt: today } }],
+      ...(params.workShiftId ? { workShiftId: params.workShiftId } : {}),
+      user: {
         isDeleted: false,
-        startDate: { lte: today },
-        OR: [{ endDate: null }, { endDate: { gt: today } }],
-        ...(params.workShiftId ? { workShiftId: params.workShiftId } : {}),
-        user: {
-          isDeleted: false,
-          ...(params.contractorId ? { contractorId: params.contractorId } : {}),
-          ...this.projectUserFilter(params.projectId, params.projectIds),
+        ...(params.contractorId ? { contractorId: params.contractorId } : {}),
+        ...this.projectUserFilter(params.projectId, params.projectIds),
+      },
+    };
+
+    const [total, assignments] = await Promise.all([
+      this.prisma.employeeShift.count({ where }),
+      this.prisma.employeeShift.findMany({
+        where,
+        include: {
+          user: { include: { contractor: true, project: true, department: true } },
+          workShift: true,
         },
-      },
-      include: {
-        user: { include: { contractor: true, project: true, department: true } },
-        workShift: true,
-      },
-      orderBy: [{ workShift: { name: 'asc' } }, { user: { fullName: 'asc' } }],
-    });
+        orderBy: [{ workShift: { name: 'asc' } }, { user: { fullName: 'asc' } }],
+        ...(paging ? { skip: paging.skip, take: paging.pageSize } : {}),
+      }),
+    ]);
 
     return {
       asOf: formatDateOnly(today),
@@ -317,6 +376,7 @@ export class ContractorReportsService {
         startDate: a.startDate,
         endDate: a.endDate,
       })),
+      ...this.pageMeta(total, paging),
     };
   }
 
@@ -450,13 +510,23 @@ export class ContractorReportsService {
     contractorId?: string;
     projectId?: string;
     projectIds?: string[];
+    page?: number;
+    pageSize?: number;
   }) {
     const range = parseMonth(params.month);
-    const users = await this.prisma.user.findMany({
-      where: this.contractorUserWhere(params),
-      include: { contractor: true, project: true, department: true },
-      orderBy: [{ fullName: 'asc' }],
-    });
+    const paging = this.resolvePaging(params);
+    const where = this.contractorUserWhere(params);
+
+    const [total, users] = await Promise.all([
+      this.prisma.user.count({ where }),
+      this.prisma.user.findMany({
+        where,
+        include: { contractor: true, project: true, department: true },
+        orderBy: [{ fullName: 'asc' }],
+        ...(paging ? { skip: paging.skip, take: paging.pageSize } : {}),
+      }),
+    ]);
+
     const userIds = users.map((u) => u.id);
     const records = userIds.length
       ? await this.prisma.attendanceRecord.findMany({
@@ -495,7 +565,12 @@ export class ContractorReportsService {
       };
     });
 
-    return { month: range.label, days: range.days, rows };
+    return {
+      month: range.label,
+      days: range.days,
+      rows,
+      ...this.pageMeta(total, paging),
+    };
   }
 
   async monthlyDailyDetail(params: {

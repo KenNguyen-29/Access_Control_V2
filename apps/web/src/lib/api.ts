@@ -351,8 +351,30 @@ export async function getDepartments() {
   return apiRequest<Department[]>('/departments');
 }
 
-export async function getContractors() {
-  return apiRequest<Contractor[]>('/contractors');
+export async function getContractors(params?: {
+  search?: string;
+}): Promise<Contractor[]>;
+export async function getContractors(params: {
+  page: number;
+  pageSize?: number;
+  search?: string;
+}): Promise<PaginatedData<Contractor>>;
+export async function getContractors(params?: {
+  page?: number;
+  pageSize?: number;
+  search?: string;
+}) {
+  const q = new URLSearchParams();
+  if (params?.page != null) {
+    q.set('page', String(params.page));
+    q.set('pageSize', String(params.pageSize ?? 10));
+  }
+  if (params?.search) q.set('search', params.search);
+  const qs = q.toString();
+  if (params?.page != null) {
+    return apiRequest<PaginatedData<Contractor>>(`/contractors${qs ? `?${qs}` : ''}`);
+  }
+  return apiRequest<Contractor[]>(`/contractors${qs ? `?${qs}` : ''}`);
 }
 
 export async function createContractor(data: {
@@ -400,10 +422,33 @@ export async function transferContractorProject(
   );
 }
 
-export async function getProjects(params?: { contractorId?: string }) {
+export async function getProjects(params?: {
+  contractorId?: string;
+  search?: string;
+}): Promise<Project[]>;
+export async function getProjects(params: {
+  page: number;
+  pageSize?: number;
+  contractorId?: string;
+  search?: string;
+}): Promise<PaginatedData<Project>>;
+export async function getProjects(params?: {
+  page?: number;
+  pageSize?: number;
+  contractorId?: string;
+  search?: string;
+}) {
   const q = new URLSearchParams();
+  if (params?.page != null) {
+    q.set('page', String(params.page));
+    q.set('pageSize', String(params.pageSize ?? 10));
+  }
   if (params?.contractorId) q.set('contractorId', params.contractorId);
+  if (params?.search) q.set('search', params.search);
   const qs = q.toString();
+  if (params?.page != null) {
+    return apiRequest<PaginatedData<Project>>(`/projects${qs ? `?${qs}` : ''}`);
+  }
   return apiRequest<Project[]>(`/projects${qs ? `?${qs}` : ''}`);
 }
 
@@ -447,6 +492,7 @@ export async function getUsers(params?: {
   departmentId?: string;
   contractorId?: string;
   projectId?: string;
+  withoutActiveShift?: boolean;
 }) {
   const q = new URLSearchParams();
   if (params?.page) q.set('page', String(params.page));
@@ -455,6 +501,7 @@ export async function getUsers(params?: {
   if (params?.departmentId) q.set('departmentId', params.departmentId);
   if (params?.contractorId) q.set('contractorId', params.contractorId);
   if (params?.projectId) q.set('projectId', params.projectId);
+  if (params?.withoutActiveShift) q.set('withoutActiveShift', 'true');
   const qs = q.toString();
   return apiRequest<PaginatedData<User>>(`/users${qs ? `?${qs}` : ''}`);
 }
@@ -464,12 +511,14 @@ export async function getUserIds(params?: {
   departmentId?: string;
   contractorId?: string;
   projectId?: string;
+  withoutActiveShift?: boolean;
 }) {
   const q = new URLSearchParams();
   if (params?.search) q.set('search', params.search);
   if (params?.departmentId) q.set('departmentId', params.departmentId);
   if (params?.contractorId) q.set('contractorId', params.contractorId);
   if (params?.projectId) q.set('projectId', params.projectId);
+  if (params?.withoutActiveShift) q.set('withoutActiveShift', 'true');
   const qs = q.toString();
   return apiRequest<{ ids: string[]; total: number }>(`/users/ids${qs ? `?${qs}` : ''}`);
 }
@@ -724,9 +773,22 @@ export async function setDefaultShift(workShiftId: string) {
   });
 }
 
-export async function getEmployeeShifts(userId?: string) {
-  const qs = userId ? `?userId=${encodeURIComponent(userId)}` : '';
-  return apiRequest<EmployeeShift[]>(`/shifts/employee-shifts${qs}`);
+export async function getEmployeeShifts(params?: {
+  page?: number;
+  pageSize?: number;
+  userId?: string;
+  workShiftId?: string;
+  search?: string;
+  status?: 'ALL' | 'ACTIVE' | 'EXPIRING_SOON' | 'ENDED';
+}) {
+  const q = new URLSearchParams();
+  q.set('page', String(params?.page ?? 1));
+  q.set('pageSize', String(params?.pageSize ?? 10));
+  if (params?.userId) q.set('userId', params.userId);
+  if (params?.workShiftId) q.set('workShiftId', params.workShiftId);
+  if (params?.search) q.set('search', params.search);
+  if (params?.status && params.status !== 'ALL') q.set('status', params.status);
+  return apiRequest<PaginatedData<EmployeeShift>>(`/shifts/employee-shifts?${q.toString()}`);
 }
 
 export async function createEmployeeShift(data: {
@@ -814,16 +876,63 @@ export async function getAccessLogs(
         action?: string;
         isValid?: boolean;
         unknownOnly?: boolean;
+        from?: string;
+        to?: string;
+        search?: string;
+        departmentId?: string;
+      },
+): Promise<AccessLog[]>;
+export async function getAccessLogs(params: {
+  page: number;
+  pageSize?: number;
+  deviceId?: string;
+  zoneId?: string;
+  action?: string;
+  isValid?: boolean;
+  unknownOnly?: boolean;
+  from?: string;
+  to?: string;
+  search?: string;
+  departmentId?: string;
+}): Promise<PaginatedData<AccessLog>>;
+export async function getAccessLogs(
+  params?:
+    | number
+    | {
+        limit?: number;
+        page?: number;
+        pageSize?: number;
+        deviceId?: string;
+        zoneId?: string;
+        action?: string;
+        isValid?: boolean;
+        unknownOnly?: boolean;
+        from?: string;
+        to?: string;
+        search?: string;
+        departmentId?: string;
       },
 ) {
   const opts = typeof params === 'number' ? { limit: params } : params ?? {};
   const q = new URLSearchParams();
-  q.set('limit', String(opts.limit ?? 50));
+  if (opts.page != null) {
+    q.set('page', String(opts.page));
+    q.set('pageSize', String(opts.pageSize ?? 10));
+  } else {
+    q.set('limit', String(opts.limit ?? 50));
+  }
   if (opts.deviceId) q.set('deviceId', opts.deviceId);
   if (opts.zoneId) q.set('zoneId', opts.zoneId);
   if (opts.action) q.set('action', opts.action);
   if (opts.isValid !== undefined) q.set('isValid', String(opts.isValid));
   if (opts.unknownOnly) q.set('unknownOnly', 'true');
+  if (opts.from) q.set('from', opts.from);
+  if (opts.to) q.set('to', opts.to);
+  if (opts.search) q.set('search', opts.search);
+  if (opts.departmentId) q.set('departmentId', opts.departmentId);
+  if (opts.page != null) {
+    return apiRequest<PaginatedData<AccessLog>>(`/attendance/access-logs?${q.toString()}`);
+  }
   return apiRequest<AccessLog[]>(`/attendance/access-logs?${q.toString()}`);
 }
 
@@ -1279,19 +1388,36 @@ export async function endEmergency(eventId: string) {
   return apiRequest<{ ended: boolean }>(`/emergency/${eventId}/end`, { method: 'POST' });
 }
 
-export async function getContractorHeadcount(date?: string) {
-  const q = date ? `?date=${encodeURIComponent(date)}` : '';
-  return apiRequest<{
-    date: string;
-    rows: Array<{
-      contractorId: string;
-      code: string;
-      name: string;
-      registeredCount: number;
-      presentCount: number;
+type ContractorReportPage = {
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+};
+
+export async function getContractorHeadcount(params?: {
+  date?: string;
+  page?: number;
+  pageSize?: number;
+}) {
+  const q = new URLSearchParams();
+  if (params?.date) q.set('date', params.date);
+  if (params?.page) q.set('page', String(params.page));
+  if (params?.pageSize) q.set('pageSize', String(params.pageSize));
+  const qs = q.toString();
+  return apiRequest<
+    {
       date: string;
-    }>;
-  }>(`/contractor-reports/headcount${q}`);
+      rows: Array<{
+        contractorId: string;
+        code: string;
+        name: string;
+        registeredCount: number;
+        presentCount: number;
+        date: string;
+      }>;
+    } & ContractorReportPage
+  >(`/contractor-reports/headcount${qs ? `?${qs}` : ''}`);
 }
 
 export async function getContractorPersonnel(params?: {
@@ -1299,14 +1425,18 @@ export async function getContractorPersonnel(params?: {
   to?: string;
   contractorId?: string;
   projectId?: string;
+  page?: number;
+  pageSize?: number;
 }) {
   const q = new URLSearchParams();
   if (params?.from) q.set('from', params.from);
   if (params?.to) q.set('to', params.to);
   if (params?.contractorId) q.set('contractorId', params.contractorId);
   if (params?.projectId) q.set('projectId', params.projectId);
+  if (params?.page) q.set('page', String(params.page));
+  if (params?.pageSize) q.set('pageSize', String(params.pageSize));
   const qs = q.toString();
-  return apiRequest<{ from: string; to: string; rows: Array<Record<string, unknown>> }>(
+  return apiRequest<{ from: string; to: string; rows: Array<Record<string, unknown>> } & ContractorReportPage>(
     `/contractor-reports/personnel${qs ? `?${qs}` : ''}`,
   );
 }
@@ -1317,6 +1447,8 @@ export async function getContractorAccessLogs(params?: {
   contractorId?: string;
   projectId?: string;
   userId?: string;
+  page?: number;
+  pageSize?: number;
 }) {
   const q = new URLSearchParams();
   if (params?.from) q.set('from', params.from);
@@ -1324,8 +1456,10 @@ export async function getContractorAccessLogs(params?: {
   if (params?.contractorId) q.set('contractorId', params.contractorId);
   if (params?.projectId) q.set('projectId', params.projectId);
   if (params?.userId) q.set('userId', params.userId);
+  if (params?.page) q.set('page', String(params.page));
+  if (params?.pageSize) q.set('pageSize', String(params.pageSize));
   const qs = q.toString();
-  return apiRequest<{ from: string; to: string; rows: Array<Record<string, unknown>> }>(
+  return apiRequest<{ from: string; to: string; rows: Array<Record<string, unknown>> } & ContractorReportPage>(
     `/contractor-reports/access-logs${qs ? `?${qs}` : ''}`,
   );
 }
@@ -1334,13 +1468,17 @@ export async function getShiftPersonnelReport(params?: {
   contractorId?: string;
   workShiftId?: string;
   projectId?: string;
+  page?: number;
+  pageSize?: number;
 }) {
   const q = new URLSearchParams();
   if (params?.contractorId) q.set('contractorId', params.contractorId);
   if (params?.workShiftId) q.set('workShiftId', params.workShiftId);
   if (params?.projectId) q.set('projectId', params.projectId);
+  if (params?.page) q.set('page', String(params.page));
+  if (params?.pageSize) q.set('pageSize', String(params.pageSize));
   const qs = q.toString();
-  return apiRequest<{ asOf: string; rows: Array<Record<string, unknown>> }>(
+  return apiRequest<{ asOf: string; rows: Array<Record<string, unknown>> } & ContractorReportPage>(
     `/contractor-reports/shift-personnel${qs ? `?${qs}` : ''}`,
   );
 }
@@ -1401,29 +1539,35 @@ export async function getContractorMonthly(params?: {
   month?: string;
   contractorId?: string;
   projectId?: string;
+  page?: number;
+  pageSize?: number;
 }) {
   const q = new URLSearchParams();
   if (params?.month) q.set('month', params.month);
   if (params?.contractorId) q.set('contractorId', params.contractorId);
   if (params?.projectId) q.set('projectId', params.projectId);
+  if (params?.page) q.set('page', String(params.page));
+  if (params?.pageSize) q.set('pageSize', String(params.pageSize));
   const qs = q.toString();
-  return apiRequest<{
-    month: string;
-    days: number;
-    rows: Array<{
-      userId: string;
-      employeeCode: string;
-      fullName: string;
-      citizenId: string | null;
-      contractorName: string | null;
-      projectName: string | null;
-      workDays: number;
-      lateDays: number;
-      lateMinutes: number;
-      earlyLeaveMinutes: number;
-      otMinutes: number;
-    }>;
-  }>(`/contractor-reports/monthly${qs ? `?${qs}` : ''}`);
+  return apiRequest<
+    {
+      month: string;
+      days: number;
+      rows: Array<{
+        userId: string;
+        employeeCode: string;
+        fullName: string;
+        citizenId: string | null;
+        contractorName: string | null;
+        projectName: string | null;
+        workDays: number;
+        lateDays: number;
+        lateMinutes: number;
+        earlyLeaveMinutes: number;
+        otMinutes: number;
+      }>;
+    } & ContractorReportPage
+  >(`/contractor-reports/monthly${qs ? `?${qs}` : ''}`);
 }
 
 export async function downloadContractorMonthlyExcel(params?: {

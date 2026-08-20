@@ -12,6 +12,41 @@ export class AccessLogsQueryDto {
   @Max(200)
   limit?: number;
 
+  @ApiPropertyOptional({ description: '1-based page; when set, returns paginated result' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number;
+
+  @ApiPropertyOptional({ default: 10 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  pageSize?: number;
+
+  @ApiPropertyOptional({ description: 'Filter eventAt >= from (YYYY-MM-DD)' })
+  @IsOptional()
+  @IsString()
+  from?: string;
+
+  @ApiPropertyOptional({ description: 'Filter eventAt <= to (YYYY-MM-DD end of day)' })
+  @IsOptional()
+  @IsString()
+  to?: string;
+
+  @ApiPropertyOptional({ description: 'Search by employee name or code' })
+  @IsOptional()
+  @IsString()
+  search?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  departmentId?: string;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()

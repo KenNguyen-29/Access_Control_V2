@@ -170,15 +170,62 @@ export class ShiftsService {
     });
   }
 
-  findEmployeeShifts(userId?: string) {
-    return this.prisma.employeeShift.findMany({
-      where: {
-        isDeleted: false,
-        ...(userId ? { userId } : {}),
-      },
-      include: { user: true, workShift: true },
-      orderBy: { startDate: 'desc' },
-    });
+  findEmployeeShifts(query: {
+    page?: number;
+    pageSize?: number;
+    userId?: string;
+    workShiftId?: string;
+    search?: string;
+    status?: 'ALL' | 'ACTIVE' | 'EXPIRING_SOON' | 'ENDED';
+  } = {}) {
+    const page = Math.max(1, query.page ?? 1);
+    const pageSize = Math.min(100, Math.max(1, query.pageSize ?? 10));
+    const today = todayDateOnlyLocal();
+    const todayDate = new Date(`${today}T00:00:00.000Z`);
+    const soonDate = new Date(todayDate);
+    soonDate.setUTCDate(soonDate.getUTCDate() + 7);
+
+    const status = query.status ?? 'ALL';
+    const search = query.search?.trim();
+
+    const statusWhere =
+      status === 'ACTIVE'
+        ? { OR: [{ endDate: null }, { endDate: { gt: todayDate } }] }
+        : status === 'ENDED'
+          ? { endDate: { not: null, lte: todayDate } }
+          : status === 'EXPIRING_SOON'
+            ? {
+                assignmentType: ASSIGN_RANGED,
+                endDate: { gt: todayDate, lte: soonDate },
+              }
+            : {};
+
+    const where = {
+      isDeleted: false,
+      ...(query.userId ? { userId: query.userId } : {}),
+      ...(query.workShiftId ? { workShiftId: query.workShiftId } : {}),
+      ...statusWhere,
+      ...(search
+        ? {
+            OR: [
+              { user: { fullName: { contains: search, mode: 'insensitive' as const } } },
+              { user: { employeeCode: { contains: search, mode: 'insensitive' as const } } },
+              { workShift: { name: { contains: search, mode: 'insensitive' as const } } },
+            ],
+          }
+        : {}),
+    };
+
+    return this.prisma.$transaction([
+      this.prisma.employeeShift.findMany({
+        where,
+        include: { user: true, workShift: true },
+        orderBy: { startDate: 'desc' },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+      this.prisma.employeeShift.count({ where }),
+    ]).then(([items, total]) => ({ items, total, page, pageSize }));
   }
 
   async createEmployeeShift(dto: CreateEmployeeShiftDto) {

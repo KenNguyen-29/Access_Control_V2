@@ -1,6 +1,6 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
-import { successResponse } from '../../common/utils/response.util';
+import { paginatedResponse, successResponse } from '../../common/utils/response.util';
 import { ShiftsService } from './shifts.service';
 import { CreateWorkShiftDto } from './dto/create-work-shift.dto';
 import { CreateEmployeeShiftDto } from './dto/create-employee-shift.dto';
@@ -9,6 +9,7 @@ import { UpdateWorkShiftDto } from './dto/update-work-shift.dto';
 import { UpdateEmployeeShiftDto } from './dto/update-employee-shift.dto';
 import { SetDefaultShiftDto } from './dto/set-default-shift.dto';
 import { EndEmployeeShiftDto } from './dto/end-employee-shift.dto';
+import { EmployeeShiftsQueryDto } from './dto/employee-shifts-query.dto';
 
 @ApiTags('shifts')
 @ApiBearerAuth()
@@ -48,8 +49,9 @@ export class ShiftsController {
   }
 
   @Get('employee-shifts')
-  async findEmployeeShifts(@Query('userId') userId?: string) {
-    return successResponse(await this.service.findEmployeeShifts(userId));
+  async findEmployeeShifts(@Query() query: EmployeeShiftsQueryDto) {
+    const result = await this.service.findEmployeeShifts(query);
+    return paginatedResponse(result.items, result.total, result.page, result.pageSize);
   }
 
   @Post('employee-shifts')

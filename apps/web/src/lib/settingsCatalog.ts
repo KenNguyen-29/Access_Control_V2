@@ -11,15 +11,7 @@ import {
   Users,
 } from 'lucide-react';
 
-export type SettingsSectionId =
-  | 'general'
-  | 'integration'
-  | 'attendance'
-  | 'monitoring'
-  | 'hr'
-  | 'access'
-  | 'shifts'
-  | 'data';
+export type SettingsSectionId = 'general' | 'monitoring' | 'data';
 
 export interface SettingsLinkItem {
   id: string;
@@ -30,12 +22,13 @@ export interface SettingsLinkItem {
 }
 
 export interface SettingsSection {
-  id: SettingsSectionId;
+  id: string;
   label: string;
   items: SettingsLinkItem[];
 }
 
-export const SETTINGS_SECTIONS: SettingsSection[] = [
+/** Liên kết từng mục Cài đặt cũ — gắn đúng màn tương ứng (không còn trong Settings). */
+export const MOVED_SETTINGS_LINK_SECTIONS: SettingsSection[] = [
   {
     id: 'hr',
     label: 'Nhân sự',
@@ -110,6 +103,18 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
       },
     ],
   },
+];
+
+export function getMovedSectionLinks(
+  sectionId: 'hr' | 'access' | 'shifts',
+  excludePath?: string,
+): SettingsLinkItem[] {
+  const items =
+    MOVED_SETTINGS_LINK_SECTIONS.find((s) => s.id === sectionId)?.items ?? [];
+  if (!excludePath) return items;
+  return items.filter((item) => item.path !== excludePath);
+}
+export const SETTINGS_SECTIONS: SettingsSection[] = [
   {
     id: 'data',
     label: 'Bảo mật & dữ liệu',
@@ -141,21 +146,12 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
 
 export const SETTINGS_NAV: Array<{ id: SettingsSectionId; label: string }> = [
   { id: 'general', label: 'Chung' },
-  { id: 'integration', label: 'Tích hợp' },
-  { id: 'attendance', label: 'Chấm công' },
   { id: 'monitoring', label: 'Giám sát' },
-  ...SETTINGS_SECTIONS.map((s) => ({ id: s.id, label: s.label })),
+  { id: 'data', label: 'Bảo mật & dữ liệu' },
 ];
 
 export function getSectionLinks(sectionId: SettingsSectionId): SettingsLinkItem[] {
-  if (
-    sectionId === 'general' ||
-    sectionId === 'integration' ||
-    sectionId === 'attendance' ||
-    sectionId === 'monitoring'
-  ) {
-    return [];
-  }
+  if (sectionId === 'general' || sectionId === 'monitoring') return [];
   return SETTINGS_SECTIONS.find((s) => s.id === sectionId)?.items ?? [];
 }
 

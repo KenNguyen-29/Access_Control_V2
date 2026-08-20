@@ -4,6 +4,7 @@ import { useState } from 'react';
 import dynamic from 'next/dynamic';
 import { AccessControlSidebar } from '@/components/access-control/AccessControlSidebar';
 import type { AccessControlView } from '@/lib/accessControl';
+import { MovedSettingsLinks } from '@/components/settings/MovedSettingsLinks';
 
 // Only the active view's panel is loaded; the other two stay out of the initial bundle.
 const panelLoading = () => (
@@ -52,6 +53,14 @@ export default function AccessControlPage() {
         <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
           Quản lý quyền vào khu vực theo nhân viên hoặc theo nhóm khu vực, rồi đồng bộ xuống thiết bị.
         </p>
+        <div className="mt-4">
+          <MovedSettingsLinks
+            sectionId="access"
+            excludePath="/access-control"
+            title="Ra vào — liên kết nhanh"
+            description="Khu vực, thông tin đăng nhập và thiết bị."
+          />
+        </div>
       </div>
 
       <div className="flex min-h-0 flex-1 overflow-hidden">

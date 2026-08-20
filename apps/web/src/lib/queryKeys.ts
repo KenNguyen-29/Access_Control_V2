@@ -10,8 +10,8 @@ export const queryKeys = {
     params ? (['devices', params] as const) : (['devices'] as const),
   deviceMappings: () => ['deviceMappings'] as const,
   workShifts: () => ['workShifts'] as const,
-  employeeShifts: (userId?: string) =>
-    userId ? (['employeeShifts', userId] as const) : (['employeeShifts'] as const),
+  employeeShifts: (params?: Record<string, unknown> | string) =>
+    params != null ? (['employeeShifts', params] as const) : (['employeeShifts'] as const),
   defaultShift: () => ['defaultShift'] as const,
   attendanceRecords: (params?: Record<string, unknown>) =>
     params ? (['attendanceRecords', params] as const) : (['attendanceRecords'] as const),
@@ -19,8 +19,8 @@ export const queryKeys = {
     params ? (['attendanceSummary', params] as const) : (['attendanceSummary'] as const),
   weeklyTimesheet: (params?: Record<string, unknown>) =>
     params ? (['weeklyTimesheet', params] as const) : (['weeklyTimesheet'] as const),
-  accessLogs: (limit?: number) =>
-    limit != null ? (['accessLogs', limit] as const) : (['accessLogs'] as const),
+  accessLogs: (params?: Record<string, unknown> | number) =>
+    params != null ? (['accessLogs', params] as const) : (['accessLogs'] as const),
   accessZones: (search?: string) =>
     search ? (['accessZones', search] as const) : (['accessZones'] as const),
   permissions: (params?: Record<string, unknown>) =>

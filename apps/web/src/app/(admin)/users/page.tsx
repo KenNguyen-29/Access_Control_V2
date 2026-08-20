@@ -52,6 +52,7 @@ import {
 import { FieldError, RequiredMark } from '@/components/ui/field-error';
 import { cn } from '@/lib/utils';
 import { usePermissions } from '@/hooks/usePermissions';
+import { MovedSettingsLinks } from '@/components/settings/MovedSettingsLinks';
 
 function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
@@ -708,6 +709,12 @@ export default function UsersPage() {
           </Button>
         </div>
       )}
+      <MovedSettingsLinks
+        sectionId="hr"
+        excludePath="/users"
+        title="Liên kết nhanh"
+        description="Phòng ban, dự án & nhà thầu liên quan nhân sự."
+      />
       <DesignCard title="Tìm kiếm & bộ lọc">
         <div className="grid grid-cols-1 items-end gap-4 sm:grid-cols-2 lg:grid-cols-[minmax(0,240px)_minmax(180px,1fr)_minmax(180px,1fr)_minmax(180px,1fr)_auto]">
           <div className="min-w-0">

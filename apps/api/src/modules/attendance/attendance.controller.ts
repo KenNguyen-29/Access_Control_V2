@@ -31,7 +31,11 @@ export class AttendanceController {
 
   @Get('access-logs')
   async findAccessLogs(@Query() query: AccessLogsQueryDto) {
-    return successResponse(await this.service.findAccessLogs(query));
+    const result = await this.service.findAccessLogs(query);
+    if (Array.isArray(result)) {
+      return successResponse(result);
+    }
+    return paginatedResponse(result.items, result.total, result.page, result.pageSize);
   }
 
   @Get('export')

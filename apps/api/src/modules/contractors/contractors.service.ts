@@ -8,19 +8,56 @@ import { UpdateContractorDto } from './dto/update-contractor.dto';
 export class ContractorsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async findAll() {
-    const rows = await this.prisma.contractor.findMany({
-      where: { isDeleted: false },
-      orderBy: { name: 'asc' },
-      include: { _count: { select: { users: true, projectLinks: true } } },
-    });
-    return rows.map((c) => ({
+  async findAll(opts: { search?: string; page?: number; pageSize?: number } = {}) {
+    const search = opts.search?.trim();
+    const where = {
+      isDeleted: false,
+      ...(search
+        ? {
+            OR: [
+              { name: { contains: search, mode: 'insensitive' as const } },
+              { code: { contains: search, mode: 'insensitive' as const } },
+            ],
+          }
+        : {}),
+    };
+
+    const mapRow = <
+      T extends {
+        _count: { users: number; projectLinks: number };
+      },
+    >(
+      c: T,
+    ) => ({
       ...c,
       _count: {
         users: c._count.users,
         projects: c._count.projectLinks,
       },
-    }));
+    });
+
+    if (opts.page != null) {
+      const page = Math.max(1, opts.page);
+      const pageSize = Math.min(100, Math.max(1, opts.pageSize ?? 10));
+      const [rows, total] = await Promise.all([
+        this.prisma.contractor.findMany({
+          where,
+          orderBy: { name: 'asc' },
+          include: { _count: { select: { users: true, projectLinks: true } } },
+          skip: (page - 1) * pageSize,
+          take: pageSize,
+        }),
+        this.prisma.contractor.count({ where }),
+      ]);
+      return { items: rows.map(mapRow), total, page, pageSize };
+    }
+
+    const rows = await this.prisma.contractor.findMany({
+      where,
+      orderBy: { name: 'asc' },
+      include: { _count: { select: { users: true, projectLinks: true } } },
+    });
+    return rows.map(mapRow);
   }
 
   async findOne(id: string) {

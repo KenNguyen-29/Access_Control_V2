@@ -48,7 +48,15 @@ export class ProjectsService {
     }));
   }
 
-  async findAll(contractorId?: string, scopeProjectIds: string[] | null = null) {
+  async findAll(
+    opts: {
+      contractorId?: string;
+      search?: string;
+      page?: number;
+      pageSize?: number;
+    } = {},
+    scopeProjectIds: string[] | null = null,
+  ) {
     const scopeFilter =
       scopeProjectIds === null
         ? {}
@@ -56,14 +64,41 @@ export class ProjectsService {
           ? { id: { in: [] as string[] } }
           : { id: { in: scopeProjectIds } };
 
+    const search = opts.search?.trim();
+    const where = {
+      isDeleted: false,
+      ...scopeFilter,
+      ...(opts.contractorId ? { contractors: { some: { contractorId: opts.contractorId } } } : {}),
+      ...(search
+        ? {
+            OR: [
+              { name: { contains: search, mode: 'insensitive' as const } },
+              { code: { contains: search, mode: 'insensitive' as const } },
+              { siteName: { contains: search, mode: 'insensitive' as const } },
+            ],
+          }
+        : {}),
+    };
+
+    if (opts.page != null) {
+      const page = Math.max(1, opts.page);
+      const pageSize = Math.min(100, Math.max(1, opts.pageSize ?? 10));
+      const [rows, total] = await Promise.all([
+        this.prisma.project.findMany({
+          where,
+          include: projectInclude,
+          orderBy: { name: 'asc' },
+          skip: (page - 1) * pageSize,
+          take: pageSize,
+        }),
+        this.prisma.project.count({ where }),
+      ]);
+      const items = await this.withContractorUserCounts(rows);
+      return { items, total, page, pageSize };
+    }
+
     const rows = await this.prisma.project.findMany({
-      where: {
-        isDeleted: false,
-        ...scopeFilter,
-        ...(contractorId
-          ? { contractors: { some: { contractorId } } }
-          : {}),
-      },
+      where,
       include: projectInclude,
       orderBy: { name: 'asc' },
     });

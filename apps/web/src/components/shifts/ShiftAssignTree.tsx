@@ -1,12 +1,15 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { ChevronRight, Search } from 'lucide-react';
 import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
-import { getProjects, getUsers, getUserIds, type Project, type User } from '@/lib/api';
+import { getProjects, getUsers, getUserIds, type Project } from '@/lib/api';
 import { cn } from '@/lib/utils';
+
+const USERS_PAGE_SIZE = 15;
 
 interface ShiftAssignTreeProps {
   selectedUserIds: Set<string>;
@@ -118,6 +121,14 @@ export function ShiftAssignTree({
   );
 }
 
+async function fetchAllUserIds(params: {
+  projectId: string;
+  contractorId?: string;
+}): Promise<string[]> {
+  const result = await getUserIds(params);
+  return result.ids;
+}
+
 function ProjectNode({
   project,
   expanded,
@@ -139,15 +150,26 @@ function ProjectNode({
   onToggleMany: (ids: string[], checked: boolean) => void;
   search: string;
 }) {
-  const projectUserIdsQuery = useQuery({
-    queryKey: ['userIds', 'project', project.id],
-    queryFn: () => getUserIds({ projectId: project.id }),
-    enabled: expanded,
-  });
+  const [selectBusy, setSelectBusy] = useState(false);
+  const [knownIds, setKnownIds] = useState<string[] | null>(null);
 
-  const projectUserIds = projectUserIdsQuery.data?.ids ?? [];
-  const allSelected = projectUserIds.length > 0 && projectUserIds.every((id) => selectedUserIds.has(id));
-  const someSelected = !allSelected && projectUserIds.some((id) => selectedUserIds.has(id));
+  const allSelected =
+    knownIds != null && knownIds.length > 0 && knownIds.every((id) => selectedUserIds.has(id));
+  const someSelected =
+    knownIds != null && !allSelected && knownIds.some((id) => selectedUserIds.has(id));
+
+  const handleSelectAll = async (e: React.MouseEvent | React.ChangeEvent) => {
+    e.stopPropagation();
+    setSelectBusy(true);
+    try {
+      const ids = knownIds ?? (await fetchAllUserIds({ projectId: project.id }));
+      setKnownIds(ids);
+      const checked = !(ids.length > 0 && ids.every((id) => selectedUserIds.has(id)));
+      onToggleMany(ids, checked);
+    } finally {
+      setSelectBusy(false);
+    }
+  };
 
   return (
     <div className="border-b border-border last:border-b-0">
@@ -156,19 +178,22 @@ function ProjectNode({
         onClick={onToggleExpand}
       >
         <ChevronRight
-          className={cn('h-4 w-4 shrink-0 text-muted-foreground transition-transform', expanded && 'rotate-90')}
+          className={cn(
+            'h-4 w-4 shrink-0 text-muted-foreground transition-transform',
+            expanded && 'rotate-90',
+          )}
         />
         <input
           type="checkbox"
           className="h-3.5 w-3.5 accent-primary"
           checked={allSelected}
-          ref={(el) => { if (el) el.indeterminate = someSelected; }}
-          onChange={(e) => {
-            e.stopPropagation();
-            onToggleMany(projectUserIds, !allSelected);
+          ref={(el) => {
+            if (el) el.indeterminate = someSelected;
           }}
+          onChange={(e) => void handleSelectAll(e)}
           onClick={(e) => e.stopPropagation()}
-          disabled={projectUserIds.length === 0}
+          disabled={selectBusy}
+          title="Chọn / bỏ chọn tất cả nhân viên dự án"
         />
         <span className="flex-1 text-sm font-semibold">{project.name}</span>
         <span className="text-xs text-muted-foreground">{project.code}</span>
@@ -177,7 +202,7 @@ function ProjectNode({
       {expanded && (
         <div className="pl-4">
           {(project.contractors ?? []).length === 0 ? (
-            <ContractorUsersInline
+            <UserList
               projectId={project.id}
               selectedUserIds={selectedUserIds}
               onToggleUser={onToggleUser}
@@ -229,15 +254,27 @@ function ContractorNode({
   onToggleMany: (ids: string[], checked: boolean) => void;
   search: string;
 }) {
-  const userIdsQuery = useQuery({
-    queryKey: ['userIds', 'contractor-project', projectId, contractorId],
-    queryFn: () => getUserIds({ projectId, contractorId }),
-    enabled: expanded,
-  });
+  const [selectBusy, setSelectBusy] = useState(false);
+  const [knownIds, setKnownIds] = useState<string[] | null>(null);
 
-  const ids = userIdsQuery.data?.ids ?? [];
-  const allSelected = ids.length > 0 && ids.every((id) => selectedUserIds.has(id));
-  const someSelected = !allSelected && ids.some((id) => selectedUserIds.has(id));
+  const allSelected =
+    knownIds != null && knownIds.length > 0 && knownIds.every((id) => selectedUserIds.has(id));
+  const someSelected =
+    knownIds != null && !allSelected && knownIds.some((id) => selectedUserIds.has(id));
+
+  const handleSelectAll = async (e: React.MouseEvent | React.ChangeEvent) => {
+    e.stopPropagation();
+    setSelectBusy(true);
+    try {
+      const ids =
+        knownIds ?? (await fetchAllUserIds({ projectId, contractorId }));
+      setKnownIds(ids);
+      const checked = !(ids.length > 0 && ids.every((id) => selectedUserIds.has(id)));
+      onToggleMany(ids, checked);
+    } finally {
+      setSelectBusy(false);
+    }
+  };
 
   return (
     <div className="border-b border-border/50 last:border-b-0">
@@ -246,19 +283,22 @@ function ContractorNode({
         onClick={onToggleExpand}
       >
         <ChevronRight
-          className={cn('h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform', expanded && 'rotate-90')}
+          className={cn(
+            'h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform',
+            expanded && 'rotate-90',
+          )}
         />
         <input
           type="checkbox"
           className="h-3.5 w-3.5 accent-primary"
           checked={allSelected}
-          ref={(el) => { if (el) el.indeterminate = someSelected; }}
-          onChange={(e) => {
-            e.stopPropagation();
-            onToggleMany(ids, !allSelected);
+          ref={(el) => {
+            if (el) el.indeterminate = someSelected;
           }}
+          onChange={(e) => void handleSelectAll(e)}
           onClick={(e) => e.stopPropagation()}
-          disabled={ids.length === 0}
+          disabled={selectBusy}
+          title="Chọn / bỏ chọn tất cả nhân viên nhà thầu"
         />
         <span className="flex-1 text-xs font-medium">{contractorName}</span>
         <span className="text-[10px] text-muted-foreground">{contractorCode}</span>
@@ -277,27 +317,6 @@ function ContractorNode({
   );
 }
 
-function ContractorUsersInline({
-  projectId,
-  selectedUserIds,
-  onToggleUser,
-  search,
-}: {
-  projectId: string;
-  selectedUserIds: Set<string>;
-  onToggleUser: (id: string) => void;
-  search: string;
-}) {
-  return (
-    <UserList
-      projectId={projectId}
-      selectedUserIds={selectedUserIds}
-      onToggleUser={onToggleUser}
-      search={search}
-    />
-  );
-}
-
 function UserList({
   projectId,
   contractorId,
@@ -311,38 +330,56 @@ function UserList({
   onToggleUser: (id: string) => void;
   search: string;
 }) {
+  const [page, setPage] = useState(1);
+  const [accumulated, setAccumulated] = useState<
+    Array<{ id: string; fullName: string; employeeCode?: string | null }>
+  >([]);
+
   const usersQuery = useQuery({
-    queryKey: ['users', 'tree', projectId, contractorId ?? ''],
+    queryKey: ['users', 'tree', projectId, contractorId ?? '', page, search, USERS_PAGE_SIZE],
     queryFn: () =>
       getUsers({
         projectId,
         contractorId,
-        pageSize: 200,
+        page,
+        pageSize: USERS_PAGE_SIZE,
+        search: search.trim() || undefined,
       }),
   });
 
-  const users = useMemo(() => {
-    const items = usersQuery.data?.items ?? [];
-    if (!search) return items;
-    const q = search.toLowerCase();
-    return items.filter(
-      (u) =>
-        u.fullName.toLowerCase().includes(q) ||
-        (u.employeeCode || '').toLowerCase().includes(q),
-    );
-  }, [usersQuery.data?.items, search]);
+  useEffect(() => {
+    setPage(1);
+    setAccumulated([]);
+  }, [projectId, contractorId, search]);
 
-  if (usersQuery.isLoading) {
+  useEffect(() => {
+    const items = usersQuery.data?.items;
+    if (!items) return;
+    setAccumulated((prev) => {
+      if (page === 1) return items;
+      const seen = new Set(prev.map((u) => u.id));
+      const next = [...prev];
+      for (const u of items) {
+        if (!seen.has(u.id)) next.push(u);
+      }
+      return next;
+    });
+  }, [usersQuery.data?.items, page]);
+
+  const totalPages = Math.max(1, usersQuery.data?.totalPages ?? 1);
+  const hasMore = page < totalPages;
+
+  if (usersQuery.isLoading && accumulated.length === 0) {
     return <p className="px-6 py-2 text-[10px] text-muted-foreground">Đang tải...</p>;
   }
 
-  if (users.length === 0) {
+  if (accumulated.length === 0) {
     return <p className="px-6 py-2 text-[10px] text-muted-foreground">Không có nhân viên</p>;
   }
 
   return (
     <div className="pl-6">
-      {users.map((u) => (
+      {accumulated.map((u) => (
         <label
           key={u.id}
           className="flex cursor-pointer items-center gap-2 py-1 text-xs hover:bg-muted/20"
@@ -359,6 +396,18 @@ function UserList({
           </span>
         </label>
       ))}
+      {hasMore && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="mt-1 h-7 w-full text-[10px]"
+          disabled={usersQuery.isFetching}
+          onClick={() => setPage((p) => p + 1)}
+        >
+          {usersQuery.isFetching ? 'Đang tải...' : `Tải thêm (${page}/${totalPages})`}
+        </Button>
+      )}
     </div>
   );
 }

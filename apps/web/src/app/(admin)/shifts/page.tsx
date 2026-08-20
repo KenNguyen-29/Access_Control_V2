@@ -23,6 +23,7 @@ import { Collapsible } from '@/components/ui/collapsible';
 import { QueryBoundary } from '@/components/ui/query-states';
 import { DesignCard, PageShell } from '@/components/design/PageShell';
 import { ShiftAssignTree } from '@/components/shifts/ShiftAssignTree';
+import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 
 import { queryKeys } from '@/lib/queryKeys';
 import {
@@ -33,7 +34,6 @@ import {
   deleteWorkShift,
   endEmployeeShift,
   getEmployeeShifts,
-  getUserIds,
   getUsers,
   getWorkShifts,
   setDefaultShift,
@@ -122,6 +122,7 @@ type AssignmentFilter = 'ALL' | 'ACTIVE' | 'EXPIRING_SOON' | 'ENDED' | 'UNASSIGN
 export default function ShiftsPage() {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState('');
+  const debouncedSearch = useDebouncedValue(search, 300);
   const [assignmentFilter, setAssignmentFilter] = useState<AssignmentFilter>('ALL');
   const [workShiftFilter, setWorkShiftFilter] = useState('');
   const [listPage, setListPage] = useState(1);
@@ -153,58 +154,82 @@ export default function ShiftsPage() {
     queryKey: queryKeys.workShifts(),
     queryFn: () => getWorkShifts(),
   });
+
+  const assignmentListStatus =
+    assignmentFilter === 'UNASSIGNED' || assignmentFilter === 'ALL'
+      ? 'ALL'
+      : assignmentFilter;
+
   const assignmentsQuery = useQuery({
-    queryKey: queryKeys.employeeShifts(),
-    queryFn: () => getEmployeeShifts(),
+    queryKey: queryKeys.employeeShifts({
+      page: listPage,
+      pageSize: ASSIGN_PAGE_SIZE,
+      search: debouncedSearch.trim() || undefined,
+      workShiftId: workShiftFilter || undefined,
+      status: assignmentListStatus,
+      mode: assignmentFilter,
+    }),
+    queryFn: () =>
+      getEmployeeShifts({
+        page: listPage,
+        pageSize: ASSIGN_PAGE_SIZE,
+        search: debouncedSearch.trim() || undefined,
+        workShiftId: workShiftFilter || undefined,
+        status: assignmentListStatus,
+      }),
+    enabled: assignmentFilter !== 'UNASSIGNED',
   });
-  const allUserIdsQuery = useQuery({
-    queryKey: ['userIds', 'shifts-coverage'],
-    queryFn: () => getUserIds(),
+
+  const unassignedQuery = useQuery({
+    queryKey: queryKeys.users({
+      page: listPage,
+      pageSize: ASSIGN_PAGE_SIZE,
+      search: debouncedSearch.trim() || undefined,
+      withoutActiveShift: true,
+      scope: 'shifts-unassigned',
+    }),
+    queryFn: () =>
+      getUsers({
+        page: listPage,
+        pageSize: ASSIGN_PAGE_SIZE,
+        search: debouncedSearch.trim() || undefined,
+        withoutActiveShift: true,
+      }),
+    enabled: assignmentFilter === 'UNASSIGNED',
   });
-  const usersCoverageQuery = useQuery({
-    queryKey: ['users', 'shifts-coverage'],
-    queryFn: () => getUsers({ page: 1, pageSize: 500 }),
-  });
+
   const overviewQuery = useQuery({
     queryKey: ['stats', 'overview', 'shifts'],
     queryFn: () => getStatsOverview(),
   });
+
   const shifts = useMemo(() => shiftsQuery.data ?? [], [shiftsQuery.data]);
-  const assignments = useMemo(() => assignmentsQuery.data ?? [], [assignmentsQuery.data]);
-  const loading = shiftsQuery.isLoading || assignmentsQuery.isLoading;
-  const queryError = shiftsQuery.error ?? assignmentsQuery.error;
+  const pagedAssignments = assignmentsQuery.data?.items ?? [];
+  const pagedUnassigned = unassignedQuery.data?.items ?? [];
+  const listTotal =
+    assignmentFilter === 'UNASSIGNED'
+      ? (unassignedQuery.data?.total ?? 0)
+      : (assignmentsQuery.data?.total ?? 0);
+  const listTotalPages = Math.max(
+    1,
+    assignmentFilter === 'UNASSIGNED'
+      ? (unassignedQuery.data?.totalPages ?? 1)
+      : (assignmentsQuery.data?.totalPages ?? 1),
+  );
+  const listCurrentPage = Math.min(listPage, listTotalPages);
+
+  const loading =
+    shiftsQuery.isLoading ||
+    (assignmentFilter === 'UNASSIGNED' ? unassignedQuery.isLoading : assignmentsQuery.isLoading);
+  const queryError =
+    shiftsQuery.error ??
+    (assignmentFilter === 'UNASSIGNED' ? unassignedQuery.error : assignmentsQuery.error);
   const listError =
     queryError instanceof ApiError
       ? queryError.message
       : queryError
         ? 'Không tải được ca làm việc'
         : null;
-
-  const activeAssignedUserIds = useMemo(() => {
-    const ids = new Set<string>();
-    for (const a of assignments) {
-      if (isAssignmentActive(a)) ids.add(a.userId);
-    }
-    return ids;
-  }, [assignments]);
-
-  const unassignedUsers = useMemo(() => {
-    const allIds = allUserIdsQuery.data?.ids ?? [];
-    const usersById = new Map((usersCoverageQuery.data?.items ?? []).map((u) => [u.id, u]));
-    return allIds
-      .filter((id) => !activeAssignedUserIds.has(id))
-      .map((id) => {
-        const u = usersById.get(id);
-        if (u) return u;
-        return {
-          id,
-          fullName: 'Không rõ tên',
-          employeeCode: undefined,
-          department: null,
-        } as unknown as User;
-      })
-      .sort((a, b) => (a.fullName || '').localeCompare(b.fullName || '', 'vi'));
-  }, [allUserIdsQuery.data?.ids, usersCoverageQuery.data?.items, activeAssignedUserIds]);
 
   function load() {
     setError(null);
@@ -213,66 +238,14 @@ export default function ShiftsPage() {
   }
 
   function invalidateAssignmentQueries() {
-    void queryClient.invalidateQueries({ queryKey: queryKeys.employeeShifts() });
-    void queryClient.invalidateQueries({ queryKey: ['userIds', 'shifts-coverage'] });
-    void queryClient.invalidateQueries({ queryKey: ['users', 'shifts-coverage'] });
+    void queryClient.invalidateQueries({ queryKey: ['employeeShifts'] });
+    void queryClient.invalidateQueries({ queryKey: ['users'] });
     void queryClient.invalidateQueries({ queryKey: ['stats', 'overview'] });
   }
 
-  const filteredAssignments = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return assignments.filter((a) => {
-      const status = assignmentStatus(a);
-      if (assignmentFilter === 'ACTIVE' && status !== 'ACTIVE') return false;
-      if (assignmentFilter === 'EXPIRING_SOON' && status !== 'EXPIRING_SOON') return false;
-      if (assignmentFilter === 'ENDED' && status !== 'ENDED') return false;
-      if (assignmentFilter === 'UNASSIGNED') return false;
-      if (workShiftFilter && a.workShiftId !== workShiftFilter) return false;
-      if (!q) return true;
-      const name = a.user?.fullName?.toLowerCase() || '';
-      const code = a.user?.employeeCode?.toLowerCase() || '';
-      const shift = a.workShift?.name?.toLowerCase() || '';
-      return name.includes(q) || code.includes(q) || shift.includes(q);
-    });
-  }, [assignments, search, assignmentFilter, workShiftFilter]);
-
-  const filteredUnassigned = useMemo(() => {
-    if (assignmentFilter !== 'UNASSIGNED') return [];
-    const q = search.trim().toLowerCase();
-    if (!q) return unassignedUsers;
-    return unassignedUsers.filter((u) => {
-      const name = u.fullName?.toLowerCase() || '';
-      const code = (u.employeeCode || '').toLowerCase();
-      const dept = u.department?.name?.toLowerCase() || '';
-      return name.includes(q) || code.includes(q) || dept.includes(q);
-    });
-  }, [unassignedUsers, search, assignmentFilter]);
-
-  const listTotal =
-    assignmentFilter === 'UNASSIGNED' ? filteredUnassigned.length : filteredAssignments.length;
-
   useEffect(() => {
     setListPage(1);
-  }, [search, assignmentFilter, workShiftFilter]);
-
-  const listTotalPages = Math.max(1, Math.ceil(listTotal / ASSIGN_PAGE_SIZE));
-  const listCurrentPage = Math.min(listPage, listTotalPages);
-  const pagedAssignments = useMemo(
-    () =>
-      filteredAssignments.slice(
-        (listCurrentPage - 1) * ASSIGN_PAGE_SIZE,
-        listCurrentPage * ASSIGN_PAGE_SIZE,
-      ),
-    [filteredAssignments, listCurrentPage],
-  );
-  const pagedUnassigned = useMemo(
-    () =>
-      filteredUnassigned.slice(
-        (listCurrentPage - 1) * ASSIGN_PAGE_SIZE,
-        listCurrentPage * ASSIGN_PAGE_SIZE,
-      ),
-    [filteredUnassigned, listCurrentPage],
-  );
+  }, [debouncedSearch, assignmentFilter, workShiftFilter]);
 
   function toggleUser(id: string) {
     setSelectedUserIds((prev) => {
@@ -676,7 +649,7 @@ export default function ShiftsPage() {
         </div>
 
         <QueryBoundary
-          isLoading={loading || (assignmentFilter === 'UNASSIGNED' && allUserIdsQuery.isLoading)}
+          isLoading={loading}
           isEmpty={listTotal === 0}
           emptyTitle={
             assignmentFilter === 'UNASSIGNED'

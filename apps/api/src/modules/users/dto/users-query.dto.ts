@@ -1,5 +1,6 @@
-import { IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsOptional, IsString } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
 import { PaginationDto } from '../../../common/dto/pagination.dto';
 
 export class UsersQueryDto extends PaginationDto {
@@ -17,6 +18,18 @@ export class UsersQueryDto extends PaginationDto {
   @IsOptional()
   @IsString()
   projectId?: string;
+
+  @ApiPropertyOptional({
+    description: 'When true, only users with no active (non-ended) employee shift',
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (value === true || value === 'true' || value === '1') return true;
+    if (value === false || value === 'false' || value === '0') return false;
+    return undefined;
+  })
+  @IsBoolean()
+  withoutActiveShift?: boolean;
 }
 
 export class UsersIdsQueryDto {
@@ -39,4 +52,16 @@ export class UsersIdsQueryDto {
   @IsOptional()
   @IsString()
   projectId?: string;
+
+  @ApiPropertyOptional({
+    description: 'When true, only users with no active (non-ended) employee shift',
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (value === true || value === 'true' || value === '1') return true;
+    if (value === false || value === 'false' || value === '0') return false;
+    return undefined;
+  })
+  @IsBoolean()
+  withoutActiveShift?: boolean;
 }
