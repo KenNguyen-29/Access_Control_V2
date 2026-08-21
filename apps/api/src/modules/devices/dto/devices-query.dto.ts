@@ -1,5 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsOptional, IsString } from 'class-validator';
+import { DeviceType } from '@prisma/client';
+import { IsEnum, IsOptional, IsString } from 'class-validator';
 import { PaginationDto } from '../../../common/dto/pagination.dto';
 
 export class DevicesQueryDto extends PaginationDto {
@@ -7,4 +8,9 @@ export class DevicesQueryDto extends PaginationDto {
   @IsOptional()
   @IsString()
   zoneId?: string;
+
+  @ApiPropertyOptional({ enum: DeviceType })
+  @IsOptional()
+  @IsEnum(DeviceType)
+  deviceType?: DeviceType;
 }

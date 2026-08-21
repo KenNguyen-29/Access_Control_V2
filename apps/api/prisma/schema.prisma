@@ -425,7 +425,9 @@ model AccessLog {
 
   @@unique([deviceId, sourceEventId])
   @@index([eventAt])
+  @@index([userId])
   @@index([projectId])
+  @@index([eventAt, isValid])
   @@map("access_logs")
 }
 

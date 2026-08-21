@@ -180,17 +180,23 @@ export class DevicesService {
     };
   }
 
-  async findAll(query: PaginationDto & { zoneId?: string }) {
+  async findAll(
+    query: PaginationDto & { zoneId?: string; deviceType?: DeviceType },
+  ) {
     const page = query.page ?? 1;
     const pageSize = query.pageSize ?? 20;
+    const search = query.search?.trim();
     const where = {
       isDeleted: false,
       ...(query.zoneId ? { zoneId: query.zoneId } : {}),
-      ...(query.search
+      ...(query.deviceType ? { deviceType: query.deviceType } : {}),
+      ...(search
         ? {
             OR: [
-              { name: { contains: query.search, mode: 'insensitive' as const } },
-              { code: { contains: query.search, mode: 'insensitive' as const } },
+              { name: { contains: search, mode: 'insensitive' as const } },
+              { code: { contains: search, mode: 'insensitive' as const } },
+              { ipAddress: { contains: search, mode: 'insensitive' as const } },
+              { location: { contains: search, mode: 'insensitive' as const } },
             ],
           }
         : {}),

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSocket } from '@/hooks/useSocket';
 import {
@@ -175,8 +176,10 @@ function FlagCheckbox({
 
 export default function ReportsPage() {
   const queryClient = useQueryClient();
+  const searchParams = useSearchParams();
   const { lastEvent } = useSocket();
   const lastHandledLogEventKey = useRef<string | null>(null);
+  const deepLinkApplied = useRef(false);
   const importInputRef = useRef<HTMLInputElement>(null);
   const [tab, setTab] = useState('stats');
 
@@ -207,6 +210,8 @@ export default function ReportsPage() {
   const [weeklyLate, setWeeklyLate] = useState<TriFilter>('');
   const [weeklyEarlyArrival, setWeeklyEarlyArrival] = useState<TriFilter>('');
   const [weeklyOt, setWeeklyOt] = useState<TriFilter>('');
+  const [weeklyPage, setWeeklyPage] = useState(1);
+  const [timesheetPage, setTimesheetPage] = useState(1);
   const [recordsSearch, setRecordsSearch] = useState('');
   const [recordsStatus, setRecordsStatus] = useState('');
   const [recordsLate, setRecordsLate] = useState<TriFilter>('');
@@ -223,8 +228,46 @@ export default function ReportsPage() {
   const [exportError, setExportError] = useState<string | null>(null);
   const [importNotice, setImportNotice] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (deepLinkApplied.current) return;
+    const tabParam = searchParams.get('tab');
+    const fromParam = searchParams.get('from');
+    const toParam = searchParams.get('to');
+    const searchParam = searchParams.get('search');
+    if (!tabParam && !fromParam && !toParam && !searchParam) return;
+    deepLinkApplied.current = true;
+
+    if (
+      tabParam === 'detail' ||
+      tabParam === 'stats' ||
+      tabParam === 'summary' ||
+      tabParam === 'logs'
+    ) {
+      setTab(tabParam);
+    }
+
+    const dateRe = /^\d{4}-\d{2}-\d{2}$/;
+    const nextFrom = fromParam && dateRe.test(fromParam) ? fromParam : null;
+    const nextTo = toParam && dateRe.test(toParam) ? toParam : null;
+    if (nextFrom || nextTo) {
+      const f = nextFrom ?? nextTo!;
+      const t = nextTo ?? nextFrom!;
+      setFrom(f);
+      setTo(t);
+      setApplied((prev) => ({ ...prev, from: f, to: t }));
+      setWeekStart(formatDateOnly(mondayOfWeek(parseDateOnly(f))));
+    }
+
+    if (searchParam?.trim()) {
+      setRecordsSearch(searchParam.trim());
+      setRecordsPage(1);
+    }
+  }, [searchParams]);
+
   const RECORDS_PAGE_SIZE = 10;
   const LOGS_PAGE_SIZE = 10;
+  const WEEKLY_PAGE_SIZE = 10;
+  const TIMESHEET_PAGE_SIZE = 10;
   const MATRIX_DAY_COUNT = 30;
   const matrixRange = useMemo(() => {
     const to = applied.to || formatDateOnly(new Date());
@@ -538,6 +581,21 @@ export default function ReportsPage() {
     [weeklyGroups],
   );
 
+  const weeklyTotalPages = Math.max(1, Math.ceil(weeklyGroups.length / WEEKLY_PAGE_SIZE));
+  const weeklyCurrentPage = Math.min(weeklyPage, weeklyTotalPages);
+  const pagedWeeklyGroups = useMemo(
+    () =>
+      weeklyGroups.slice(
+        (weeklyCurrentPage - 1) * WEEKLY_PAGE_SIZE,
+        weeklyCurrentPage * WEEKLY_PAGE_SIZE,
+      ),
+    [weeklyGroups, weeklyCurrentPage],
+  );
+
+  useEffect(() => {
+    setWeeklyPage(1);
+  }, [weeklySearch, weeklyStatus, weeklyLate, weeklyEarlyArrival, weeklyOt, weekStart]);
+
   const sortedTimesheet = useMemo(() => {
     const q = timesheetSearch.trim().toLowerCase();
     let list = [...(summary?.timesheet ?? [])].filter((t) => {
@@ -564,6 +622,21 @@ export default function ReportsPage() {
     timesheetEarlyArrival,
     timesheetOt,
   ]);
+
+  const timesheetTotalPages = Math.max(1, Math.ceil(sortedTimesheet.length / TIMESHEET_PAGE_SIZE));
+  const timesheetCurrentPage = Math.min(timesheetPage, timesheetTotalPages);
+  const pagedTimesheet = useMemo(
+    () =>
+      sortedTimesheet.slice(
+        (timesheetCurrentPage - 1) * TIMESHEET_PAGE_SIZE,
+        timesheetCurrentPage * TIMESHEET_PAGE_SIZE,
+      ),
+    [sortedTimesheet, timesheetCurrentPage],
+  );
+
+  useEffect(() => {
+    setTimesheetPage(1);
+  }, [timesheetSearch, timesheetLate, timesheetEarlyArrival, timesheetOt, timesheetSort, applied]);
 
   return (
     <PageShell
@@ -776,7 +849,7 @@ export default function ReportsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {weeklyGroups.map((group) =>
+                    {pagedWeeklyGroups.map((group) =>
                       group.rows.map((r, idx) => (
                         <tr
                           key={`${r.userId}-${r.date}`}
@@ -854,6 +927,13 @@ export default function ReportsPage() {
                   </tbody>
                 </table>
               </div>
+              <TablePager
+                currentPage={weeklyCurrentPage}
+                totalPages={weeklyTotalPages}
+                total={weeklyGroups.length}
+                unit="nhân viên"
+                onPageChange={setWeeklyPage}
+              />
             </QueryBoundary>
           </DesignCard>
         </TabsContent>
@@ -940,7 +1020,7 @@ export default function ReportsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {sortedTimesheet.map((t) => (
+                    {pagedTimesheet.map((t) => (
                       <tr key={t.userId} className="border-t border-border hover:bg-muted/20">
                         <td className="p-2">
                           <div className="flex items-center gap-2.5">
@@ -973,6 +1053,13 @@ export default function ReportsPage() {
                   </tbody>
                 </table>
               </div>
+              <TablePager
+                currentPage={timesheetCurrentPage}
+                totalPages={timesheetTotalPages}
+                total={sortedTimesheet.length}
+                unit="nhân viên"
+                onPageChange={setTimesheetPage}
+              />
             </QueryBoundary>
           </DesignCard>
         </TabsContent>
@@ -1199,16 +1286,17 @@ export default function ReportsPage() {
 
         {/* ═══ TAB: LOG RA VÀO ═══ */}
         <TabsContent value="logs" className="space-y-6">
-          <ReportsLogsConfigPanel />
-
           <DesignCard
             title="Log ra vào"
             description="Danh sách sự kiện check-in / check-out theo khoảng ngày đã lọc."
             actions={
-              <Button variant="outline" size="sm" onClick={loadLogs} disabled={logsLoading}>
-                <RefreshCw className={logsLoading ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
-                Làm mới
-              </Button>
+              <div className="flex flex-wrap items-center gap-2">
+                <ReportsLogsConfigPanel />
+                <Button variant="outline" size="sm" onClick={loadLogs} disabled={logsLoading}>
+                  <RefreshCw className={logsLoading ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
+                  Làm mới
+                </Button>
+              </div>
             }
           >
             <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center">

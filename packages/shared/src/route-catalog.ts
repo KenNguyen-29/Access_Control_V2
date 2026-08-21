@@ -4,6 +4,7 @@ export const CONFIGURABLE_ROUTES: Array<{ prefix: string; label: string; group: 
   { prefix: '/dashboard', label: 'Giám sát', group: 'Vận hành' },
   { prefix: '/reports', label: 'Chấm công', group: 'Vận hành' },
   { prefix: '/reports/contractors', label: 'BC nhà thầu', group: 'Vận hành' },
+  { prefix: '/analytics', label: 'Thống kê', group: 'Vận hành' },
   { prefix: '/projects', label: 'Dự án & Nhà thầu', group: 'Vận hành' },
   { prefix: '/muster', label: 'Sơ tán khẩn cấp', group: 'Vận hành' },
   { prefix: '/users', label: 'Nhân sự', group: 'Quản lý' },
@@ -31,6 +32,7 @@ export const DEFAULT_ALLOWED_ROUTES: Record<string, string[]> = {
     '/shifts',
     '/reports',
     '/reports/contractors',
+    '/analytics',
     '/projects',
     '/settings',
     '/settings/departments',
@@ -40,7 +42,7 @@ export const DEFAULT_ALLOWED_ROUTES: Record<string, string[]> = {
   ],
   SECURITY: ['/home', '/dashboard', '/muster'],
   TECHNICIAN: ['/home', '/devices'],
-  STAFF: ['/home', '/dashboard', '/users', '/reports', '/reports/contractors', '/projects'],
+  STAFF: ['/home', '/dashboard', '/users', '/reports', '/reports/contractors', '/analytics', '/projects'],
 };
 
 export function defaultAllowedRoutesForRole(role: string): string[] {

@@ -161,10 +161,63 @@ export type StatsOverview = {
   todayLate: number;
   todayEvents: number;
   todayInvalidEvents: number;
+  contractors: number;
+  projects: number;
+  staffByContractor: Array<{ id: string; name: string; count: number }>;
+  todayCheckIns: number;
+  todayCheckOuts: number;
+  todayOnTime: number;
+  todayEarly: number;
 };
 
 export async function getStatsOverview() {
   return apiRequest<StatsOverview>('/stats/overview');
+}
+
+export type AnalyticsStats = {
+  from: string;
+  to: string;
+  breakMode: 'contractor' | 'project' | 'user' | 'none';
+  summary: {
+    staffCount: number;
+    presentDays: number;
+    lateCount: number;
+    otMinutes: number;
+    workedMinutes: number;
+    checkInCount: number;
+    checkOutCount: number;
+  };
+  byDay: Array<{
+    date: string;
+    present: number;
+    late: number;
+    otMinutes: number;
+    checkIns: number;
+    checkOuts: number;
+  }>;
+  breakdown: Array<{
+    id: string;
+    label: string;
+    value: number;
+    lateCount: number;
+    otMinutes: number;
+  }>;
+};
+
+export async function getAnalyticsStats(params: {
+  from: string;
+  to: string;
+  projectId?: string;
+  contractorId?: string;
+  userId?: string;
+}) {
+  const q = new URLSearchParams();
+  q.set('from', params.from);
+  q.set('to', params.to);
+  if (params.projectId) q.set('projectId', params.projectId);
+  if (params.contractorId) q.set('contractorId', params.contractorId);
+  if (params.userId) q.set('userId', params.userId);
+  return apiRequest<AnalyticsStats>(`/stats/analytics?${q.toString()}`);
 }
 
 export async function getHealth() {
@@ -661,12 +714,14 @@ export async function getDevices(params?: {
   pageSize?: number;
   search?: string;
   zoneId?: string;
+  deviceType?: string;
 }) {
   const q = new URLSearchParams();
   if (params?.page) q.set('page', String(params.page));
   if (params?.pageSize) q.set('pageSize', String(params.pageSize));
   if (params?.search) q.set('search', params.search);
   if (params?.zoneId) q.set('zoneId', params.zoneId);
+  if (params?.deviceType) q.set('deviceType', params.deviceType);
   const qs = q.toString();
   return apiRequest<PaginatedData<Device>>(`/devices${qs ? `?${qs}` : ''}`);
 }
@@ -780,6 +835,7 @@ export async function getEmployeeShifts(params?: {
   workShiftId?: string;
   search?: string;
   status?: 'ALL' | 'ACTIVE' | 'EXPIRING_SOON' | 'ENDED';
+  assignmentType?: EmployeeShiftAssignType;
 }) {
   const q = new URLSearchParams();
   q.set('page', String(params?.page ?? 1));
@@ -788,6 +844,7 @@ export async function getEmployeeShifts(params?: {
   if (params?.workShiftId) q.set('workShiftId', params.workShiftId);
   if (params?.search) q.set('search', params.search);
   if (params?.status && params.status !== 'ALL') q.set('status', params.status);
+  if (params?.assignmentType) q.set('assignmentType', params.assignmentType);
   return apiRequest<PaginatedData<EmployeeShift>>(`/shifts/employee-shifts?${q.toString()}`);
 }
 

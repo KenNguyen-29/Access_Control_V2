@@ -117,40 +117,64 @@ export class ContractorReportsService {
     const projectFilter = this.projectUserFilter(undefined, params.projectIds);
     const paging = this.resolvePaging(params);
 
-    const contractors = await this.prisma.contractor.findMany({
-      where: { isDeleted: false },
-      orderBy: { name: 'asc' },
-    });
+    const userBaseWhere = {
+      isDeleted: false,
+      contractorId: { not: null as string | null },
+      ...projectFilter,
+    };
 
-    const allRows = await Promise.all(
-      contractors.map(async (c) => {
-        const userWhere = {
-          isDeleted: false,
-          contractorId: c.id,
-          ...projectFilter,
-        };
-        const [registered, presentUsers] = await Promise.all([
-          this.prisma.user.count({ where: userWhere }),
-          this.prisma.accessLog.findMany({
-            where: {
-              eventAt: { gte: day, lt: next },
-              isValid: true,
-              user: userWhere,
-            },
-            select: { userId: true },
-            distinct: ['userId'],
-          }),
-        ]);
-        return {
-          contractorId: c.id,
-          code: c.code,
-          name: c.name,
-          registeredCount: registered,
-          presentCount: presentUsers.filter((r) => r.userId).length,
-          date: formatDateOnly(day),
-        };
+    // 3 queries total — avoid per-contractor Promise.all (exhausts Prisma pool / hangs API).
+    const [contractors, registeredGroups, presentLogs] = await Promise.all([
+      this.prisma.contractor.findMany({
+        where: { isDeleted: false },
+        orderBy: { name: 'asc' },
+        select: { id: true, code: true, name: true },
       }),
-    );
+      this.prisma.user.groupBy({
+        by: ['contractorId'],
+        where: userBaseWhere,
+        _count: { _all: true },
+      }),
+      this.prisma.accessLog.findMany({
+        where: {
+          eventAt: { gte: day, lt: next },
+          isValid: true,
+          userId: { not: null },
+          user: userBaseWhere,
+        },
+        select: {
+          userId: true,
+          user: { select: { contractorId: true } },
+        },
+        distinct: ['userId'],
+      }),
+    ]);
+
+    const registeredByContractor = new Map<string, number>();
+    for (const g of registeredGroups) {
+      if (g.contractorId) registeredByContractor.set(g.contractorId, g._count._all);
+    }
+
+    const presentByContractor = new Map<string, Set<string>>();
+    for (const log of presentLogs) {
+      const cid = log.user?.contractorId;
+      if (!cid || !log.userId) continue;
+      let set = presentByContractor.get(cid);
+      if (!set) {
+        set = new Set();
+        presentByContractor.set(cid, set);
+      }
+      set.add(log.userId);
+    }
+
+    const allRows = contractors.map((c) => ({
+      contractorId: c.id,
+      code: c.code,
+      name: c.name,
+      registeredCount: registeredByContractor.get(c.id) ?? 0,
+      presentCount: presentByContractor.get(c.id)?.size ?? 0,
+      date: formatDateOnly(day),
+    }));
 
     const filtered = allRows.filter((r) => r.registeredCount > 0 || r.presentCount > 0);
     const rows = paging

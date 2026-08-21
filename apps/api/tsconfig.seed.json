@@ -11,6 +11,7 @@
     "prisma/seed.ts",
     "prisma/seed-attendance-demo.ts",
     "prisma/seed-bulk-users.ts",
-    "prisma/seed-contractor-demo.ts"
+    "prisma/seed-contractor-demo.ts",
+    "prisma/seed-sample-20.ts"
   ]
 }

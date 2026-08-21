@@ -24,6 +24,7 @@ import { Dialog, ConfirmDialog } from '@/components/ui/dialog';
 import { FieldError, RequiredMark } from '@/components/ui/field-error';
 import { DeviceTypeBadge, SyncBadge } from '@/components/ui/status-badge';
 import { QueryBoundary } from '@/components/ui/query-states';
+import { TablePager } from '@/components/ui/table-pager';
 import { DesignCard, PageShell } from '@/components/design/PageShell';
 import { queryKeys } from '@/lib/queryKeys';
 import {
@@ -82,8 +83,8 @@ const EMPTY_FORM = {
   password: '',
 };
 
-const DEVICES_PARAMS = { page: 1, pageSize: 200 } as const;
-type DevicesResult = Awaited<ReturnType<typeof getDevices>>;
+const PAGE_SIZE = 10;
+const PICKER_PAGE_SIZE = 200;
 
 export default function DevicesPage() {
   const queryClient = useQueryClient();
@@ -103,10 +104,27 @@ export default function DevicesPage() {
   >({});
   const [deleteTarget, setDeleteTarget] = useState<Device | null>(null);
   const [testingIds, setTestingIds] = useState<Set<string>>(new Set());
+  const [page, setPage] = useState(1);
+
+  const listParams = useMemo(
+    () => ({
+      page,
+      pageSize: PAGE_SIZE,
+      search: search.trim() || undefined,
+      zoneId: zoneFilter || undefined,
+      deviceType: typeFilter !== 'all' ? typeFilter : undefined,
+    }),
+    [page, search, zoneFilter, typeFilter],
+  );
 
   const devicesQuery = useQuery({
-    queryKey: queryKeys.devices(DEVICES_PARAMS),
-    queryFn: () => getDevices(DEVICES_PARAMS),
+    queryKey: queryKeys.devices(listParams),
+    queryFn: () => getDevices(listParams),
+  });
+  const pickerQuery = useQuery({
+    queryKey: queryKeys.devices({ page: 1, pageSize: PICKER_PAGE_SIZE, purpose: 'picker' }),
+    queryFn: () => getDevices({ page: 1, pageSize: PICKER_PAGE_SIZE }),
+    enabled: open || mapOpen,
   });
   const mappingsQuery = useQuery({
     queryKey: queryKeys.deviceMappings(),
@@ -118,6 +136,13 @@ export default function DevicesPage() {
   });
 
   const items = useMemo(() => devicesQuery.data?.items ?? [], [devicesQuery.data]);
+  const total = devicesQuery.data?.total ?? 0;
+  const totalPages = Math.max(1, devicesQuery.data?.totalPages ?? 1);
+  const currentPage = Math.min(page, totalPages);
+  const pickerItems = useMemo(
+    () => pickerQuery.data?.items ?? items,
+    [pickerQuery.data, items],
+  );
   const mappings = mappingsQuery.data ?? [];
   const zones = zonesQuery.data ?? [];
   const zoneNameById = useMemo(
@@ -135,28 +160,19 @@ export default function DevicesPage() {
         : null);
 
   const readerDevices = useMemo(
-    () => items.filter((d) => isAttendancePanel(d.deviceType)),
-    [items],
+    () => pickerItems.filter((d) => isAttendancePanel(d.deviceType)),
+    [pickerItems],
   );
-  const cameras = useMemo(() => items.filter((d) => d.deviceType === 'CAMERA'), [items]);
+  const cameras = useMemo(
+    () => pickerItems.filter((d) => d.deviceType === 'CAMERA'),
+    [pickerItems],
+  );
 
   const hasActiveFilters = search.trim() !== '' || typeFilter !== 'all' || zoneFilter !== '';
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return items.filter((d) => {
-      if (typeFilter !== 'all' && d.deviceType !== typeFilter) return false;
-      if (zoneFilter && d.zoneId !== zoneFilter) return false;
-      if (!q) return true;
-      return (
-        d.name.toLowerCase().includes(q) ||
-        d.code.toLowerCase().includes(q) ||
-        (d.ipAddress || '').toLowerCase().includes(q) ||
-        (d.location || '').toLowerCase().includes(q) ||
-        (d.zone?.name || '').toLowerCase().includes(q)
-      );
-    });
-  }, [items, search, typeFilter, zoneFilter]);
+  useEffect(() => {
+    setPage(1);
+  }, [search, typeFilter, zoneFilter]);
 
   function load() {
     setError(null);
@@ -217,21 +233,24 @@ export default function DevicesPage() {
     setTestingIds((prev) => new Set(prev).add(device.id));
     try {
       const res = await testDeviceConnection(device.id);
-      queryClient.setQueryData<DevicesResult>(queryKeys.devices(DEVICES_PARAMS), (old) => {
-        if (!old) return old;
-        return {
-          ...old,
-          items: old.items.map((d) =>
-            d.id === device.id
-              ? {
-                  ...d,
-                  isOnline: res.online,
-                  lastHeartbeat: res.online ? res.checkedAt : d.lastHeartbeat,
-                }
-              : d,
-          ),
-        };
-      });
+      queryClient.setQueryData<Awaited<ReturnType<typeof getDevices>>>(
+        queryKeys.devices(listParams),
+        (old) => {
+          if (!old) return old;
+          return {
+            ...old,
+            items: old.items.map((d) =>
+              d.id === device.id
+                ? {
+                    ...d,
+                    isOnline: res.online,
+                    lastHeartbeat: res.online ? res.checkedAt : d.lastHeartbeat,
+                  }
+                : d,
+            ),
+          };
+        },
+      );
       setNotice(
         res.online
           ? `${device.name} đang kết nối (${res.latencyMs}ms${res.mock ? ' · mock' : ''})`
@@ -252,7 +271,7 @@ export default function DevicesPage() {
     mutationFn: async () => {
       const isPanel = isAttendancePanel(form.deviceType);
       const duplicateZone = isPanel
-        ? items.find(
+        ? pickerItems.find(
             (d) =>
               d.deviceType === form.deviceType &&
               d.zoneId === form.zoneId &&
@@ -352,7 +371,7 @@ export default function DevicesPage() {
   }
 
   async function onTestAll() {
-    for (const d of filtered) {
+    for (const d of items) {
       await onTest(d);
     }
   }
@@ -402,7 +421,7 @@ export default function DevicesPage() {
             variant="outline"
             size="sm"
             onClick={() => void onTestAll()}
-            disabled={loading || testingIds.size > 0 || filtered.length === 0}
+            disabled={loading || testingIds.size > 0 || items.length === 0}
           >
             <Activity className={testingIds.size > 0 ? 'h-4 w-4 animate-pulse' : 'h-4 w-4'} />
             Kiểm tra kết nối
@@ -484,13 +503,13 @@ export default function DevicesPage() {
       </DesignCard>
 
       <DesignCard
-        title={`Danh sách thiết bị (${filtered.length})`}
+        title={`Danh sách thiết bị (${total})`}
         description="Akuvox / DNAKE FaceID và camera giám sát"
       >
         <QueryBoundary
           isLoading={loading}
           error={displayError}
-          isEmpty={filtered.length === 0}
+          isEmpty={items.length === 0}
           onRetry={() => load()}
           emptyTitle={hasActiveFilters ? 'Không tìm thấy thiết bị' : 'Chưa có thiết bị'}
           emptyDescription="Thêm thiết bị Akuvox, DNAKE hoặc camera để bắt đầu."
@@ -518,7 +537,7 @@ export default function DevicesPage() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((d) => (
+                {items.map((d) => (
                   <tr key={d.id} className="border-t border-border transition-colors hover:bg-muted/20">
                     <td className="p-3">
                       <div className="flex items-center gap-2.5">
@@ -600,6 +619,13 @@ export default function DevicesPage() {
               </tbody>
             </table>
           </div>
+          <TablePager
+            currentPage={currentPage}
+            totalPages={totalPages}
+            total={total}
+            unit="thiết bị"
+            onPageChange={setPage}
+          />
         </QueryBoundary>
       </DesignCard>
 
@@ -700,7 +726,7 @@ export default function DevicesPage() {
               </option>
               {zones.map((z) => {
                 const takenBy = isAttendancePanel(form.deviceType)
-                  ? items.find(
+                  ? pickerItems.find(
                       (d) =>
                         d.deviceType === form.deviceType &&
                         d.zoneId === z.id &&

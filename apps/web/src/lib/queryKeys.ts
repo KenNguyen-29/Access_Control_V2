@@ -17,6 +17,8 @@ export const queryKeys = {
     params ? (['attendanceRecords', params] as const) : (['attendanceRecords'] as const),
   attendanceSummary: (params?: Record<string, unknown>) =>
     params ? (['attendanceSummary', params] as const) : (['attendanceSummary'] as const),
+  analyticsStats: (params?: Record<string, unknown>) =>
+    params ? (['analyticsStats', params] as const) : (['analyticsStats'] as const),
   weeklyTimesheet: (params?: Record<string, unknown>) =>
     params ? (['weeklyTimesheet', params] as const) : (['weeklyTimesheet'] as const),
   accessLogs: (params?: Record<string, unknown> | number) =>

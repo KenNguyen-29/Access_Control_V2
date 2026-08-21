@@ -18,6 +18,7 @@
     "prisma:seed:demo": "ts-node --project tsconfig.seed.json prisma/seed-attendance-demo.ts",
     "prisma:seed:contractors": "ts-node --project tsconfig.seed.json prisma/seed-contractor-demo.ts",
     "prisma:seed:bulk": "ts-node --project tsconfig.seed.json prisma/seed-bulk-users.ts",
+    "prisma:seed:sample20": "ts-node --project tsconfig.seed.json prisma/seed-sample-20.ts",
     "prisma:studio": "prisma studio",
     "go2rtc:install": "powershell -ExecutionPolicy Bypass -File scripts/install-go2rtc.ps1"
   },

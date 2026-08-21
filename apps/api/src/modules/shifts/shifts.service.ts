@@ -177,6 +177,7 @@ export class ShiftsService {
     workShiftId?: string;
     search?: string;
     status?: 'ALL' | 'ACTIVE' | 'EXPIRING_SOON' | 'ENDED';
+    assignmentType?: 'FIXED' | 'RANGED';
   } = {}) {
     const page = Math.max(1, query.page ?? 1);
     const pageSize = Math.min(100, Math.max(1, query.pageSize ?? 10));
@@ -204,6 +205,9 @@ export class ShiftsService {
       isDeleted: false,
       ...(query.userId ? { userId: query.userId } : {}),
       ...(query.workShiftId ? { workShiftId: query.workShiftId } : {}),
+      ...(query.assignmentType && status !== 'EXPIRING_SOON'
+        ? { assignmentType: query.assignmentType }
+        : {}),
       ...statusWhere,
       ...(search
         ? {

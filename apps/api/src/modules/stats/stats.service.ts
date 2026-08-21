@@ -16,6 +16,17 @@ export interface StatsOverview {
   todayLate: number;
   todayEvents: number;
   todayInvalidEvents: number;
+  /** Tổng nhà thầu / dự án (chưa xóa). */
+  contractors: number;
+  projects: number;
+  /** Top nhà thầu theo số nhân sự (đã gán contractorId). */
+  staffByContractor: Array<{ id: string; name: string; count: number }>;
+  todayCheckIns: number;
+  todayCheckOuts: number;
+  /** Bản ghi hôm nay có ca, đã check-in, không muộn. */
+  todayOnTime: number;
+  /** Bản ghi hôm nay đi sớm (check-in trước giờ ca). */
+  todayEarly: number;
 }
 
 export interface AttendanceSummaryTotals {
@@ -119,6 +130,13 @@ export class StatsService {
       todayLate,
       todayEvents,
       todayInvalidEvents,
+      contractors,
+      projects,
+      staffByContractorGroups,
+      todayCheckIns,
+      todayCheckOuts,
+      todayOnTime,
+      todayRecordsForEarly,
     ] = await Promise.all([
       this.prisma.user.count({ where: { isDeleted: false } }),
       this.prisma.device.count({ where: { isDeleted: false, deviceType: 'CAMERA' } }),
@@ -152,7 +170,83 @@ export class StatsService {
       this.prisma.accessLog.count({
         where: { eventAt: { gte: startOfDay, lt: endOfDay }, isValid: false },
       }),
+      this.prisma.contractor.count({ where: { isDeleted: false } }),
+      this.prisma.project.count({ where: { isDeleted: false } }),
+      this.prisma.user.groupBy({
+        by: ['contractorId'],
+        where: { isDeleted: false, contractorId: { not: null } },
+        _count: { _all: true },
+        orderBy: { _count: { contractorId: 'desc' } },
+        take: 8,
+      }),
+      this.prisma.accessLog.count({
+        where: {
+          eventAt: { gte: startOfDay, lt: endOfDay },
+          action: 'CHECK_IN',
+        },
+      }),
+      this.prisma.accessLog.count({
+        where: {
+          eventAt: { gte: startOfDay, lt: endOfDay },
+          action: 'CHECK_OUT',
+        },
+      }),
+      this.prisma.attendanceRecord.count({
+        where: {
+          date: { gte: startOfDay, lt: endOfDay },
+          workShiftId: { not: null },
+          checkInAt: { not: null },
+          lateMinutes: 0,
+        },
+      }),
+      this.prisma.attendanceRecord.findMany({
+        where: {
+          date: { gte: startOfDay, lt: endOfDay },
+          workShiftId: { not: null },
+          checkInAt: { not: null },
+        },
+        select: {
+          checkInAt: true,
+          workShift: {
+            select: {
+              startTime: true,
+              endTime: true,
+              isOvernight: true,
+              gracePeriodMinutes: true,
+            },
+          },
+        },
+      }),
     ]);
+
+    const contractorIds = staffByContractorGroups
+      .map((g) => g.contractorId)
+      .filter((id): id is string => Boolean(id));
+    const contractorRows =
+      contractorIds.length > 0
+        ? await this.prisma.contractor.findMany({
+            where: { id: { in: contractorIds } },
+            select: { id: true, name: true },
+          })
+        : [];
+    const contractorNameById = new Map(contractorRows.map((c) => [c.id, c.name]));
+    const staffByContractor = staffByContractorGroups
+      .filter((g) => g.contractorId)
+      .map((g) => ({
+        id: g.contractorId!,
+        name: contractorNameById.get(g.contractorId!) ?? '—',
+        count: g._count._all,
+      }));
+
+    const policy = await this.calc.getPolicyOptions();
+    let todayEarly = 0;
+    for (const r of todayRecordsForEarly) {
+      if (!r.workShift || !r.checkInAt) continue;
+      const effective = this.calc.applyLateGraceFloor(r.workShift, policy.lateGraceFloor);
+      if (this.calc.computeEarlyArrivalMinutes(r.checkInAt, effective) > 0) {
+        todayEarly += 1;
+      }
+    }
 
     const unassignedEmployees = Math.max(0, users - assignedUserRows.length);
 
@@ -168,6 +262,13 @@ export class StatsService {
       todayLate,
       todayEvents,
       todayInvalidEvents,
+      contractors,
+      projects,
+      staffByContractor,
+      todayCheckIns,
+      todayCheckOuts,
+      todayOnTime,
+      todayEarly,
     };
   }
 
@@ -386,6 +487,219 @@ export class StatsService {
       weekStart: formatDateOnly(rangeStart),
       weekEnd: formatDateOnly(rangeEndDisplay),
       rows,
+    };
+  }
+
+  /**
+   * Dashboard thống kê: KPI + series theo ngày + breakdown theo NT/DA/NV.
+   * Dùng late/OT đã lưu trên AttendanceRecord; AccessLog cho check-in/out.
+   */
+  async analytics(params: {
+    from: string;
+    to: string;
+    projectId?: string;
+    projectIds?: string[];
+    contractorId?: string;
+    userId?: string;
+  }) {
+    const now = new Date();
+    const from = parseDateOnly(params.from, now);
+    const toBase = parseDateOnly(params.to, now);
+    const toExclusive = new Date(toBase);
+    toExclusive.setUTCDate(toExclusive.getUTCDate() + 1);
+
+    const userFilter: Record<string, unknown> = {
+      isDeleted: false,
+    };
+    if (params.userId) userFilter.id = params.userId;
+    if (params.contractorId) userFilter.contractorId = params.contractorId;
+    if (params.projectId) {
+      userFilter.projectId = params.projectId;
+    } else if (params.projectIds !== undefined) {
+      userFilter.projectId = { in: params.projectIds };
+    }
+
+    const [staffCount, attendance, logs] = await Promise.all([
+      this.prisma.user.count({ where: userFilter }),
+      this.prisma.attendanceRecord.findMany({
+        where: {
+          date: { gte: from, lt: toExclusive },
+          workShiftId: { not: null },
+          user: userFilter,
+        },
+        include: {
+          user: {
+            include: { contractor: true, project: true },
+          },
+        },
+        orderBy: { date: 'asc' },
+      }),
+      this.prisma.accessLog.findMany({
+        where: {
+          eventAt: { gte: from, lt: toExclusive },
+          isValid: true,
+          user: userFilter,
+        },
+        select: {
+          eventAt: true,
+          action: true,
+          userId: true,
+          user: {
+            select: {
+              id: true,
+              fullName: true,
+              employeeCode: true,
+              contractorId: true,
+              projectId: true,
+              contractor: { select: { id: true, name: true } },
+              project: { select: { id: true, name: true } },
+            },
+          },
+        },
+      }),
+    ]);
+
+    const dayMap = new Map<
+      string,
+      { present: number; late: number; otMinutes: number; checkIns: number; checkOuts: number }
+    >();
+    const cursor = new Date(from);
+    while (cursor < toExclusive) {
+      dayMap.set(formatDateOnly(cursor), {
+        present: 0,
+        late: 0,
+        otMinutes: 0,
+        checkIns: 0,
+        checkOuts: 0,
+      });
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
+    }
+
+    let presentDays = 0;
+    let lateCount = 0;
+    let otMinutes = 0;
+    let workedMinutes = 0;
+
+    type BreakKey = string;
+    const breakMap = new Map<BreakKey, { id: string; label: string; presentDays: number; lateCount: number; otMinutes: number }>();
+
+    const breakMode: 'contractor' | 'project' | 'user' | 'none' = params.userId
+      ? 'none'
+      : params.contractorId && params.projectId
+        ? 'user'
+        : params.contractorId
+          ? 'project'
+          : 'contractor';
+
+    function bumpBreak(
+      id: string | null | undefined,
+      label: string | null | undefined,
+      patch: { present?: boolean; late?: boolean; ot?: number },
+    ) {
+      if (breakMode === 'none' || !id) return;
+      const key = id;
+      let row = breakMap.get(key);
+      if (!row) {
+        row = { id, label: label || id, presentDays: 0, lateCount: 0, otMinutes: 0 };
+        breakMap.set(key, row);
+      }
+      if (patch.present) row.presentDays += 1;
+      if (patch.late) row.lateCount += 1;
+      if (patch.ot) row.otMinutes += patch.ot;
+    }
+
+    for (const r of attendance) {
+      const dayKey = formatDateOnly(r.date);
+      const bucket = dayMap.get(dayKey);
+      const isPresent = !!r.checkInAt;
+      const isLate = (r.lateMinutes ?? 0) > 0;
+      const ot = r.otMinutes ?? 0;
+      let worked = 0;
+      if (r.checkInAt && r.checkOutAt) {
+        worked = Math.max(
+          0,
+          Math.round((r.checkOutAt.getTime() - r.checkInAt.getTime()) / 60_000),
+        );
+        worked = Math.min(worked, 24 * 60);
+      }
+
+      if (isPresent) presentDays += 1;
+      if (isLate) lateCount += 1;
+      otMinutes += ot;
+      workedMinutes += worked;
+
+      if (bucket) {
+        if (isPresent) bucket.present += 1;
+        if (isLate) bucket.late += 1;
+        bucket.otMinutes += ot;
+      }
+
+      if (breakMode === 'contractor') {
+        bumpBreak(r.user?.contractorId, r.user?.contractor?.name, {
+          present: isPresent,
+          late: isLate,
+          ot,
+        });
+      } else if (breakMode === 'project') {
+        bumpBreak(r.user?.projectId, r.user?.project?.name, {
+          present: isPresent,
+          late: isLate,
+          ot,
+        });
+      } else if (breakMode === 'user') {
+        bumpBreak(r.userId, r.user?.fullName ?? r.user?.employeeCode, {
+          present: isPresent,
+          late: isLate,
+          ot,
+        });
+      }
+    }
+
+    let checkInCount = 0;
+    let checkOutCount = 0;
+    for (const log of logs) {
+      const dayKey = formatDateOnly(
+        new Date(Date.UTC(log.eventAt.getFullYear(), log.eventAt.getMonth(), log.eventAt.getDate())),
+      );
+      // eventAt is local-ish Date from DB; use VN-safe via UTC parts of the instant's local date
+      const local = log.eventAt;
+      const localKey = `${local.getFullYear()}-${String(local.getMonth() + 1).padStart(2, '0')}-${String(local.getDate()).padStart(2, '0')}`;
+      const bucket = dayMap.get(localKey) ?? dayMap.get(dayKey);
+      if (log.action === 'CHECK_IN') {
+        checkInCount += 1;
+        if (bucket) bucket.checkIns += 1;
+      } else if (log.action === 'CHECK_OUT') {
+        checkOutCount += 1;
+        if (bucket) bucket.checkOuts += 1;
+      }
+    }
+
+    const byDay = Array.from(dayMap.entries()).map(([date, v]) => ({ date, ...v }));
+    const breakdown = Array.from(breakMap.values())
+      .map((b) => ({
+        id: b.id,
+        label: b.label,
+        value: b.presentDays,
+        lateCount: b.lateCount,
+        otMinutes: b.otMinutes,
+      }))
+      .sort((a, b) => b.value - a.value);
+
+    return {
+      from: formatDateOnly(from),
+      to: formatDateOnly(toBase),
+      breakMode,
+      summary: {
+        staffCount,
+        presentDays,
+        lateCount,
+        otMinutes,
+        workedMinutes,
+        checkInCount,
+        checkOutCount,
+      },
+      byDay,
+      breakdown,
     };
   }
 }

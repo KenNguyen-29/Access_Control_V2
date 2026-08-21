@@ -40,4 +40,12 @@ export class EmployeeShiftsQueryDto {
   @IsOptional()
   @IsIn(['ALL', 'ACTIVE', 'EXPIRING_SOON', 'ENDED'])
   status?: 'ALL' | 'ACTIVE' | 'EXPIRING_SOON' | 'ENDED';
+
+  @ApiPropertyOptional({
+    enum: ['FIXED', 'RANGED'],
+    description: 'Assignment type filter',
+  })
+  @IsOptional()
+  @IsIn(['FIXED', 'RANGED'])
+  assignmentType?: 'FIXED' | 'RANGED';
 }

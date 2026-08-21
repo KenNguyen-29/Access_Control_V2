@@ -44,16 +44,18 @@ export default function AccessControlPage() {
   return (
     <div className="flex h-full flex-col overflow-hidden bg-background font-body text-foreground">
       <div className="shrink-0 border-b border-border bg-card px-6 pb-4 pt-6 lg:px-8">
-        <span className="mb-2 inline-block text-[10px] font-bold uppercase tracking-[0.2em] text-muted-foreground">
-          Phân quyền
-        </span>
-        <h1 className="font-heading text-2xl font-bold tracking-tight text-foreground md:text-3xl">
-          Kiểm soát truy cập
-        </h1>
-        <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-          Quản lý quyền vào khu vực theo nhân viên hoặc theo nhóm khu vực, rồi đồng bộ xuống thiết bị.
-        </p>
-        <div className="mt-4">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <span className="mb-2 inline-block text-[10px] font-bold uppercase tracking-[0.2em] text-muted-foreground">
+              Phân quyền
+            </span>
+            <h1 className="font-heading text-2xl font-bold tracking-tight text-foreground md:text-3xl">
+              Kiểm soát truy cập
+            </h1>
+            <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+              Quản lý quyền vào khu vực theo nhân viên hoặc theo nhóm khu vực, rồi đồng bộ xuống thiết bị.
+            </p>
+          </div>
           <MovedSettingsLinks
             sectionId="access"
             excludePath="/access-control"

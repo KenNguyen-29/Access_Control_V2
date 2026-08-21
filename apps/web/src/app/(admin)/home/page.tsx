@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import type { LucideIcon } from 'lucide-react';
 import {
@@ -19,7 +19,12 @@ import {
   Settings,
   AlertTriangle,
   Building2,
+  TrendingUp,
+  LogIn,
+  LogOut,
+  CheckCircle2,
 } from 'lucide-react';
+import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts';
 import { cn } from '@/lib/utils';
 import {
   getAccessLogs,
@@ -28,6 +33,17 @@ import {
   type StatsOverview,
 } from '@/lib/api';
 import { usePermissions } from '@/hooks/usePermissions';
+
+const PIE_COLORS = [
+  'hsl(var(--primary))',
+  '#0284c7',
+  '#059669',
+  '#ea580c',
+  '#7c3aed',
+  '#db2777',
+  '#0d9488',
+  '#ca8a04',
+];
 
 type NavItem = {
   icon: LucideIcon;
@@ -68,6 +84,7 @@ const configs: NavItem[] = [
   { icon: Clock, label: 'Ca làm', path: '/shifts', description: 'Cấu hình & gán ca' },
   { icon: LayoutGrid, label: 'Thiết bị', path: '/devices', description: 'Akuvox & Camera' },
   { icon: Shield, label: 'Kiểm soát ra vào', path: '/access-control', description: 'Phân quyền khu vực' },
+  { icon: TrendingUp, label: 'Thống kê', path: '/analytics', description: 'KPI, biểu đồ ngày công & phân bổ' },
   { icon: Settings, label: 'Cài đặt', path: '/settings', description: 'Hệ thống & cấu hình' },
   {
     icon: ShieldCheck,
@@ -145,6 +162,17 @@ export default function HomePage() {
     { icon: ShieldCheck, label: 'Sự kiện hôm nay', value: stats?.todayEvents ?? 0, hint: `${stats?.todayInvalidEvents ?? 0} cảnh báo` },
   ];
 
+  const contractorPie = useMemo(() => {
+    const rows = stats?.staffByContractor ?? [];
+    const total = rows.reduce((n, r) => n + r.count, 0) || 1;
+    return rows.map((r, idx) => ({
+      name: r.name,
+      value: r.count,
+      percent: Math.round((r.count / total) * 100),
+      color: PIE_COLORS[idx % PIE_COLORS.length]!,
+    }));
+  }, [stats?.staffByContractor]);
+
   return (
     <div className="flex h-full flex-col overflow-hidden bg-neutral font-body text-foreground">
       <div className="flex-1 overflow-y-auto px-6 py-8 lg:px-8">
@@ -211,6 +239,120 @@ export default function HomePage() {
               </div>
             ))}
           </div>
+
+          {/* Thống kê tóm tắt */}
+          <section className="rounded-sm border border-border bg-surface p-4 lg:p-5">
+            <div className="mb-3 flex items-center gap-3">
+              <h2 className="whitespace-nowrap text-[11px] font-semibold uppercase tracking-[0.15em] text-foreground">
+                Thống kê tóm tắt
+              </h2>
+              <div className="h-px flex-1 bg-border" />
+              {canAccess('/analytics') && (
+                <Link
+                  href="/analytics"
+                  className="inline-flex shrink-0 items-center gap-0.5 text-xs font-semibold text-foreground hover:underline"
+                >
+                  Xem thống kê
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </Link>
+              )}
+            </div>
+
+            <p className="mb-3 text-label-caps font-semibold uppercase tracking-[0.15em] text-foreground">
+              Chấm công hôm nay
+            </p>
+            <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+              {[
+                { icon: LogIn, label: 'Check-in', value: stats?.todayCheckIns ?? 0, tone: '' },
+                { icon: LogOut, label: 'Check-out', value: stats?.todayCheckOuts ?? 0, tone: '' },
+                {
+                  icon: CheckCircle2,
+                  label: 'Đúng giờ',
+                  value: stats?.todayOnTime ?? 0,
+                  tone: 'text-emerald-600',
+                },
+                {
+                  icon: Clock,
+                  label: 'Đi sớm',
+                  value: stats?.todayEarly ?? 0,
+                  tone: 'text-sky-600',
+                },
+                {
+                  icon: AlertTriangle,
+                  label: 'Đi muộn',
+                  value: stats?.todayLate ?? 0,
+                  tone: 'text-orange-600',
+                },
+              ].map((s) => (
+                <div
+                  key={s.label}
+                  className="rounded-sm border border-border px-3 py-3 text-center"
+                >
+                  <s.icon className={cn('mx-auto mb-1.5 h-4 w-4', s.tone || 'text-foreground')} />
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                    {s.label}
+                  </p>
+                  <p className={cn('font-heading text-lg font-bold', s.tone || 'text-foreground')}>
+                    {s.value.toLocaleString('vi-VN')}
+                  </p>
+                </div>
+              ))}
+            </div>
+
+            <p className="mb-3 text-label-caps font-semibold uppercase tracking-[0.15em] text-foreground">
+              Nhân sự theo nhà thầu
+            </p>
+            {contractorPie.length === 0 ? (
+              <p className="text-xs text-muted-foreground">Chưa có nhân sự gắn nhà thầu</p>
+            ) : (
+              <div className="flex items-center gap-2">
+                <div className="h-[72px] w-[72px] shrink-0">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={contractorPie}
+                        dataKey="value"
+                        nameKey="name"
+                        cx="50%"
+                        cy="50%"
+                        outerRadius={32}
+                        innerRadius={16}
+                        paddingAngle={1}
+                      >
+                        {contractorPie.map((row) => (
+                          <Cell key={row.name} fill={row.color} />
+                        ))}
+                      </Pie>
+                      <Tooltip
+                        formatter={(value, _name, item) => [
+                          `${value} NV (${item?.payload?.percent ?? 0}%)`,
+                          String(item?.payload?.name ?? ''),
+                        ]}
+                      />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+                <ul className="min-w-0 flex-1 columns-2 gap-x-3 text-[10px] leading-snug sm:columns-3">
+                  {contractorPie.map((row) => (
+                    <li
+                      key={row.name}
+                      className="mb-0.5 flex break-inside-avoid items-center gap-1"
+                    >
+                      <span
+                        className="h-1.5 w-1.5 shrink-0 rounded-sm"
+                        style={{ backgroundColor: row.color }}
+                        aria-hidden
+                      />
+                      <span className="min-w-0 flex-1 truncate text-foreground" title={row.name}>
+                        {row.name}
+                      </span>
+                      <span className="shrink-0 font-mono text-muted-foreground">{row.value}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </section>
 
           {/* Main grid */}
           <div className="grid grid-cols-1 gap-8 lg:grid-cols-4">

@@ -15,6 +15,7 @@ import {
   LogOut,
   Building2,
   Siren,
+  TrendingUp,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
@@ -27,6 +28,7 @@ const tabs = [
   { href: '/shifts', id: 'shifts', icon: Clock, label: 'Ca làm' },
   { href: '/devices', id: 'devices', icon: LayoutGrid, label: 'Thiết bị' },
   { href: '/reports', id: 'reports', icon: CalendarClock, label: 'Chấm công' },
+  { href: '/analytics', id: 'analytics', icon: TrendingUp, label: 'Thống kê' },
   { href: '/reports/contractors', id: 'reports-contractors', icon: HardHat, label: 'BC nhà thầu' },
   { href: '/projects', id: 'projects', icon: Building2, label: 'Dự án' },
   { href: '/muster', id: 'muster', icon: Siren, label: 'Sơ tán' },

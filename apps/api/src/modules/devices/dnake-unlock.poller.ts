@@ -24,7 +24,8 @@ export class DnakeUnlockPoller {
     private readonly events: AkuvoxEventService,
     private readonly config: ConfigService,
   ) {
-    this.enabled = this.config.get<string>('DNAKE_POLL_ENABLED', 'true') === 'true';
+    this.enabled = this.config.get<string>('DNAKE_POLL_ENABLED', 'false') === 'true';
+    this.logger.log(`DNAKE unlock poll ${this.enabled ? 'enabled' : 'disabled'}`);
   }
 
   @Interval(10_000)

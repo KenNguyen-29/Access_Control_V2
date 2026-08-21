@@ -101,7 +101,12 @@ export class DnakeService {
     init?: RequestInit & { extraQuery?: Record<string, string> },
   ): Promise<{ ok: boolean; status: number; data: unknown }> {
     if (this.mockMode) {
-      this.logger.log(`[MOCK] ${init?.method || 'GET'} ${path} device=${device.code}`);
+      // Unlock poll runs every 10s × N devices — don't spam INFO.
+      if (path.includes('/logs/unlock')) {
+        this.logger.debug(`[MOCK] ${init?.method || 'GET'} ${path} device=${device.code}`);
+      } else {
+        this.logger.log(`[MOCK] ${init?.method || 'GET'} ${path} device=${device.code}`);
+      }
       return { ok: true, status: 200, data: { code: 0, message: 'OK', data: { mock: true } } };
     }
 

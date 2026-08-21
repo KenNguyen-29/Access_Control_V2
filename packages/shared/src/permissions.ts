@@ -15,6 +15,7 @@ const ROUTE_RULES: Array<{ prefix: string; roles: AppRole[] }> = [
   { prefix: '/muster', roles: ['ADMIN', 'SECURITY'] },
   { prefix: '/dashboard', roles: ['ADMIN', 'STAFF', 'SECURITY'] },
   { prefix: '/reports', roles: ['ADMIN', 'STAFF', 'HR'] },
+  { prefix: '/analytics', roles: ['ADMIN', 'STAFF', 'HR'] },
   { prefix: '/projects', roles: ['ADMIN', 'STAFF', 'HR'] },
   { prefix: '/users', roles: ['ADMIN', 'STAFF', 'HR'] },
   { prefix: '/home', roles: ['ADMIN', 'HR', 'SECURITY', 'TECHNICIAN', 'STAFF'] },

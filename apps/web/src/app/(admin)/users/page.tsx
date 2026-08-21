@@ -636,6 +636,12 @@ export default function UsersPage() {
       actions={
         writeEnabled ? (
           <>
+            <MovedSettingsLinks
+              sectionId="hr"
+              excludePath="/users"
+              title="Liên kết nhanh"
+              description="Phòng ban, dự án & nhà thầu liên quan nhân sự."
+            />
             <Button
               variant="outline"
               size="sm"
@@ -670,10 +676,18 @@ export default function UsersPage() {
             </Button>
           </>
         ) : (
-          <Button variant="outline" size="sm" onClick={() => load()} disabled={loading}>
-            <RefreshCw className={loading ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
-            Làm mới
-          </Button>
+          <>
+            <MovedSettingsLinks
+              sectionId="hr"
+              excludePath="/users"
+              title="Liên kết nhanh"
+              description="Phòng ban, dự án & nhà thầu liên quan nhân sự."
+            />
+            <Button variant="outline" size="sm" onClick={() => load()} disabled={loading}>
+              <RefreshCw className={loading ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
+              Làm mới
+            </Button>
+          </>
         )
       }
     >
@@ -709,12 +723,6 @@ export default function UsersPage() {
           </Button>
         </div>
       )}
-      <MovedSettingsLinks
-        sectionId="hr"
-        excludePath="/users"
-        title="Liên kết nhanh"
-        description="Phòng ban, dự án & nhà thầu liên quan nhân sự."
-      />
       <DesignCard title="Tìm kiếm & bộ lọc">
         <div className="grid grid-cols-1 items-end gap-4 sm:grid-cols-2 lg:grid-cols-[minmax(0,240px)_minmax(180px,1fr)_minmax(180px,1fr)_minmax(180px,1fr)_auto]">
           <div className="min-w-0">

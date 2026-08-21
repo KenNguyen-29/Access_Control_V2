@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Eye } from 'lucide-react';
 import type { CheckinEvent } from '@acv2/shared';
 import {
@@ -12,7 +13,6 @@ import {
 } from '@/lib/api';
 import { Select } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
-import { AccessLogDetailDialog } from '@/components/attendance/AccessLogDetailDialog';
 import { cn } from '@/lib/utils';
 
 const ACTION_OPTIONS = [
@@ -38,6 +38,27 @@ function formatEventAt(iso: string): string {
   const year = d.getFullYear();
   const time = d.toLocaleTimeString('vi-VN');
   return `${day}/${month}/${year} · ${time}`;
+}
+
+function dateOnlyFromIso(iso: string): string {
+  const d = new Date(iso);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function reportsDetailHref(log: AccessLog): string {
+  const day = dateOnlyFromIso(log.eventAt);
+  const q = new URLSearchParams({
+    tab: 'detail',
+    from: day,
+    to: day,
+  });
+  const search =
+    log.user?.employeeCode?.trim() || log.user?.fullName?.trim() || '';
+  if (search) q.set('search', search);
+  return `/reports?${q.toString()}`;
 }
 
 function checkinEventToAccessLog(event: CheckinEvent): AccessLog {
@@ -85,6 +106,7 @@ type Props = {
 };
 
 export default function MiniAccessLog({ lastEvent }: Props) {
+  const router = useRouter();
   const [logs, setLogs] = useState<AccessLog[]>([]);
   const [devices, setDevices] = useState<Device[]>([]);
   const [zones, setZones] = useState<Array<{ id: string; name: string }>>([]);
@@ -93,7 +115,6 @@ export default function MiniAccessLog({ lastEvent }: Props) {
   const [action, setAction] = useState('');
   const [validity, setValidity] = useState('');
   const [loading, setLoading] = useState(true);
-  const [selectedLog, setSelectedLog] = useState<AccessLog | null>(null);
   const lastHandledEventKey = useRef<string | null>(null);
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -174,15 +195,6 @@ export default function MiniAccessLog({ lastEvent }: Props) {
     }
     loadDebounced();
   }, [lastEvent, zoneId, deviceId, action, validity, loadDebounced]);
-
-  const detailExtras =
-    selectedLog && lastEvent?.id === selectedLog.id
-      ? {
-          snapshotUrl: lastEvent.snapshotUrl,
-          faceImageUrl: lastEvent.faceImageUrl,
-          departmentName: lastEvent.departmentName,
-        }
-      : null;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -275,7 +287,7 @@ export default function MiniAccessLog({ lastEvent }: Props) {
               variant="outline"
               size="sm"
               className="h-7 shrink-0 gap-1 px-2 text-xs"
-              onClick={() => setSelectedLog(log)}
+              onClick={() => router.push(reportsDetailHref(log))}
             >
               <Eye className="h-3.5 w-3.5" />
               Chi tiết
@@ -283,13 +295,6 @@ export default function MiniAccessLog({ lastEvent }: Props) {
           </div>
         ))}
       </div>
-
-      <AccessLogDetailDialog
-        open={!!selectedLog}
-        log={selectedLog}
-        extras={detailExtras}
-        onClose={() => setSelectedLog(null)}
-      />
     </div>
   );
 }

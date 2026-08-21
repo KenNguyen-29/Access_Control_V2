@@ -11,6 +11,7 @@ import {
   RefreshCw,
   StopCircle,
   AlertTriangle,
+  CircleHelp,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { TablePager } from '@/components/ui/table-pager';
@@ -19,8 +20,8 @@ import { Select } from '@/components/ui/select';
 import { Dialog, ConfirmDialog } from '@/components/ui/dialog';
 import { FieldError, RequiredMark } from '@/components/ui/field-error';
 import { Badge } from '@/components/ui/badge';
-import { Collapsible } from '@/components/ui/collapsible';
 import { QueryBoundary } from '@/components/ui/query-states';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { DesignCard, PageShell } from '@/components/design/PageShell';
 import { ShiftAssignTree } from '@/components/shifts/ShiftAssignTree';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
@@ -100,6 +101,7 @@ function daysUntilEnd(a: EmployeeShift): number | null {
 
 const EXPIRING_SOON_DAYS = 7;
 const ASSIGN_PAGE_SIZE = 10;
+const SHIFTS_PAGE_SIZE = 10;
 
 /** RANGED + còn hạn + còn ≤ 7 ngày. */
 function isExpiringSoon(a: EmployeeShift): boolean {
@@ -118,17 +120,28 @@ function assignmentStatus(a: EmployeeShift): AssignmentStatus {
 }
 
 type AssignmentFilter = 'ALL' | 'ACTIVE' | 'EXPIRING_SOON' | 'ENDED' | 'UNASSIGNED';
+type ShiftDefaultFilter = 'ALL' | 'DEFAULT' | 'OTHER';
+type ShiftOvernightFilter = 'ALL' | 'OVERNIGHT' | 'DAY';
+type ShiftsPanel = 'list' | 'assign';
 
 export default function ShiftsPage() {
   const queryClient = useQueryClient();
+  const [panel, setPanel] = useState<ShiftsPanel>('list');
   const [search, setSearch] = useState('');
   const debouncedSearch = useDebouncedValue(search, 300);
+  const [shiftSearch, setShiftSearch] = useState('');
+  const debouncedShiftSearch = useDebouncedValue(shiftSearch, 300);
+  const [shiftDefaultFilter, setShiftDefaultFilter] = useState<ShiftDefaultFilter>('ALL');
+  const [shiftOvernightFilter, setShiftOvernightFilter] = useState<ShiftOvernightFilter>('ALL');
   const [assignmentFilter, setAssignmentFilter] = useState<AssignmentFilter>('ALL');
+  const [assignmentTypeFilter, setAssignmentTypeFilter] = useState<'' | EmployeeShiftAssignType>('');
   const [workShiftFilter, setWorkShiftFilter] = useState('');
   const [listPage, setListPage] = useState(1);
+  const [shiftsPage, setShiftsPage] = useState(1);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [assignOpen, setAssignOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   /** When set, dialog is single-employee assign (no multi-select list). */
   const [assignTargetUser, setAssignTargetUser] = useState<User | null>(null);
   const [editing, setEditing] = useState<WorkShift | null>(null);
@@ -168,6 +181,7 @@ export default function ShiftsPage() {
       workShiftId: workShiftFilter || undefined,
       status: assignmentListStatus,
       mode: assignmentFilter,
+      assignmentType: assignmentTypeFilter || undefined,
     }),
     queryFn: () =>
       getEmployeeShifts({
@@ -176,8 +190,9 @@ export default function ShiftsPage() {
         search: debouncedSearch.trim() || undefined,
         workShiftId: workShiftFilter || undefined,
         status: assignmentListStatus,
+        assignmentType: assignmentTypeFilter || undefined,
       }),
-    enabled: assignmentFilter !== 'UNASSIGNED',
+    enabled: panel === 'assign' && assignmentFilter !== 'UNASSIGNED',
   });
 
   const unassignedQuery = useQuery({
@@ -195,7 +210,7 @@ export default function ShiftsPage() {
         search: debouncedSearch.trim() || undefined,
         withoutActiveShift: true,
       }),
-    enabled: assignmentFilter === 'UNASSIGNED',
+    enabled: panel === 'assign' && assignmentFilter === 'UNASSIGNED',
   });
 
   const overviewQuery = useQuery({
@@ -204,6 +219,34 @@ export default function ShiftsPage() {
   });
 
   const shifts = useMemo(() => shiftsQuery.data ?? [], [shiftsQuery.data]);
+  const filteredShifts = useMemo(() => {
+    const q = debouncedShiftSearch.trim().toLowerCase();
+    return shifts.filter((s) => {
+      if (q) {
+        const hay = `${s.name} ${s.code}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      if (shiftDefaultFilter === 'DEFAULT' && !s.isDefault) return false;
+      if (shiftDefaultFilter === 'OTHER' && s.isDefault) return false;
+      if (shiftOvernightFilter === 'OVERNIGHT' && !s.isOvernight) return false;
+      if (shiftOvernightFilter === 'DAY' && s.isOvernight) return false;
+      return true;
+    });
+  }, [shifts, debouncedShiftSearch, shiftDefaultFilter, shiftOvernightFilter]);
+
+  const shiftsTotalPages = Math.max(1, Math.ceil(filteredShifts.length / SHIFTS_PAGE_SIZE));
+  const shiftsCurrentPage = Math.min(shiftsPage, shiftsTotalPages);
+  const pagedShifts = useMemo(
+    () =>
+      filteredShifts.slice(
+        (shiftsCurrentPage - 1) * SHIFTS_PAGE_SIZE,
+        shiftsCurrentPage * SHIFTS_PAGE_SIZE,
+      ),
+    [filteredShifts, shiftsCurrentPage],
+  );
+  useEffect(() => {
+    setShiftsPage(1);
+  }, [debouncedShiftSearch, shiftDefaultFilter, shiftOvernightFilter, shifts.length]);
   const pagedAssignments = assignmentsQuery.data?.items ?? [];
   const pagedUnassigned = unassignedQuery.data?.items ?? [];
   const listTotal =
@@ -220,10 +263,15 @@ export default function ShiftsPage() {
 
   const loading =
     shiftsQuery.isLoading ||
-    (assignmentFilter === 'UNASSIGNED' ? unassignedQuery.isLoading : assignmentsQuery.isLoading);
+    (panel === 'assign' &&
+      (assignmentFilter === 'UNASSIGNED' ? unassignedQuery.isLoading : assignmentsQuery.isLoading));
   const queryError =
     shiftsQuery.error ??
-    (assignmentFilter === 'UNASSIGNED' ? unassignedQuery.error : assignmentsQuery.error);
+    (panel === 'assign'
+      ? assignmentFilter === 'UNASSIGNED'
+        ? unassignedQuery.error
+        : assignmentsQuery.error
+      : null);
   const listError =
     queryError instanceof ApiError
       ? queryError.message
@@ -245,7 +293,7 @@ export default function ShiftsPage() {
 
   useEffect(() => {
     setListPage(1);
-  }, [debouncedSearch, assignmentFilter, workShiftFilter]);
+  }, [debouncedSearch, assignmentFilter, workShiftFilter, assignmentTypeFilter]);
 
   function toggleUser(id: string) {
     setSelectedUserIds((prev) => {
@@ -457,17 +505,24 @@ export default function ShiftsPage() {
       subtitle="Tạo mẫu ca, đặt ca mặc định và phân công nhân viên theo từng ca."
       actions={
         <>
+          <Button variant="outline" size="sm" type="button" onClick={() => setHelpOpen(true)}>
+            <CircleHelp className="h-4 w-4" />
+            Hướng dẫn
+          </Button>
           <Button variant="outline" size="sm" onClick={() => load()} disabled={loading}>
             <RefreshCw className={loading ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
             Làm mới
           </Button>
-          <Button variant="outline" size="sm" onClick={openAssign}>
-            Gán ca
-          </Button>
-          <Button variant="accent" size="sm" onClick={openCreate}>
-            <Plus className="h-4 w-4" />
-            Thêm ca
-          </Button>
+          {panel === 'assign' ? (
+            <Button variant="outline" size="sm" onClick={openAssign}>
+              Gán ca
+            </Button>
+          ) : (
+            <Button variant="accent" size="sm" onClick={openCreate}>
+              <Plus className="h-4 w-4" />
+              Thêm ca
+            </Button>
+          )}
         </>
       }
     >
@@ -482,331 +537,432 @@ export default function ShiftsPage() {
         </p>
       )}
 
-      <DesignCard title="Hướng dẫn sử dụng">
-        <Collapsible title="Mở rộng">
-          <div className="space-y-2">
-            <p>
-              <strong>Bước 1:</strong> Tạo các mẫu ca (giờ vào/ra, giờ nghỉ).
-            </p>
-            <p>
-              <strong>Bước 2:</strong> Dùng &quot;Gán ca&quot; — chọn <em>Cố định</em> (đến khi kết thúc)
-              hoặc <em>Có thời hạn</em> (Từ–Đến ngày). <strong>Nhân viên phải được gán ca</strong> thì
-              quét cửa mới được tính chấm công.
-            </p>
-            <p>
-              <strong>Bước 3:</strong> Theo dõi bằng bộ lọc trạng thái — <em>Chưa gán ca</em>,{' '}
-              <em>Sắp kết thúc</em> (≤ {EXPIRING_SOON_DAYS} ngày), <em>Đã kết thúc</em>.
-            </p>
-          </div>
-        </Collapsible>
-      </DesignCard>
+      <Tabs value={panel} onValueChange={(v) => setPanel(v as ShiftsPanel)}>
+        <TabsList className="flex w-full max-w-md">
+          <TabsTrigger value="list">Danh sách ca</TabsTrigger>
+          <TabsTrigger value="assign">Phân ca nhân viên</TabsTrigger>
+        </TabsList>
 
-      <DesignCard title={`Danh sách ca (${shifts.length})`} description="Các mẫu ca làm việc trong hệ thống.">
-        <QueryBoundary
-          isLoading={loading}
-          error={listError}
-          isEmpty={shifts.length === 0}
-          onRetry={() => load()}
-          emptyTitle="Chưa có ca làm việc"
-          emptyDescription="Tạo mẫu ca đầu tiên để bắt đầu."
-        >
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border bg-muted/30 text-left">
-                  <th className="p-2 font-semibold">Tên ca</th>
-                  <th className="p-2 font-semibold">Mã</th>
-                  <th className="p-2 font-semibold">Giờ làm</th>
-                  <th className="p-2 font-semibold">Giờ nghỉ</th>
-                  <th className="p-2 font-semibold">Hệ số lương</th>
-                  <th className="p-2 font-semibold">Trạng thái</th>
-                  <th className="p-2 text-right font-semibold">Thao tác</th>
-                </tr>
-              </thead>
-              <tbody>
-                {shifts.map((s) => (
-                  <tr key={s.id} className="border-t border-border hover:bg-muted/20">
-                    <td className="p-2 font-semibold">{s.name}</td>
-                    <td className="p-2 font-mono text-xs text-muted-foreground">{s.code}</td>
-                    <td className="p-2">
-                      {s.startTime} – {s.endTime}
-                      {s.isOvernight && (
-                        <Badge variant="outline" className="ml-2 text-[10px]">
-                          Qua đêm
-                        </Badge>
-                      )}
-                    </td>
-                    <td className="p-2 text-xs text-muted-foreground">{s.breakMinutes}p</td>
-                    <td className="p-2">
-                      <Badge variant="outline" className="text-xs font-medium">
-                        ×{(s.salaryCoefficient ?? 1).toLocaleString('vi-VN')}
-                      </Badge>
-                    </td>
-                    <td className="p-2">
-                      {s.isDefault ? (
-                        <Badge variant="secondary" className="bg-emerald-100 text-xs font-medium text-emerald-700">
-                          Mặc định
-                        </Badge>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">—</span>
-                      )}
-                    </td>
-                    <td className="p-2">
-                      <div className="flex justify-end gap-1">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8"
-                          title="Đặt làm ca mặc định"
-                          onClick={() => void onDefault(s)}
-                        >
-                          <Star className={s.isDefault ? 'h-4 w-4 fill-amber-400 text-amber-400' : 'h-4 w-4'} />
-                        </Button>
-                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(s)}>
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8"
-                          onClick={() => setDeleteTarget(s)}
-                        >
-                          <Trash2 className="h-4 w-4 text-destructive" />
-                        </Button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </QueryBoundary>
-      </DesignCard>
-
-      <DesignCard
-        title={`Phân ca nhân viên (${listTotal})`}
-        description="Theo dõi trạng thái gán ca: chưa gán, đang hiệu lực, sắp hết hạn, đã kết thúc."
-      >
-        {(overviewQuery.data?.unassignedEmployees ?? 0) > 0 && (
-          <div className="mb-4 flex flex-col gap-3 rounded-sm border border-amber-300 bg-amber-50 px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex items-start gap-2 text-sm text-amber-900">
-              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />
-              <p>
-                Có{' '}
-                <strong>{overviewQuery.data!.unassignedEmployees.toLocaleString('vi-VN')}</strong>{' '}
-                nhân viên chưa gán ca — quét cửa sẽ không được tính chấm công.
-              </p>
+        <TabsContent value="list" className="mt-4 space-y-4">
+          <DesignCard title="Tìm kiếm & bộ lọc">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+              <div className="relative max-w-md flex-1">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  placeholder="Tìm theo tên hoặc mã ca..."
+                  className="input-design h-10 pl-10"
+                  value={shiftSearch}
+                  onChange={(e) => setShiftSearch(e.target.value)}
+                />
+              </div>
+              <Select
+                value={shiftDefaultFilter}
+                onChange={(e) => setShiftDefaultFilter(e.target.value as ShiftDefaultFilter)}
+                className="h-10 w-full sm:w-44"
+              >
+                <option value="ALL">Tất cả trạng thái</option>
+                <option value="DEFAULT">Ca mặc định</option>
+                <option value="OTHER">Không mặc định</option>
+              </Select>
+              <Select
+                value={shiftOvernightFilter}
+                onChange={(e) => setShiftOvernightFilter(e.target.value as ShiftOvernightFilter)}
+                className="h-10 w-full sm:w-44"
+              >
+                <option value="ALL">Tất cả loại giờ</option>
+                <option value="DAY">Trong ngày</option>
+                <option value="OVERNIGHT">Qua đêm</option>
+              </Select>
             </div>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="shrink-0 border-amber-400 bg-white text-amber-900 hover:bg-amber-100"
-              onClick={() => {
-                setAssignmentFilter('UNASSIGNED');
-                setWorkShiftFilter('');
-                setListPage(1);
-              }}
-            >
-              Xem danh sách
-            </Button>
-          </div>
-        )}
-        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center">
-          <div className="relative max-w-md flex-1">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              placeholder="Tìm nhân viên hoặc tên ca..."
-              className="input-design h-10 pl-10"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-          </div>
-          <Select
-            value={workShiftFilter}
-            onChange={(e) => setWorkShiftFilter(e.target.value)}
-            className="h-10 w-full sm:w-48"
-            disabled={assignmentFilter === 'UNASSIGNED'}
-          >
-            <option value="">Tất cả ca</option>
-            {shifts.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </Select>
-          <Select
-            value={assignmentFilter}
-            onChange={(e) => setAssignmentFilter(e.target.value as AssignmentFilter)}
-            className="h-10 w-full sm:w-52"
-          >
-            <option value="ALL">Tất cả trạng thái</option>
-            <option value="ACTIVE">Đang hiệu lực</option>
-            <option value="EXPIRING_SOON">Sắp kết thúc</option>
-            <option value="ENDED">Đã kết thúc</option>
-            <option value="UNASSIGNED">Chưa gán ca</option>
-          </Select>
-        </div>
+          </DesignCard>
 
-        <QueryBoundary
-          isLoading={loading}
-          isEmpty={listTotal === 0}
-          emptyTitle={
-            assignmentFilter === 'UNASSIGNED'
-              ? 'Không có nhân viên chưa gán ca'
-              : 'Không có phân ca phù hợp'
-          }
-          emptyDescription={
-            assignmentFilter === 'UNASSIGNED'
-              ? 'Tất cả nhân viên đã được gán ca đang hiệu lực.'
-              : 'Thử đổi bộ lọc hoặc dùng nút Gán ca để phân công nhân viên.'
-          }
-        >
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border bg-muted/30 text-left">
-                  <th className="p-2 font-semibold">Nhân viên</th>
-                  <th className="p-2 font-semibold">Ca</th>
-                  <th className="p-2 font-semibold">Kiểu</th>
-                  <th className="p-2 font-semibold">Từ ngày</th>
-                  <th className="p-2 font-semibold">Đến ngày</th>
-                  <th className="p-2 font-semibold">Trạng thái</th>
-                  <th className="p-2 text-right font-semibold">Thao tác</th>
-                </tr>
-              </thead>
-              <tbody>
-                {assignmentFilter === 'UNASSIGNED'
-                  ? pagedUnassigned.map((u) => (
-                      <tr key={u.id} className="border-t border-border hover:bg-muted/20">
+          <DesignCard
+            title={`Danh sách ca (${filteredShifts.length})`}
+            description="Các mẫu ca làm việc trong hệ thống."
+            actions={
+              <Button variant="accent" size="sm" onClick={openCreate}>
+                <Plus className="h-4 w-4" />
+                Thêm ca
+              </Button>
+            }
+          >
+            <QueryBoundary
+              isLoading={shiftsQuery.isLoading}
+              error={
+                shiftsQuery.error instanceof ApiError
+                  ? shiftsQuery.error.message
+                  : shiftsQuery.error
+                    ? 'Không tải được ca làm việc'
+                    : null
+              }
+              isEmpty={filteredShifts.length === 0}
+              onRetry={() => load()}
+              emptyTitle={shifts.length === 0 ? 'Chưa có ca làm việc' : 'Không có ca phù hợp'}
+              emptyDescription={
+                shifts.length === 0
+                  ? 'Tạo mẫu ca đầu tiên để bắt đầu.'
+                  : 'Thử đổi từ khóa hoặc bộ lọc.'
+              }
+            >
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border bg-muted/30 text-left">
+                      <th className="p-2 font-semibold">Tên ca</th>
+                      <th className="p-2 font-semibold">Mã</th>
+                      <th className="p-2 font-semibold">Giờ làm</th>
+                      <th className="p-2 font-semibold">Giờ nghỉ</th>
+                      <th className="p-2 font-semibold">Hệ số lương</th>
+                      <th className="p-2 font-semibold">Trạng thái</th>
+                      <th className="p-2 text-right font-semibold">Thao tác</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pagedShifts.map((s) => (
+                      <tr key={s.id} className="border-t border-border hover:bg-muted/20">
+                        <td className="p-2 font-semibold">{s.name}</td>
+                        <td className="p-2 font-mono text-xs text-muted-foreground">{s.code}</td>
                         <td className="p-2">
-                          <span className="font-semibold">{u.fullName}</span>
-                          {u.employeeCode && (
-                            <span className="ml-1 font-mono text-xs text-muted-foreground">
-                              ({u.employeeCode})
-                            </span>
+                          {s.startTime} – {s.endTime}
+                          {s.isOvernight && (
+                            <Badge variant="outline" className="ml-2 text-[10px]">
+                              Qua đêm
+                            </Badge>
                           )}
                         </td>
-                        <td className="p-2 text-xs text-muted-foreground">—</td>
-                        <td className="p-2 text-xs text-muted-foreground">—</td>
-                        <td className="p-2 text-xs text-muted-foreground">—</td>
-                        <td className="p-2 text-xs text-muted-foreground">—</td>
+                        <td className="p-2 text-xs text-muted-foreground">{s.breakMinutes}p</td>
                         <td className="p-2">
-                          <Badge
-                            variant="outline"
-                            className="border-amber-300 bg-amber-50 text-xs font-normal text-amber-800"
-                          >
-                            Chưa gán ca
+                          <Badge variant="outline" className="text-xs font-medium">
+                            ×{(s.salaryCoefficient ?? 1).toLocaleString('vi-VN')}
                           </Badge>
                         </td>
-                        <td className="p-2 text-right">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-8"
-                            onClick={() => openAssignForUser(u)}
-                          >
-                            Gán ca
-                          </Button>
+                        <td className="p-2">
+                          {s.isDefault ? (
+                            <Badge
+                              variant="secondary"
+                              className="bg-emerald-100 text-xs font-medium text-emerald-700"
+                            >
+                              Mặc định
+                            </Badge>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">—</span>
+                          )}
+                        </td>
+                        <td className="p-2">
+                          <div className="flex justify-end gap-1">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8"
+                              title="Đặt làm ca mặc định"
+                              onClick={() => void onDefault(s)}
+                            >
+                              <Star
+                                className={
+                                  s.isDefault
+                                    ? 'h-4 w-4 fill-amber-400 text-amber-400'
+                                    : 'h-4 w-4'
+                                }
+                              />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8"
+                              onClick={() => openEdit(s)}
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8"
+                              onClick={() => setDeleteTarget(s)}
+                            >
+                              <Trash2 className="h-4 w-4 text-destructive" />
+                            </Button>
+                          </div>
                         </td>
                       </tr>
-                    ))
-                  : pagedAssignments.map((a) => {
-                      const status = assignmentStatus(a);
-                      const daysLeft = daysUntilEnd(a);
-                      return (
-                        <tr
-                          key={a.id}
-                          className={cn(
-                            'border-t border-border hover:bg-muted/20',
-                            status === 'EXPIRING_SOON' && 'bg-orange-50/60',
-                          )}
-                        >
-                          <td className="p-2">
-                            <span className="font-semibold">{a.user?.fullName || a.userId}</span>
-                            {a.user?.employeeCode && (
-                              <span className="ml-1 font-mono text-xs text-muted-foreground">
-                                ({a.user.employeeCode})
-                              </span>
-                            )}
-                          </td>
-                          <td className="p-2">{a.workShift?.name || a.workShiftId}</td>
-                          <td className="p-2">
-                            <Badge variant="outline" className="text-xs font-normal">
-                              {assignmentTypeOf(a) === 'FIXED' ? 'Cố định' : 'Có thời hạn'}
-                            </Badge>
-                          </td>
-                          <td className="p-2 font-mono text-xs text-muted-foreground">
-                            {String(a.startDate).slice(0, 10)}
-                          </td>
-                          <td className="p-2 font-mono text-xs text-muted-foreground">
-                            {a.endDate ? String(a.endDate).slice(0, 10) : 'Không giới hạn'}
-                          </td>
-                          <td className="p-2">
-                            {status === 'EXPIRING_SOON' && (
-                              <Badge className="gap-1 border-transparent bg-orange-100 text-xs font-medium text-orange-800">
-                                <AlertTriangle className="h-3 w-3" />
-                                Sắp kết thúc
-                                {daysLeft !== null ? ` · còn ${daysLeft} ngày` : ''}
-                              </Badge>
-                            )}
-                            {status === 'ACTIVE' && (
-                              <Badge className="border-transparent bg-emerald-100 text-xs font-medium text-emerald-700">
-                                Đang hiệu lực
-                              </Badge>
-                            )}
-                            {status === 'ENDED' && (
-                              <Badge variant="secondary" className="text-xs font-normal">
-                                Đã kết thúc
-                              </Badge>
-                            )}
-                          </td>
-                          <td className="p-2">
-                            <div className="flex justify-end gap-1">
-                              {isAssignmentActive(a) && (
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  className="h-8 gap-1"
-                                  onClick={() => {
-                                    setError(null);
-                                    setEndAssignmentTarget(a);
-                                  }}
-                                >
-                                  <StopCircle className="h-3.5 w-3.5" />
-                                  Kết thúc
-                                </Button>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <TablePager
+                currentPage={shiftsCurrentPage}
+                totalPages={shiftsTotalPages}
+                total={filteredShifts.length}
+                unit="ca"
+                onPageChange={setShiftsPage}
+              />
+            </QueryBoundary>
+          </DesignCard>
+        </TabsContent>
+
+        <TabsContent value="assign" className="mt-4 space-y-4">
+          {(overviewQuery.data?.unassignedEmployees ?? 0) > 0 && (
+            <div className="flex flex-col gap-3 rounded-sm border border-amber-300 bg-amber-50 px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-start gap-2 text-sm text-amber-900">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />
+                <p>
+                  Có{' '}
+                  <strong>{overviewQuery.data!.unassignedEmployees.toLocaleString('vi-VN')}</strong>{' '}
+                  nhân viên chưa gán ca — quét cửa sẽ không được tính chấm công.
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="shrink-0 border-amber-400 bg-white text-amber-900 hover:bg-amber-100"
+                onClick={() => {
+                  setAssignmentFilter('UNASSIGNED');
+                  setWorkShiftFilter('');
+                  setAssignmentTypeFilter('');
+                  setListPage(1);
+                }}
+              >
+                Xem danh sách
+              </Button>
+            </div>
+          )}
+
+          <DesignCard title="Tìm kiếm & bộ lọc">
+            <div className="flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center">
+              <div className="relative min-w-[220px] max-w-md flex-1">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  placeholder="Tìm nhân viên hoặc tên ca..."
+                  className="input-design h-10 pl-10"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                />
+              </div>
+              <Select
+                value={workShiftFilter}
+                onChange={(e) => setWorkShiftFilter(e.target.value)}
+                className="h-10 w-full sm:w-48"
+                disabled={assignmentFilter === 'UNASSIGNED'}
+              >
+                <option value="">Tất cả ca</option>
+                {shifts.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+              </Select>
+              <Select
+                value={assignmentTypeFilter}
+                onChange={(e) =>
+                  setAssignmentTypeFilter(e.target.value as '' | EmployeeShiftAssignType)
+                }
+                className="h-10 w-full sm:w-44"
+                disabled={
+                  assignmentFilter === 'UNASSIGNED' || assignmentFilter === 'EXPIRING_SOON'
+                }
+              >
+                <option value="">Tất cả kiểu</option>
+                <option value="FIXED">Cố định</option>
+                <option value="RANGED">Có thời hạn</option>
+              </Select>
+              <Select
+                value={assignmentFilter}
+                onChange={(e) => {
+                  const next = e.target.value as AssignmentFilter;
+                  setAssignmentFilter(next);
+                  if (next === 'UNASSIGNED' || next === 'EXPIRING_SOON') {
+                    setAssignmentTypeFilter('');
+                  }
+                  if (next === 'UNASSIGNED') setWorkShiftFilter('');
+                }}
+                className="h-10 w-full sm:w-52"
+              >
+                <option value="ALL">Tất cả trạng thái</option>
+                <option value="ACTIVE">Đang hiệu lực</option>
+                <option value="EXPIRING_SOON">Sắp kết thúc</option>
+                <option value="ENDED">Đã kết thúc</option>
+                <option value="UNASSIGNED">Chưa gán ca</option>
+              </Select>
+            </div>
+          </DesignCard>
+
+          <DesignCard
+            title={`Phân ca nhân viên (${listTotal})`}
+            description="Theo dõi trạng thái gán ca: chưa gán, đang hiệu lực, sắp hết hạn, đã kết thúc."
+            actions={
+              <Button variant="outline" size="sm" onClick={openAssign}>
+                Gán ca
+              </Button>
+            }
+          >
+            <QueryBoundary
+              isLoading={
+                assignmentFilter === 'UNASSIGNED'
+                  ? unassignedQuery.isLoading
+                  : assignmentsQuery.isLoading
+              }
+              error={listError}
+              isEmpty={listTotal === 0}
+              emptyTitle={
+                assignmentFilter === 'UNASSIGNED'
+                  ? 'Không có nhân viên chưa gán ca'
+                  : 'Không có phân ca phù hợp'
+              }
+              emptyDescription={
+                assignmentFilter === 'UNASSIGNED'
+                  ? 'Tất cả nhân viên đã được gán ca đang hiệu lực.'
+                  : 'Thử đổi bộ lọc hoặc dùng nút Gán ca để phân công nhân viên.'
+              }
+            >
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border bg-muted/30 text-left">
+                      <th className="p-2 font-semibold">Nhân viên</th>
+                      <th className="p-2 font-semibold">Ca</th>
+                      <th className="p-2 font-semibold">Kiểu</th>
+                      <th className="p-2 font-semibold">Từ ngày</th>
+                      <th className="p-2 font-semibold">Đến ngày</th>
+                      <th className="p-2 font-semibold">Trạng thái</th>
+                      <th className="p-2 text-right font-semibold">Thao tác</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {assignmentFilter === 'UNASSIGNED'
+                      ? pagedUnassigned.map((u) => (
+                          <tr key={u.id} className="border-t border-border hover:bg-muted/20">
+                            <td className="p-2">
+                              <span className="font-semibold">{u.fullName}</span>
+                              {u.employeeCode && (
+                                <span className="ml-1 font-mono text-xs text-muted-foreground">
+                                  ({u.employeeCode})
+                                </span>
                               )}
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8"
-                                onClick={() => {
-                                  setError(null);
-                                  setDeleteAssignmentTarget(a);
-                                }}
-                                title="Xóa phân ca"
+                            </td>
+                            <td className="p-2 text-xs text-muted-foreground">—</td>
+                            <td className="p-2 text-xs text-muted-foreground">—</td>
+                            <td className="p-2 text-xs text-muted-foreground">—</td>
+                            <td className="p-2 text-xs text-muted-foreground">—</td>
+                            <td className="p-2">
+                              <Badge
+                                variant="outline"
+                                className="border-amber-300 bg-amber-50 text-xs font-normal text-amber-800"
                               >
-                                <Trash2 className="h-4 w-4 text-destructive" />
+                                Chưa gán ca
+                              </Badge>
+                            </td>
+                            <td className="p-2 text-right">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-8"
+                                onClick={() => openAssignForUser(u)}
+                              >
+                                Gán ca
                               </Button>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-              </tbody>
-            </table>
-            <TablePager
-              className="mt-4 pt-4"
-              currentPage={listCurrentPage}
-              totalPages={listTotalPages}
-              total={listTotal}
-              unit={assignmentFilter === 'UNASSIGNED' ? 'nhân viên' : 'phân ca'}
-              onPageChange={setListPage}
-            />
-          </div>
-        </QueryBoundary>
-      </DesignCard>
+                            </td>
+                          </tr>
+                        ))
+                      : pagedAssignments.map((a) => {
+                          const status = assignmentStatus(a);
+                          const daysLeft = daysUntilEnd(a);
+                          return (
+                            <tr
+                              key={a.id}
+                              className={cn(
+                                'border-t border-border hover:bg-muted/20',
+                                status === 'EXPIRING_SOON' && 'bg-orange-50/60',
+                              )}
+                            >
+                              <td className="p-2">
+                                <span className="font-semibold">
+                                  {a.user?.fullName || a.userId}
+                                </span>
+                                {a.user?.employeeCode && (
+                                  <span className="ml-1 font-mono text-xs text-muted-foreground">
+                                    ({a.user.employeeCode})
+                                  </span>
+                                )}
+                              </td>
+                              <td className="p-2">{a.workShift?.name || a.workShiftId}</td>
+                              <td className="p-2">
+                                <Badge variant="outline" className="text-xs font-normal">
+                                  {assignmentTypeOf(a) === 'FIXED' ? 'Cố định' : 'Có thời hạn'}
+                                </Badge>
+                              </td>
+                              <td className="p-2 font-mono text-xs text-muted-foreground">
+                                {String(a.startDate).slice(0, 10)}
+                              </td>
+                              <td className="p-2 font-mono text-xs text-muted-foreground">
+                                {a.endDate ? String(a.endDate).slice(0, 10) : 'Không giới hạn'}
+                              </td>
+                              <td className="p-2">
+                                {status === 'EXPIRING_SOON' && (
+                                  <Badge className="gap-1 border-transparent bg-orange-100 text-xs font-medium text-orange-800">
+                                    <AlertTriangle className="h-3 w-3" />
+                                    Sắp kết thúc
+                                    {daysLeft !== null ? ` · còn ${daysLeft} ngày` : ''}
+                                  </Badge>
+                                )}
+                                {status === 'ACTIVE' && (
+                                  <Badge className="border-transparent bg-emerald-100 text-xs font-medium text-emerald-700">
+                                    Đang hiệu lực
+                                  </Badge>
+                                )}
+                                {status === 'ENDED' && (
+                                  <Badge variant="secondary" className="text-xs font-normal">
+                                    Đã kết thúc
+                                  </Badge>
+                                )}
+                              </td>
+                              <td className="p-2">
+                                <div className="flex justify-end gap-1">
+                                  {isAssignmentActive(a) && (
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      className="h-8 gap-1"
+                                      onClick={() => {
+                                        setError(null);
+                                        setEndAssignmentTarget(a);
+                                      }}
+                                    >
+                                      <StopCircle className="h-3.5 w-3.5" />
+                                      Kết thúc
+                                    </Button>
+                                  )}
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-8 w-8"
+                                    onClick={() => {
+                                      setError(null);
+                                      setDeleteAssignmentTarget(a);
+                                    }}
+                                    title="Xóa phân ca"
+                                  >
+                                    <Trash2 className="h-4 w-4 text-destructive" />
+                                  </Button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                  </tbody>
+                </table>
+                <TablePager
+                  className="mt-4 pt-4"
+                  currentPage={listCurrentPage}
+                  totalPages={listTotalPages}
+                  total={listTotal}
+                  unit={assignmentFilter === 'UNASSIGNED' ? 'nhân viên' : 'phân ca'}
+                  onPageChange={setListPage}
+                />
+              </div>
+            </QueryBoundary>
+          </DesignCard>
+        </TabsContent>
+      </Tabs>
 
       <Dialog
         open={open}
@@ -1171,6 +1327,29 @@ export default function ShiftsPage() {
         confirmLabel="Xóa"
         loading={deleting}
       />
+
+      <Dialog
+        open={helpOpen}
+        onClose={() => setHelpOpen(false)}
+        title="Hướng dẫn sử dụng"
+        description="Cách tạo ca và gán ca để tính chấm công."
+        className="max-w-md"
+      >
+        <div className="space-y-3 text-sm text-foreground">
+          <p>
+            <strong>Bước 1:</strong> Tạo các mẫu ca (giờ vào/ra, giờ nghỉ).
+          </p>
+          <p>
+            <strong>Bước 2:</strong> Dùng &quot;Gán ca&quot; — chọn <em>Cố định</em> (đến khi kết thúc)
+            hoặc <em>Có thời hạn</em> (Từ–Đến ngày). <strong>Nhân viên phải được gán ca</strong> thì
+            quét cửa mới được tính chấm công.
+          </p>
+          <p>
+            <strong>Bước 3:</strong> Theo dõi bằng bộ lọc trạng thái — <em>Chưa gán ca</em>,{' '}
+            <em>Sắp kết thúc</em> (≤ {EXPIRING_SOON_DAYS} ngày), <em>Đã kết thúc</em>.
+          </p>
+        </div>
+      </Dialog>
 
       <ConfirmDialog
         open={!!endAssignmentTarget}
