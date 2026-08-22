@@ -261,13 +261,8 @@ export default function UsersPage() {
     queryFn: () => getAccessZones(),
   });
   const transferProjectsQuery = useQuery({
-    queryKey: ['projects', 'transfer', transferTarget?.contractorId ?? 'all'],
-    queryFn: () =>
-      getProjects(
-        transferTarget?.contractorId
-          ? { contractorId: transferTarget.contractorId }
-          : undefined,
-      ),
+    queryKey: ['projects', 'transfer-dest'],
+    queryFn: () => getProjects(),
     enabled: !!transferTarget,
   });
   const workShiftsQuery = useQuery({
@@ -285,8 +280,18 @@ export default function UsersPage() {
   const listProjects = listProjectsQuery.data ?? [];
   const projects = projectsQuery.data ?? [];
   const zones = zonesQuery.data ?? [];
-  const transferProjects = transferProjectsQuery.data ?? [];
+  const transferProjects = useMemo(() => {
+    const currentId = transferTarget?.projectId;
+    return (transferProjectsQuery.data ?? []).filter((p) => p.id !== currentId);
+  }, [transferProjectsQuery.data, transferTarget?.projectId]);
   const workShifts = workShiftsQuery.data ?? [];
+  const transferProjectsLoading = transferProjectsQuery.isLoading;
+  const transferProjectsError =
+    transferProjectsQuery.error instanceof ApiError
+      ? transferProjectsQuery.error.message
+      : transferProjectsQuery.error
+        ? 'Không tải được danh sách dự án'
+        : null;
 
   const selectedFormProject = useMemo(
     () => projects.find((p) => p.id === form.projectId) ?? null,
@@ -836,18 +841,18 @@ export default function UsersPage() {
           }
         >
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1100px] table-fixed border-collapse text-sm">
+            <table className="w-full min-w-[1180px] table-fixed border-collapse text-sm">
               <colgroup>
                 <col className="w-12" />
-                <col className="w-[15%]" />
+                <col className="w-[14%]" />
+                <col className="w-[8%]" />
+                <col className="w-[14%]" />
+                <col className="w-[11%]" />
                 <col className="w-[9%]" />
-                <col className="w-[16%]" />
-                <col className="w-[12%]" />
-                <col className="w-[10%]" />
-                <col className="w-[7.5rem]" />
+                <col className="w-[7rem]" />
                 <col className="w-[13%]" />
-                <col className="w-[9%]" />
-                <col className="w-[88px]" />
+                <col className="w-[7.5rem]" />
+                <col className="w-[8.5rem]" />
               </colgroup>
               <thead>
                 <tr className="border-b border-border bg-muted/30">
@@ -860,7 +865,7 @@ export default function UsersPage() {
                   <th className="p-3 text-left font-semibold">Loại</th>
                   <th className="p-3 text-left font-semibold">Email</th>
                   <th className="p-3 text-left font-semibold">SĐT</th>
-                  <th className="w-[120px] min-w-[120px] p-3 text-right font-semibold">Thao tác</th>
+                  <th className="p-3 text-right font-semibold">Thao tác</th>
                 </tr>
               </thead>
               <tbody>
@@ -869,16 +874,16 @@ export default function UsersPage() {
                     <td className="p-3 text-center font-mono text-xs text-muted-foreground">
                       {(currentPage - 1) * PAGE_SIZE + i + 1}
                     </td>
-                    <td className="p-3">
+                    <td className="overflow-hidden p-3">
                       <div className="flex min-w-0 items-center gap-3">
                         <Avatar name={u.fullName} src={u.faceImageUrl} />
                         <span className="truncate font-semibold">{u.fullName}</span>
                       </div>
                     </td>
-                    <td className="truncate p-3 font-mono text-xs text-muted-foreground">
+                    <td className="overflow-hidden truncate p-3 font-mono text-xs text-muted-foreground">
                       {u.employeeCode}
                     </td>
-                    <td className="p-3">
+                    <td className="overflow-hidden p-3">
                       {u.department?.name ? (
                         <Badge
                           variant="secondary"
@@ -891,11 +896,16 @@ export default function UsersPage() {
                         <span className="text-muted-foreground">—</span>
                       )}
                     </td>
-                    <td className="truncate p-3 text-xs" title={u.contractor?.name || undefined}>
+                    <td
+                      className="overflow-hidden truncate p-3 text-xs"
+                      title={u.contractor?.name || undefined}
+                    >
                       {u.contractor?.name || '—'}
                     </td>
-                    <td className="truncate p-3 font-mono text-xs">{u.citizenId || '—'}</td>
-                    <td className="whitespace-nowrap p-3">
+                    <td className="overflow-hidden truncate p-3 font-mono text-xs">
+                      {u.citizenId || '—'}
+                    </td>
+                    <td className="overflow-hidden whitespace-nowrap p-3">
                       <Badge
                         variant="secondary"
                         className={
@@ -907,13 +917,21 @@ export default function UsersPage() {
                         {u.userType === 'CONTRACTOR' ? 'Nhà thầu' : 'Nội bộ'}
                       </Badge>
                     </td>
-                    <td className="truncate p-3 text-xs" title={u.email || undefined}>
+                    <td
+                      className="overflow-hidden truncate p-3 text-xs"
+                      title={u.email || undefined}
+                    >
                       {u.email || '—'}
                     </td>
-                    <td className="truncate p-3 text-xs">{u.phone || '—'}</td>
-                    <td className="p-3">
+                    <td
+                      className="overflow-hidden whitespace-nowrap p-3 font-mono text-xs tabular-nums"
+                      title={u.phone || undefined}
+                    >
+                      {u.phone || '—'}
+                    </td>
+                    <td className="overflow-hidden p-3">
                       {writeEnabled ? (
-                        <div className="flex items-center justify-end gap-2">
+                        <div className="flex items-center justify-end gap-1">
                           {u.userType === 'CONTRACTOR' && (
                             <Button
                               variant="ghost"
@@ -934,7 +952,12 @@ export default function UsersPage() {
                               <ArrowLeftRight className="h-4 w-4" />
                             </Button>
                           )}
-                          <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => openEdit(u)}>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 shrink-0"
+                            onClick={() => openEdit(u)}
+                          >
                             <Pencil className="h-4 w-4" />
                           </Button>
                           <Button
@@ -1283,16 +1306,35 @@ export default function UsersPage() {
               onChange={(e) =>
                 setTransferForm((prev) => ({ ...prev, toProjectId: e.target.value }))
               }
+              disabled={transferProjectsLoading || transferProjects.length === 0}
             >
-              <option value="">— Chọn dự án —</option>
-              {transferProjects
-                .filter((p) => p.id !== transferTarget?.projectId)
-                .map((p) => (
+              <option value="">
+                {transferProjectsLoading
+                  ? 'Đang tải…'
+                  : transferProjects.length === 0
+                    ? '— Không có dự án khác —'
+                    : '— Chọn dự án —'}
+              </option>
+              {transferProjects.map((p) => {
+                const linked =
+                  !transferTarget?.contractorId ||
+                  p.contractors?.some((c) => c.contractorId === transferTarget.contractorId);
+                return (
                   <option key={p.id} value={p.id}>
                     {p.name} ({p.code})
+                    {!linked ? ' — sẽ gắn nhà thầu vào dự án' : ''}
                   </option>
-                ))}
+                );
+              })}
             </Select>
+            {transferProjectsError && (
+              <p className="mt-1 text-xs text-destructive">{transferProjectsError}</p>
+            )}
+            {!transferProjectsLoading && !transferProjectsError && transferProjects.length === 0 && (
+              <p className="mt-1 text-xs text-muted-foreground">
+                Hệ thống chưa có dự án khác để điều chuyển. Tạo thêm dự án ở màn Dự án trước.
+              </p>
+            )}
           </div>
           <div>
             <label className="mb-1 block text-xs text-muted-foreground">

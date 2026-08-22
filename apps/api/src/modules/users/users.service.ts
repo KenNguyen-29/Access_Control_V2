@@ -498,6 +498,23 @@ export class UsersService {
     });
 
     await this.prisma.$transaction(async (tx) => {
+      // Ensure contractor stays valid on destination project (M2M).
+      if (user.contractorId) {
+        await tx.projectContractor.upsert({
+          where: {
+            projectId_contractorId: {
+              projectId: dto.toProjectId,
+              contractorId: user.contractorId,
+            },
+          },
+          create: {
+            projectId: dto.toProjectId,
+            contractorId: user.contractorId,
+          },
+          update: {},
+        });
+      }
+
       if (oldPerms.length > 0) {
         await tx.userAccessPermission.updateMany({
           where: { userId, isDeleted: false },
