@@ -29,6 +29,30 @@ export interface StatsOverview {
   todayEarly: number;
 }
 
+export interface HomeZoneStat {
+  id: string;
+  name: string;
+  parentZoneId: string | null;
+  presentCount: number;
+  deviceTotal: number;
+  devicesOnline: number;
+  todayEvents: number;
+  todayInvalid: number;
+}
+
+export interface HomeDashboard {
+  from: string;
+  to: string;
+  overview: StatsOverview;
+  zones: HomeZoneStat[];
+  traffic7d: Array<{ date: string; checkIns: number; checkOuts: number }>;
+  periodSummary: {
+    checkIns: number;
+    checkOuts: number;
+    invalidEvents: number;
+  };
+}
+
 export interface AttendanceSummaryTotals {
   totalRecords: number;
   staffCount: number;
@@ -103,6 +127,16 @@ function parseDateOnly(value: string, fallback: Date): Date {
     return new Date(Date.UTC(f.getFullYear(), f.getMonth(), f.getDate()));
   }
   return new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+}
+
+function parseLocalDateOnly(value: string): Date | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
+  if (!match) return null;
+  return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+}
+
+function formatLocalDateKey(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
 @Injectable()
@@ -270,6 +304,248 @@ export class StatsService {
       todayOnTime,
       todayEarly,
     };
+  }
+
+  /** Home dashboard: overview + zone stats + traffic by date range. */
+  async homeDashboard(
+    projectIds?: string[],
+    params?: { from?: string; to?: string },
+  ): Promise<HomeDashboard> {
+    const overview = await this.overview();
+
+    const now = new Date();
+    const todayLocal = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const defaultFrom = new Date(todayLocal);
+    defaultFrom.setDate(defaultFrom.getDate() - 6);
+
+    let rangeStart = parseLocalDateOnly(params?.from ?? '') ?? defaultFrom;
+    let rangeEnd = parseLocalDateOnly(params?.to ?? '') ?? todayLocal;
+    if (rangeStart > rangeEnd) {
+      const tmp = rangeStart;
+      rangeStart = rangeEnd;
+      rangeEnd = tmp;
+    }
+
+    rangeStart.setHours(0, 0, 0, 0);
+    rangeEnd.setHours(0, 0, 0, 0);
+    const rangeEndExclusive = new Date(rangeEnd);
+    rangeEndExclusive.setDate(rangeEndExclusive.getDate() + 1);
+
+    const fromKey = formatLocalDateKey(rangeStart);
+    const toKey = formatLocalDateKey(rangeEnd);
+
+    const logProjectFilter =
+      projectIds !== undefined
+        ? {
+            projectId:
+              projectIds.length === 0 ? { in: [] as string[] } : { in: projectIds },
+          }
+        : {};
+
+    const zoneRows = await this.prisma.accessZone.findMany({
+      where: { isDeleted: false },
+      select: { id: true, name: true, parentZoneId: true },
+      orderBy: { name: 'asc' },
+    });
+    const zoneIds = zoneRows.map((z) => z.id);
+
+    const emptyZones: HomeZoneStat[] = zoneRows.map((z) => ({
+      id: z.id,
+      name: z.name,
+      parentZoneId: z.parentZoneId,
+      presentCount: 0,
+      deviceTotal: 0,
+      devicesOnline: 0,
+      todayEvents: 0,
+      todayInvalid: 0,
+    }));
+
+    if (zoneIds.length === 0) {
+      return {
+        from: fromKey,
+        to: toKey,
+        overview,
+        zones: emptyZones,
+        traffic7d: this.buildTrafficByDay(rangeStart, rangeEnd, []),
+        periodSummary: { checkIns: 0, checkOuts: 0, invalidEvents: 0 },
+      };
+    }
+
+    const presenceWhere =
+      projectIds !== undefined
+        ? {
+            currentZoneId: { in: zoneIds },
+            user: {
+              projectId:
+                projectIds.length === 0 ? { in: [] as string[] } : { in: projectIds },
+            },
+          }
+        : { currentZoneId: { in: zoneIds } };
+
+    const [
+      presenceGroups,
+      deviceGroups,
+      deviceOnlineGroups,
+      eventGroups,
+      invalidGroups,
+      trafficLogs,
+      periodCheckIns,
+      periodCheckOuts,
+      periodInvalidEvents,
+    ] = await Promise.all([
+      this.prisma.userPresence.groupBy({
+        by: ['currentZoneId'],
+        where: presenceWhere,
+        _count: { _all: true },
+      }),
+      this.prisma.device.groupBy({
+        by: ['zoneId'],
+        where: { isDeleted: false, zoneId: { in: zoneIds } },
+        _count: { _all: true },
+      }),
+      this.prisma.device.groupBy({
+        by: ['zoneId'],
+        where: { isDeleted: false, zoneId: { in: zoneIds }, isOnline: true },
+        _count: { _all: true },
+      }),
+      this.prisma.accessLog.groupBy({
+        by: ['zoneId'],
+        where: {
+          zoneId: { in: zoneIds },
+          eventAt: { gte: rangeStart, lt: rangeEndExclusive },
+          ...logProjectFilter,
+        },
+        _count: { _all: true },
+      }),
+      this.prisma.accessLog.groupBy({
+        by: ['zoneId'],
+        where: {
+          zoneId: { in: zoneIds },
+          eventAt: { gte: rangeStart, lt: rangeEndExclusive },
+          isValid: false,
+          ...logProjectFilter,
+        },
+        _count: { _all: true },
+      }),
+      this.prisma.accessLog.findMany({
+        where: {
+          eventAt: { gte: rangeStart, lt: rangeEndExclusive },
+          action: { in: ['CHECK_IN', 'CHECK_OUT'] },
+          ...logProjectFilter,
+        },
+        select: { eventAt: true, action: true },
+      }),
+      this.prisma.accessLog.count({
+        where: {
+          eventAt: { gte: rangeStart, lt: rangeEndExclusive },
+          action: 'CHECK_IN',
+          ...logProjectFilter,
+        },
+      }),
+      this.prisma.accessLog.count({
+        where: {
+          eventAt: { gte: rangeStart, lt: rangeEndExclusive },
+          action: 'CHECK_OUT',
+          ...logProjectFilter,
+        },
+      }),
+      this.prisma.accessLog.count({
+        where: {
+          eventAt: { gte: rangeStart, lt: rangeEndExclusive },
+          isValid: false,
+          ...logProjectFilter,
+        },
+      }),
+    ]);
+
+    const presentMap = new Map(
+      presenceGroups
+        .filter((g) => g.currentZoneId)
+        .map((g) => [g.currentZoneId!, g._count._all]),
+    );
+    const deviceMap = new Map(
+      deviceGroups.filter((g) => g.zoneId).map((g) => [g.zoneId!, g._count._all]),
+    );
+    const onlineMap = new Map(
+      deviceOnlineGroups.filter((g) => g.zoneId).map((g) => [g.zoneId!, g._count._all]),
+    );
+    const eventsMap = new Map(
+      eventGroups.filter((g) => g.zoneId).map((g) => [g.zoneId!, g._count._all]),
+    );
+    const invalidMap = new Map(
+      invalidGroups.filter((g) => g.zoneId).map((g) => [g.zoneId!, g._count._all]),
+    );
+
+    const zones: HomeZoneStat[] = zoneRows.map((z) => ({
+      id: z.id,
+      name: z.name,
+      parentZoneId: z.parentZoneId,
+      presentCount: presentMap.get(z.id) ?? 0,
+      deviceTotal: deviceMap.get(z.id) ?? 0,
+      devicesOnline: onlineMap.get(z.id) ?? 0,
+      todayEvents: eventsMap.get(z.id) ?? 0,
+      todayInvalid: invalidMap.get(z.id) ?? 0,
+    }));
+
+    return {
+      from: fromKey,
+      to: toKey,
+      overview,
+      zones,
+      traffic7d: this.buildTrafficByDay(rangeStart, rangeEnd, trafficLogs),
+      periodSummary: {
+        checkIns: periodCheckIns,
+        checkOuts: periodCheckOuts,
+        invalidEvents: periodInvalidEvents,
+      },
+    };
+  }
+
+  private buildTrafficByDay(
+    start: Date,
+    endInclusive: Date,
+    logs: Array<{ eventAt: Date; action: string }>,
+  ): Array<{ date: string; checkIns: number; checkOuts: number }> {
+    const dayMap = new Map<string, { checkIns: number; checkOuts: number }>();
+    const cursor = new Date(start);
+    cursor.setHours(0, 0, 0, 0);
+    const end = new Date(endInclusive);
+    end.setHours(0, 0, 0, 0);
+    while (cursor <= end) {
+      dayMap.set(formatLocalDateKey(cursor), { checkIns: 0, checkOuts: 0 });
+      cursor.setDate(cursor.getDate() + 1);
+    }
+    for (const log of logs) {
+      const local = log.eventAt;
+      const key = formatLocalDateKey(local);
+      const bucket = dayMap.get(key);
+      if (!bucket) continue;
+      if (log.action === 'CHECK_IN') bucket.checkIns += 1;
+      else if (log.action === 'CHECK_OUT') bucket.checkOuts += 1;
+    }
+    return Array.from(dayMap.entries()).map(([date, v]) => ({ date, ...v }));
+  }
+
+  private buildTraffic7d(
+    start: Date,
+    logs: Array<{ eventAt: Date; action: string }>,
+  ): Array<{ date: string; checkIns: number; checkOuts: number }> {
+    const dayMap = new Map<string, { checkIns: number; checkOuts: number }>();
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(start);
+      d.setDate(d.getDate() + i);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      dayMap.set(key, { checkIns: 0, checkOuts: 0 });
+    }
+    for (const log of logs) {
+      const local = log.eventAt;
+      const key = `${local.getFullYear()}-${String(local.getMonth() + 1).padStart(2, '0')}-${String(local.getDate()).padStart(2, '0')}`;
+      const bucket = dayMap.get(key);
+      if (!bucket) continue;
+      if (log.action === 'CHECK_IN') bucket.checkIns += 1;
+      else if (log.action === 'CHECK_OUT') bucket.checkOuts += 1;
+    }
+    return Array.from(dayMap.entries()).map(([date, v]) => ({ date, ...v }));
   }
 
   async attendanceSummary(params: {

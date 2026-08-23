@@ -32,6 +32,18 @@ export class StatsController {
     return successResponse(await this.service.overview());
   }
 
+  @Get('home-dashboard')
+  @ApiQuery({ name: 'from', required: false, description: 'YYYY-MM-DD' })
+  @ApiQuery({ name: 'to', required: false, description: 'YYYY-MM-DD' })
+  async homeDashboard(
+    @CurrentUser() user?: JwtPayload,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    const projectIds = this.scopedProjectIds(user!);
+    return successResponse(await this.service.homeDashboard(projectIds, { from, to }));
+  }
+
   @Get('attendance-summary')
   @ApiQuery({ name: 'from', required: false })
   @ApiQuery({ name: 'to', required: false })

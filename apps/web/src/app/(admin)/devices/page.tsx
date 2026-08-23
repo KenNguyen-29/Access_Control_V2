@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Link2,
@@ -87,6 +88,7 @@ const PAGE_SIZE = 10;
 const PICKER_PAGE_SIZE = 200;
 
 export default function DevicesPage() {
+  const searchParams = useSearchParams();
   const queryClient = useQueryClient();
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
@@ -105,6 +107,11 @@ export default function DevicesPage() {
   const [deleteTarget, setDeleteTarget] = useState<Device | null>(null);
   const [testingIds, setTestingIds] = useState<Set<string>>(new Set());
   const [page, setPage] = useState(1);
+
+  useEffect(() => {
+    const zoneId = searchParams.get('zoneId');
+    if (zoneId) setZoneFilter(zoneId);
+  }, [searchParams]);
 
   const listParams = useMemo(
     () => ({

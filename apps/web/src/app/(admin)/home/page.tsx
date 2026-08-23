@@ -2,37 +2,61 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { useQuery } from '@tanstack/react-query';
 import type { LucideIcon } from 'lucide-react';
 import {
-  Monitor,
-  Users,
-  Clock,
-  LayoutGrid,
-  ShieldCheck,
-  UserCheck,
-  CalendarClock,
-  HardHat,
-  Cpu,
-  ChevronRight,
-  Siren,
-  Shield,
-  Settings,
   AlertTriangle,
   Building2,
-  TrendingUp,
+  Camera,
+  ChevronRight,
+  Clock,
+  Cpu,
+  HardHat,
   LogIn,
   LogOut,
-  CheckCircle2,
+  RefreshCw,
+  Users,
 } from 'lucide-react';
-import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts';
-import { cn } from '@/lib/utils';
 import {
-  getAccessLogs,
-  getStatsOverview,
-  type AccessLog,
-  type StatsOverview,
-} from '@/lib/api';
+  CartesianGrid,
+  Cell,
+  Legend,
+  Line,
+  LineChart,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
+import { DesignCard } from '@/components/design/PageShell';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { QueryBoundary } from '@/components/ui/query-states';
+import { cn } from '@/lib/utils';
+import { queryKeys } from '@/lib/queryKeys';
+import { getAccessLogs, getHomeDashboard, type AccessLog, type HomeDashboard } from '@/lib/api';
 import { usePermissions } from '@/hooks/usePermissions';
+
+function todayIso(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function daysAgoIso(days: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - days);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function formatRangeLabel(from: string, to: string): string {
+  const fmt = (iso: string) => {
+    const [y, m, day] = iso.split('-');
+    return `${day}/${m}/${y}`;
+  };
+  return `${fmt(from)} – ${fmt(to)}`;
+}
 
 const PIE_COLORS = [
   'hsl(var(--primary))',
@@ -45,66 +69,9 @@ const PIE_COLORS = [
   '#ca8a04',
 ];
 
-type NavItem = {
-  icon: LucideIcon;
-  label: string;
-  path: string;
-  description: string;
-};
-
-function NavButton({ item }: { item: NavItem }) {
-  return (
-    <Link
-      href={item.path}
-      className="group flex aspect-square flex-col items-center justify-center rounded-sm border border-border bg-surface p-4 text-center transition-colors hover:border-primary/40"
-    >
-      <div className="mb-3 rounded-sm bg-secondary/20 p-3 text-foreground transition-colors group-hover:bg-secondary/30">
-        <item.icon className="h-6 w-6" />
-      </div>
-      <span className="text-label-caps uppercase leading-tight tracking-wider text-foreground">
-        {item.label}
-      </span>
-      <span className="mt-1 line-clamp-2 text-[10px] text-muted-foreground">
-        {item.description}
-      </span>
-    </Link>
-  );
-}
-
-const operations: NavItem[] = [
-  { icon: Monitor, label: 'Giám sát', path: '/dashboard', description: 'Camera live & FaceID realtime' },
-  { icon: CalendarClock, label: 'Chấm công', path: '/reports', description: 'Bảng công, thống kê IN/OUT' },
-  { icon: HardHat, label: 'BC nhà thầu', path: '/reports/contractors', description: 'Số lượng nhân sự & xuất báo cáo' },
-  { icon: Building2, label: 'Dự án', path: '/projects', description: 'Dự án, nhà thầu và nhân sự công trường' },
-  { icon: Siren, label: 'Sơ tán', path: '/muster', description: 'Điểm danh khẩn cấp FACP' },
-];
-
-const configs: NavItem[] = [
-  { icon: Users, label: 'Nhân sự', path: '/users', description: 'Quản lý nhân viên' },
-  { icon: Clock, label: 'Ca làm', path: '/shifts', description: 'Cấu hình & gán ca' },
-  { icon: LayoutGrid, label: 'Thiết bị', path: '/devices', description: 'Akuvox & Camera' },
-  { icon: Shield, label: 'Kiểm soát ra vào', path: '/access-control', description: 'Phân quyền khu vực' },
-  { icon: TrendingUp, label: 'Thống kê', path: '/analytics', description: 'KPI, biểu đồ ngày công & phân bổ' },
-  { icon: Settings, label: 'Cài đặt', path: '/settings', description: 'Hệ thống & cấu hình' },
-  {
-    icon: ShieldCheck,
-    label: 'Tài khoản',
-    path: '/settings/accounts',
-    description: 'Quản lý tài khoản',
-  },
-];
-
-type StatItem = { icon: LucideIcon; label: string; value: number; hint?: string };
-
-function SectionHeader({ label }: { label: string }) {
-  return (
-    <div className="mb-6 flex items-center gap-4">
-      <h2 className="whitespace-nowrap text-label-caps font-semibold uppercase tracking-[0.2em] text-foreground">
-        {label}
-      </h2>
-      <div className="h-px flex-1 bg-border" />
-    </div>
-  );
+function formatDayLabel(iso: string): string {
+  const parts = iso.split('-');
+  return `${parts[2]}/${parts[1]}`;
 }
 
 function ClockCard() {
@@ -125,21 +92,158 @@ function ClockCard() {
           {now ? now.toLocaleTimeString('vi-VN') : '--:--:--'}
         </p>
         <p className="text-xs text-white/80">
-          {now ? now.toLocaleDateString('vi-VN', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' }) : ''}
+          {now
+            ? now.toLocaleDateString('vi-VN', {
+                weekday: 'long',
+                day: '2-digit',
+                month: '2-digit',
+                year: 'numeric',
+              })
+            : ''}
         </p>
       </div>
     </div>
   );
 }
 
+function KpiCard({
+  label,
+  value,
+  icon: Icon,
+  tone,
+}: {
+  label: string;
+  value: number;
+  icon: typeof Users;
+  tone?: 'alert' | 'default';
+}) {
+  return (
+    <div
+      className={cn(
+        'rounded-sm border bg-surface p-5',
+        tone === 'alert' && value > 0 ? 'border-orange-300 bg-orange-50/50' : 'border-border',
+      )}
+    >
+      <div className="mb-3 flex items-center justify-between">
+        <p className="text-label-caps uppercase tracking-wider text-muted-foreground">{label}</p>
+        <div
+          className={cn(
+            'rounded-sm p-2',
+            tone === 'alert' && value > 0
+              ? 'bg-orange-100 text-orange-700'
+              : 'bg-secondary/20 text-foreground',
+          )}
+        >
+          <Icon className="h-5 w-5" />
+        </div>
+      </div>
+      <p
+        className={cn(
+          'font-heading text-3xl font-bold',
+          tone === 'alert' && value > 0 ? 'text-orange-700' : 'text-foreground',
+        )}
+      >
+        {value.toLocaleString('vi-VN')}
+      </p>
+    </div>
+  );
+}
+
+function RecentLogsTable({ logs }: { logs: AccessLog[] }) {
+  if (logs.length === 0) {
+    return <p className="py-8 text-center text-sm text-muted-foreground">Chưa có hoạt động</p>;
+  }
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-border text-left text-xs uppercase tracking-wider text-muted-foreground">
+            <th className="pb-2 pr-2 font-semibold">Nhân viên</th>
+            <th className="pb-2 pr-2 font-semibold">Thiết bị / khu</th>
+            <th className="pb-2 pr-2 font-semibold">Giờ</th>
+            <th className="pb-2 font-semibold">Trạng thái</th>
+          </tr>
+        </thead>
+        <tbody>
+          {logs.map((log) => (
+            <tr key={log.id} className="border-b border-border/60 last:border-0">
+              <td className="py-2 pr-2">
+                <p className="truncate font-medium text-foreground">
+                  {log.user?.fullName ?? 'Không xác định'}
+                </p>
+              </td>
+              <td className="py-2 pr-2">
+                <p className="truncate text-foreground">{log.device.name}</p>
+                <p className="truncate text-xs text-muted-foreground">{log.zone?.name ?? '—'}</p>
+              </td>
+              <td className="whitespace-nowrap py-2 pr-2 text-muted-foreground">
+                {new Date(log.eventAt).toLocaleTimeString('vi-VN')}
+              </td>
+              <td className="py-2">
+                <span
+                  className={cn(
+                    'inline-flex items-center rounded-sm px-2 py-0.5 text-xs font-medium',
+                    log.isValid === false
+                      ? 'bg-destructive/10 text-destructive'
+                      : 'bg-emerald-100 text-emerald-800',
+                  )}
+                >
+                  {log.isValid === false ? 'Cảnh báo' : 'Hợp lệ'}
+                </span>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function SystemResourcesCard({
+  overview,
+}: {
+  overview: HomeDashboard['overview'];
+}) {
+  const items: Array<{ label: string; value: number; icon: LucideIcon }> = [
+    { label: 'Nhân sự', value: overview.users, icon: Users },
+    { label: 'Thiết bị', value: overview.devices, icon: Cpu },
+    { label: 'Camera', value: overview.cameras, icon: Camera },
+    { label: 'Dự án', value: overview.projects, icon: Building2 },
+    { label: 'Nhà thầu', value: overview.contractors, icon: HardHat },
+  ];
+
+  return (
+    <ul className="space-y-3">
+      {items.map((item) => (
+        <li
+          key={item.label}
+          className="flex items-center justify-between rounded-sm border border-border px-3 py-2.5"
+        >
+          <div className="flex items-center gap-2.5">
+            <div className="rounded-sm bg-secondary/20 p-1.5">
+              <item.icon className="h-4 w-4 text-foreground" />
+            </div>
+            <span className="text-sm text-muted-foreground">{item.label}</span>
+          </div>
+          <span className="font-heading text-lg font-bold text-foreground">
+            {item.value.toLocaleString('vi-VN')}
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export default function HomePage() {
   const { canAccess } = usePermissions();
-  const [stats, setStats] = useState<StatsOverview | null>(null);
-  const [logs, setLogs] = useState<AccessLog[]>([]);
+  const [from, setFrom] = useState(() => daysAgoIso(6));
+  const [to, setTo] = useState(todayIso);
+  const [appliedFrom, setAppliedFrom] = useState(() => daysAgoIso(6));
+  const [appliedTo, setAppliedTo] = useState(todayIso);
   const [deniedNotice, setDeniedNotice] = useState(false);
 
-  const visibleOperations = operations.filter((item) => canAccess(item.path));
-  const visibleConfigs = configs.filter((item) => canAccess(item.path));
+  const filtersValid = Boolean(from && to && from <= to);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -149,21 +253,39 @@ export default function HomePage() {
     }
   }, []);
 
-  useEffect(() => {
-    getStatsOverview().then(setStats).catch(() => {});
-    getAccessLogs(8).then(setLogs).catch(() => {});
-  }, []);
+  const dashboardQuery = useQuery({
+    queryKey: queryKeys.homeDashboard({ from: appliedFrom, to: appliedTo }),
+    queryFn: () => getHomeDashboard({ from: appliedFrom, to: appliedTo }),
+    enabled: Boolean(appliedFrom && appliedTo && appliedFrom <= appliedTo),
+  });
 
-  const statItems: StatItem[] = [
-    { icon: Users, label: 'Nhân sự', value: stats?.users ?? 0 },
-    { icon: Cpu, label: 'Thiết bị', value: stats?.devices ?? 0, hint: `${stats?.cameras ?? 0} camera` },
-    { icon: CalendarClock, label: 'Ca làm việc', value: stats?.workShifts ?? 0 },
-    { icon: UserCheck, label: 'Chấm công hôm nay', value: stats?.todayAttendance ?? 0, hint: `${stats?.todayLate ?? 0} đi muộn` },
-    { icon: ShieldCheck, label: 'Sự kiện hôm nay', value: stats?.todayEvents ?? 0, hint: `${stats?.todayInvalidEvents ?? 0} cảnh báo` },
-  ];
+  const logsQuery = useQuery({
+    queryKey: ['accessLogs', 'home-recent', appliedFrom, appliedTo],
+    queryFn: () => getAccessLogs({ limit: 8, from: appliedFrom, to: appliedTo }),
+    enabled: Boolean(appliedFrom && appliedTo && appliedFrom <= appliedTo),
+  });
+
+  const data = dashboardQuery.data;
+  const overview = data?.overview;
+  const zones = data?.zones ?? [];
+  const logs = logsQuery.data ?? [];
+
+  const presentTotal = useMemo(
+    () => zones.reduce((sum, z) => sum + z.presentCount, 0),
+    [zones],
+  );
+
+  const trafficChart = useMemo(
+    () =>
+      (data?.traffic7d ?? []).map((d) => ({
+        ...d,
+        label: formatDayLabel(d.date),
+      })),
+    [data?.traffic7d],
+  );
 
   const contractorPie = useMemo(() => {
-    const rows = stats?.staffByContractor ?? [];
+    const rows = overview?.staffByContractor ?? [];
     const total = rows.reduce((n, r) => n + r.count, 0) || 1;
     return rows.map((r, idx) => ({
       name: r.name,
@@ -171,142 +293,117 @@ export default function HomePage() {
       percent: Math.round((r.count / total) * 100),
       color: PIE_COLORS[idx % PIE_COLORS.length]!,
     }));
-  }, [stats?.staffByContractor]);
+  }, [overview?.staffByContractor]);
 
-  return (
-    <div className="flex h-full flex-col overflow-hidden bg-neutral font-body text-foreground">
-      <div className="flex-1 overflow-y-auto px-6 py-8 lg:px-8">
-        <div className="mx-auto max-w-7xl space-y-8">
-          {/* Header */}
-          <div className="flex flex-col items-start justify-between gap-6 lg:flex-row lg:items-center">
-            <div>
-              <span className="text-label-caps uppercase tracking-[0.2em] text-foreground">
-                Access Control
-              </span>
-              <h1 className="mt-1 font-heading text-3xl font-bold text-foreground md:text-4xl">
-                Trang chủ
-              </h1>
-              <p className="mt-1 text-sm text-foreground/60">
-                Tổng quan hệ thống kiểm soát ra vào & chấm công
+  const checkIns = data?.periodSummary.checkIns ?? 0;
+  const checkOuts = data?.periodSummary.checkOuts ?? 0;
+  const invalidEvents = data?.periodSummary.invalidEvents ?? 0;
+  const rangeLabel = data ? formatRangeLabel(data.from, data.to) : formatRangeLabel(appliedFrom, appliedTo);
+
+  const applyFilter = () => {
+    if (!filtersValid) return;
+    setAppliedFrom(from);
+    setAppliedTo(to);
+  };
+
+  const refresh = () => {
+    void dashboardQuery.refetch();
+    void logsQuery.refetch();
+  };
+
+  const dashboardError =
+    dashboardQuery.error instanceof Error
+      ? dashboardQuery.error.message
+      : dashboardQuery.error
+        ? 'Không tải được dữ liệu tổng quan.'
+        : null;
+
+  function DashboardBody({ dashboard }: { dashboard: HomeDashboard }) {
+    return (
+      <>
+        {(dashboard.overview.unassignedEmployees ?? 0) > 0 && canAccess('/shifts') && (
+          <Link
+            href="/shifts"
+            className="flex flex-col gap-2 rounded-sm border border-amber-300 bg-amber-50 px-4 py-3 text-amber-900 transition-colors hover:bg-amber-100 sm:flex-row sm:items-center sm:justify-between"
+          >
+            <div className="flex items-start gap-2 text-sm">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />
+              <p>
+                Có{' '}
+                <strong>{dashboard.overview.unassignedEmployees.toLocaleString('vi-VN')}</strong>{' '}
+                nhân viên chưa gán ca — quét cửa sẽ không được tính chấm công.
               </p>
             </div>
-            <ClockCard />
-          </div>
+            <span className="inline-flex shrink-0 items-center gap-1 text-sm font-semibold">
+              Vào phân ca
+              <ChevronRight className="h-4 w-4" />
+            </span>
+          </Link>
+        )}
 
-          {deniedNotice && (
-            <div className="rounded-sm border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-              Bạn không có quyền truy cập trang vừa chọn.
-            </div>
-          )}
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <KpiCard label="NV đang trong khu" value={presentTotal} icon={Users} />
+          <KpiCard label="Check-in" value={checkIns} icon={LogIn} />
+          <KpiCard label="Check-out" value={checkOuts} icon={LogOut} />
+          <KpiCard
+            label="Cảnh báo"
+            value={invalidEvents}
+            icon={AlertTriangle}
+            tone="alert"
+          />
+        </div>
 
-          {(stats?.unassignedEmployees ?? 0) > 0 && canAccess('/shifts') && (
-            <Link
-              href="/shifts"
-              className="flex flex-col gap-2 rounded-sm border border-amber-300 bg-amber-50 px-4 py-3 text-amber-900 transition-colors hover:bg-amber-100 sm:flex-row sm:items-center sm:justify-between"
-            >
-              <div className="flex items-start gap-2 text-sm">
-                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />
-                <p>
-                  Có{' '}
-                  <strong>{stats!.unassignedEmployees.toLocaleString('vi-VN')}</strong> nhân viên
-                  chưa gán ca — quét cửa sẽ không được tính chấm công.
-                </p>
-              </div>
-              <span className="inline-flex shrink-0 items-center gap-1 text-sm font-semibold">
-                Vào phân ca
-                <ChevronRight className="h-4 w-4" />
-              </span>
-            </Link>
-          )}
-
-          {/* Stats */}
-          <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-5">
-            {statItems.map((s) => (
-              <div
-                key={s.label}
-                className="flex items-center gap-4 rounded-sm border border-border bg-surface p-4"
-              >
-                <div className="rounded-sm bg-secondary/20 p-2.5">
-                  <s.icon className="h-5 w-5 text-foreground" />
-                </div>
-                <div className="min-w-0">
-                  <p className="mb-0.5 text-label-caps uppercase tracking-wider text-muted-foreground">
-                    {s.label}
-                  </p>
-                  <p className="font-heading text-lg font-bold text-foreground">{s.value}</p>
-                  {s.hint && <p className="truncate text-[10px] text-muted-foreground">{s.hint}</p>}
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {/* Thống kê tóm tắt */}
-          <section className="rounded-sm border border-border bg-surface p-4 lg:p-5">
-            <div className="mb-3 flex items-center gap-3">
-              <h2 className="whitespace-nowrap text-[11px] font-semibold uppercase tracking-[0.15em] text-foreground">
-                Thống kê tóm tắt
-              </h2>
-              <div className="h-px flex-1 bg-border" />
-              {canAccess('/analytics') && (
-                <Link
-                  href="/analytics"
-                  className="inline-flex shrink-0 items-center gap-0.5 text-xs font-semibold text-foreground hover:underline"
-                >
-                  Xem thống kê
-                  <ChevronRight className="h-3.5 w-3.5" />
-                </Link>
-              )}
-            </div>
-
-            <p className="mb-3 text-label-caps font-semibold uppercase tracking-[0.15em] text-foreground">
-              Chấm công hôm nay
-            </p>
-            <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-              {[
-                { icon: LogIn, label: 'Check-in', value: stats?.todayCheckIns ?? 0, tone: '' },
-                { icon: LogOut, label: 'Check-out', value: stats?.todayCheckOuts ?? 0, tone: '' },
-                {
-                  icon: CheckCircle2,
-                  label: 'Đúng giờ',
-                  value: stats?.todayOnTime ?? 0,
-                  tone: 'text-emerald-600',
-                },
-                {
-                  icon: Clock,
-                  label: 'Đi sớm',
-                  value: stats?.todayEarly ?? 0,
-                  tone: 'text-sky-600',
-                },
-                {
-                  icon: AlertTriangle,
-                  label: 'Đi muộn',
-                  value: stats?.todayLate ?? 0,
-                  tone: 'text-orange-600',
-                },
-              ].map((s) => (
-                <div
-                  key={s.label}
-                  className="rounded-sm border border-border px-3 py-3 text-center"
-                >
-                  <s.icon className={cn('mx-auto mb-1.5 h-4 w-4', s.tone || 'text-foreground')} />
-                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                    {s.label}
-                  </p>
-                  <p className={cn('font-heading text-lg font-bold', s.tone || 'text-foreground')}>
-                    {s.value.toLocaleString('vi-VN')}
-                  </p>
-                </div>
-              ))}
-            </div>
-
-            <p className="mb-3 text-label-caps font-semibold uppercase tracking-[0.15em] text-foreground">
-              Nhân sự theo nhà thầu
-            </p>
-            {contractorPie.length === 0 ? (
-              <p className="text-xs text-muted-foreground">Chưa có nhân sự gắn nhà thầu</p>
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+          <DesignCard
+            className="lg:col-span-2"
+            title="Xu hướng ra vào"
+            description={`Lượt check-in và check-out theo ngày (${rangeLabel}).`}
+          >
+            {trafficChart.length === 0 ? (
+              <p className="py-16 text-center text-sm text-muted-foreground">Chưa có dữ liệu</p>
             ) : (
-              <div className="flex items-center gap-2">
-                <div className="h-[72px] w-[72px] shrink-0">
+              <div className="h-[280px] w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={trafficChart} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+                    <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+                    <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+                    <Tooltip />
+                    <Legend />
+                    <Line
+                      type="monotone"
+                      dataKey="checkIns"
+                      name="Check-in"
+                      stroke="#059669"
+                      strokeWidth={2}
+                      dot={false}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="checkOuts"
+                      name="Check-out"
+                      stroke="#ea580c"
+                      strokeWidth={2}
+                      dot={false}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </DesignCard>
+
+          <DesignCard
+            className="lg:col-span-1"
+            title="Nhân sự theo nhà thầu"
+            description="Cơ cấu nhân sự đang gắn nhà thầu."
+          >
+            {contractorPie.length === 0 ? (
+              <p className="py-16 text-center text-sm text-muted-foreground">
+                Chưa có nhân sự gắn nhà thầu
+              </p>
+            ) : (
+              <div className="flex flex-col gap-4">
+                <div className="mx-auto h-[200px] w-full max-w-[220px]">
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
                       <Pie
@@ -315,9 +412,9 @@ export default function HomePage() {
                         nameKey="name"
                         cx="50%"
                         cy="50%"
-                        outerRadius={32}
-                        innerRadius={16}
-                        paddingAngle={1}
+                        outerRadius={88}
+                        innerRadius={48}
+                        paddingAngle={2}
                       >
                         {contractorPie.map((row) => (
                           <Cell key={row.name} fill={row.color} />
@@ -332,14 +429,11 @@ export default function HomePage() {
                     </PieChart>
                   </ResponsiveContainer>
                 </div>
-                <ul className="min-w-0 flex-1 columns-2 gap-x-3 text-[10px] leading-snug sm:columns-3">
+                <ul className="max-h-[120px] space-y-1 overflow-y-auto pr-1">
                   {contractorPie.map((row) => (
-                    <li
-                      key={row.name}
-                      className="mb-0.5 flex break-inside-avoid items-center gap-1"
-                    >
+                    <li key={row.name} className="flex items-center gap-2 text-xs">
                       <span
-                        className="h-1.5 w-1.5 shrink-0 rounded-sm"
+                        className="h-2 w-2 shrink-0 rounded-sm"
                         style={{ backgroundColor: row.color }}
                         aria-hidden
                       />
@@ -352,73 +446,124 @@ export default function HomePage() {
                 </ul>
               </div>
             )}
-          </section>
+          </DesignCard>
+        </div>
 
-          {/* Main grid */}
-          <div className="grid grid-cols-1 gap-8 lg:grid-cols-4">
-            <div className="space-y-8 lg:col-span-3">
-              <section className="rounded-sm border border-border bg-surface p-6 lg:p-8">
-                <SectionHeader label="Vận hành" />
-                <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-5">
-                  {visibleOperations.map((item) => (
-                    <NavButton key={item.path} item={item} />
-                  ))}
-                </div>
-              </section>
-
-              <section className="rounded-sm border border-border bg-surface p-6 lg:p-8">
-                <SectionHeader label="Cấu hình" />
-                <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-5">
-                  {visibleConfigs.map((item) => (
-                    <NavButton key={item.path} item={item} />
-                  ))}
-                </div>
-              </section>
-            </div>
-
-            {/* Recent activity */}
-            <div className="lg:col-span-1">
-              <div className="rounded-sm border border-border bg-surface p-5">
-                <h2 className="mb-4 text-label-caps font-semibold uppercase tracking-[0.15em] text-foreground">
-                  Hoạt động gần đây
-                </h2>
-                <div className="space-y-2">
-                  {logs.length === 0 && (
-                    <p className="text-sm text-muted-foreground">Chưa có hoạt động</p>
-                  )}
-                  {logs.map((log) => (
-                    <div
-                      key={log.id}
-                      className="flex items-center gap-3 rounded-sm border border-border px-3 py-2"
-                    >
-                      <span
-                        className={cn(
-                          'h-2 w-2 shrink-0 rounded-full',
-                          log.isValid === false ? 'bg-destructive' : 'bg-emerald-500',
-                        )}
-                      />
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-medium text-foreground">
-                          {log.user?.fullName ?? 'Không xác định'}
-                        </p>
-                        <p className="truncate text-xs text-muted-foreground">{log.device.name}</p>
-                      </div>
-                      <span className="shrink-0 text-[10px] text-muted-foreground">
-                        {new Date(log.eventAt).toLocaleTimeString('vi-VN')}
-                      </span>
-                    </div>
-                  ))}
-                </div>
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+          <DesignCard
+            className="lg:col-span-2"
+            title="Giao dịch gần nhất"
+            actions={
+              canAccess('/reports') ? (
                 <Link
                   href="/reports"
-                  className="mt-4 flex items-center justify-center gap-1 rounded-sm border border-primary/20 bg-primary/5 py-2 text-label-caps font-semibold uppercase tracking-wider text-foreground transition-colors hover:bg-primary/10"
+                  className="inline-flex items-center gap-0.5 text-xs font-semibold text-foreground hover:underline"
                 >
                   Xem chấm công
-                  <ChevronRight className="h-4 w-4" />
+                  <ChevronRight className="h-3.5 w-3.5" />
                 </Link>
+              ) : undefined
+            }
+          >
+            <RecentLogsTable logs={logs} />
+          </DesignCard>
+
+          <DesignCard
+            className="lg:col-span-1"
+            title="Tài nguyên hệ thống"
+            description="Tổng quan dữ liệu nền tảng."
+          >
+            <SystemResourcesCard overview={dashboard.overview} />
+          </DesignCard>
+        </div>
+      </>
+    );
+  }
+
+  return (
+    <div className="flex h-full flex-col overflow-hidden bg-neutral font-body text-foreground">
+      <div className="flex-1 overflow-y-auto px-6 py-8 lg:px-8">
+        <div className="mx-auto max-w-7xl space-y-6">
+          <div className="flex flex-col items-start justify-between gap-6 lg:flex-row lg:items-center">
+            <div>
+              <span className="text-label-caps uppercase tracking-[0.2em] text-foreground">
+                Access Control
+              </span>
+              <h1 className="mt-1 font-heading text-3xl font-bold text-foreground md:text-4xl">
+                Trang tổng quan
+              </h1>
+              <p className="mt-1 text-sm text-foreground/60">
+                KPI vận hành, xu hướng ra vào và giao dịch gần nhất
+              </p>
+            </div>
+            <div className="flex flex-wrap items-end gap-3">
+              <div>
+                <label className="mb-1 block text-xs text-muted-foreground">Từ ngày</label>
+                <Input
+                  type="date"
+                  className="input-design h-9 min-w-[11.25rem]"
+                  value={from}
+                  max={to || undefined}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setFrom(next);
+                    if (to && next && to < next) setTo(next);
+                  }}
+                />
               </div>
+              <div>
+                <label className="mb-1 block text-xs text-muted-foreground">Đến ngày</label>
+                <Input
+                  type="date"
+                  className="input-design h-9 min-w-[11.25rem]"
+                  value={to}
+                  min={from || undefined}
+                  max={todayIso()}
+                  onChange={(e) => setTo(e.target.value)}
+                />
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                className="h-9"
+                onClick={applyFilter}
+                disabled={!filtersValid || dashboardQuery.isFetching}
+              >
+                Lọc
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-9 gap-1.5"
+                onClick={refresh}
+                disabled={dashboardQuery.isFetching}
+              >
+                <RefreshCw className={cn('h-4 w-4', dashboardQuery.isFetching && 'animate-spin')} />
+                Làm mới
+              </Button>
+              <ClockCard />
             </div>
           </div>
+
+          {!filtersValid && (
+            <p className="text-sm text-destructive">Khoảng ngày không hợp lệ.</p>
+          )}
+
+          {deniedNotice && (
+            <div className="rounded-sm border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              Bạn không có quyền truy cập trang vừa chọn.
+            </div>
+          )}
+
+          <QueryBoundary
+            isLoading={dashboardQuery.isLoading}
+            error={dashboardError}
+            loadingLabel="Đang tải dashboard..."
+            onRetry={refresh}
+          >
+            {data && <DashboardBody dashboard={data} />}
+          </QueryBoundary>
         </div>
       </div>
     </div>

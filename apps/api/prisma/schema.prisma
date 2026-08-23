@@ -89,6 +89,7 @@ model Department {
 
   users User[]
 
+  @@index([isDeleted])
   @@map("departments")
 }
 
@@ -105,6 +106,7 @@ model Contractor {
   users        User[]
   headcounts   DailyContractorHeadcount[]
 
+  @@index([isDeleted])
   @@map("contractors")
 }
 
@@ -126,6 +128,7 @@ model Project {
   transfersFrom UserProjectTransfer[] @relation("TransferFrom")
   transfersTo   UserProjectTransfer[] @relation("TransferTo")
 
+  @@index([isDeleted])
   @@map("projects")
 }
 
@@ -161,6 +164,7 @@ model DailyContractorHeadcount {
 
   @@unique([date, contractorId])
   @@index([date])
+  @@index([contractorId, date])
   @@map("daily_contractor_headcounts")
 }
 
@@ -215,6 +219,10 @@ model User {
 
   @@index([contractorId])
   @@index([projectId])
+  @@index([departmentId, isDeleted])
+  @@index([contractorId, isDeleted])
+  @@index([projectId, isDeleted])
+  @@index([isDeleted, createdAt])
   @@map("users")
 }
 
@@ -243,6 +251,8 @@ model Account {
   projectLinks  AccountProject[]
   projectTransfers UserProjectTransfer[]
 
+  @@index([roleId, isDeleted])
+  @@index([isDeleted, isActive])
   @@map("accounts")
 }
 
@@ -273,6 +283,7 @@ model RefreshToken {
   account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
 
   @@index([accountId])
+  @@index([accountId, revokedAt])
   @@map("refresh_tokens")
 }
 
@@ -294,6 +305,8 @@ model AccessZone {
   accessLogs  AccessLog[]
   presence    UserPresence[]
 
+  @@index([isDeleted, parentZoneId])
+  @@index([parentZoneId, isDeleted])
   @@map("access_zones")
 }
 
@@ -326,6 +339,9 @@ model Device {
   userPermissions UserDevicePermission[]
   accessLogs      AccessLog[]
 
+  @@index([zoneId, isDeleted])
+  @@index([isDeleted, deviceType])
+  @@index([deviceType, isDeleted, zoneId])
   @@map("devices")
 }
 
@@ -342,6 +358,8 @@ model DeviceCameraMapping {
   cameraDevice Device @relation("CameraDevice", fields: [cameraDeviceId], references: [id])
 
   @@unique([akuvoxDeviceId, cameraDeviceId])
+  @@index([akuvoxDeviceId, isDeleted])
+  @@index([cameraDeviceId, isDeleted])
   @@map("device_camera_mappings")
 }
 
@@ -362,6 +380,8 @@ model Credential {
   user       User        @relation(fields: [userId], references: [id])
   accessLogs AccessLog[]
 
+  @@index([userId, isDeleted])
+  @@index([isDeleted, isActive])
   @@map("credentials")
 }
 
@@ -378,6 +398,8 @@ model UserDevicePermission {
   device Device @relation(fields: [deviceId], references: [id])
 
   @@unique([userId, deviceId])
+  @@index([userId, isDeleted])
+  @@index([deviceId, isDeleted])
   @@map("user_device_permissions")
 }
 
@@ -397,6 +419,8 @@ model UserAccessPermission {
   @@unique([userId, zoneId])
   @@index([userId])
   @@index([zoneId])
+  @@index([userId, isDeleted])
+  @@index([zoneId, isDeleted])
   @@map("user_access_permissions")
 }
 
@@ -428,6 +452,11 @@ model AccessLog {
   @@index([userId])
   @@index([projectId])
   @@index([eventAt, isValid])
+  @@index([eventAt, action])
+  @@index([zoneId, eventAt])
+  @@index([projectId, eventAt])
+  @@index([deviceId, eventAt])
+  @@index([userId, eventAt])
   @@map("access_logs")
 }
 
@@ -464,6 +493,7 @@ model UserPresence {
   zone AccessZone? @relation(fields: [currentZoneId], references: [id])
 
   @@index([currentStatus])
+  @@index([currentZoneId])
   @@map("user_presence")
 }
 
@@ -481,6 +511,8 @@ model EmergencyEvent {
   createdBy User?             @relation(fields: [createdById], references: [id])
   muster    EmergencyMuster[]
 
+  @@index([createdAt])
+  @@index([startTime])
   @@map("emergency_events")
 }
 
@@ -499,6 +531,8 @@ model EmergencyMuster {
   markedBy User?          @relation("MusterMarkedBy", fields: [markedById], references: [id])
 
   @@index([eventId])
+  @@index([userId])
+  @@index([eventId, safeStatus])
   @@map("emergency_muster")
 }
 
@@ -522,6 +556,8 @@ model WorkShift {
   employeeShifts    EmployeeShift[]
   attendanceRecords AttendanceRecord[]
 
+  @@index([isDeleted])
+  @@index([isDeleted, isDefault])
   @@map("work_shifts")
 }
 
@@ -540,6 +576,10 @@ model EmployeeShift {
   workShift WorkShift @relation(fields: [workShiftId], references: [id])
 
   @@index([userId, startDate])
+  @@index([userId, isDeleted])
+  @@index([workShiftId, isDeleted])
+  @@index([isDeleted, endDate])
+  @@index([isDeleted, startDate])
   @@map("employee_shifts")
 }
 
@@ -564,6 +604,10 @@ model AttendanceRecord {
   workShift WorkShift? @relation(fields: [workShiftId], references: [id])
 
   @@unique([userId, date])
+  @@index([date])
+  @@index([date, status])
+  @@index([date, workShiftId])
+  @@index([workShiftId, date])
   @@map("attendance_records")
 }
 
@@ -589,5 +633,6 @@ model AuditLog {
   createdAt DateTime @default(now())
 
   @@index([createdAt])
+  @@index([entity, createdAt])
   @@map("audit_logs")
 }

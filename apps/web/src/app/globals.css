@@ -97,6 +97,16 @@
     @apply w-full rounded-sm border border-border bg-surface px-3.5 py-2.5 text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/25 focus-visible:border-primary;
   }
 
+  .input-design[type='date'] {
+    min-width: 11.25rem;
+    padding-right: 0.5rem;
+  }
+
+  .input-design[type='date']::-webkit-calendar-picker-indicator {
+    margin-left: 0.125rem;
+    cursor: pointer;
+  }
+
   .card-design {
     @apply bg-surface text-foreground rounded-sm border border-border p-5;
   }

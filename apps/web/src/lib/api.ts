@@ -174,6 +174,38 @@ export async function getStatsOverview() {
   return apiRequest<StatsOverview>('/stats/overview');
 }
 
+export type HomeZoneStat = {
+  id: string;
+  name: string;
+  parentZoneId: string | null;
+  presentCount: number;
+  deviceTotal: number;
+  devicesOnline: number;
+  todayEvents: number;
+  todayInvalid: number;
+};
+
+export type HomeDashboard = {
+  from: string;
+  to: string;
+  overview: StatsOverview;
+  zones: HomeZoneStat[];
+  traffic7d: Array<{ date: string; checkIns: number; checkOuts: number }>;
+  periodSummary: {
+    checkIns: number;
+    checkOuts: number;
+    invalidEvents: number;
+  };
+};
+
+export async function getHomeDashboard(params?: { from?: string; to?: string }) {
+  const search = new URLSearchParams();
+  if (params?.from) search.set('from', params.from);
+  if (params?.to) search.set('to', params.to);
+  const qs = search.toString();
+  return apiRequest<HomeDashboard>(`/stats/home-dashboard${qs ? `?${qs}` : ''}`);
+}
+
 export type AnalyticsStats = {
   from: string;
   to: string;
