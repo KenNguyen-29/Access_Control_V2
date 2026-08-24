@@ -38,6 +38,13 @@ export const queryKeys = {
     status ? (['credentials', status] as const) : (['credentials'] as const),
   emergencyDashboard: (eventId?: string) =>
     eventId ? (['emergencyDashboard', eventId] as const) : (['emergencyDashboard'] as const),
-  homeDashboard: (params?: { from?: string; to?: string }) =>
-    ['homeDashboard', params?.from ?? '', params?.to ?? ''] as const,
+  homeDashboard: (params?: { from?: string; to?: string; accountId?: string }) =>
+    [
+      'homeDashboard',
+      params?.accountId ?? '',
+      params?.from ?? '',
+      params?.to ?? '',
+    ] as const,
+  contractors: (accountId?: string) =>
+    accountId ? (['contractors', accountId] as const) : (['contractors'] as const),
 } as const;

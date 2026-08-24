@@ -195,10 +195,19 @@ export class StatsService {
       todayRecordsForEarly,
     ] = await Promise.all([
       this.prisma.user.count({ where: userScope }),
-      this.prisma.device.count({ where: { isDeleted: false, deviceType: 'CAMERA' } }),
-      this.prisma.device.count({ where: { isDeleted: false, deviceType: 'AKUVOX' } }),
-      this.prisma.device.count({ where: { isDeleted: false, deviceType: 'DNAKE' } }),
-      this.prisma.workShift.count({ where: { isDeleted: false } }),
+      // Device inventory is platform-wide — never expose totals to project-scoped accounts.
+      projectIds === undefined
+        ? this.prisma.device.count({ where: { isDeleted: false, deviceType: 'CAMERA' } })
+        : Promise.resolve(0),
+      projectIds === undefined
+        ? this.prisma.device.count({ where: { isDeleted: false, deviceType: 'AKUVOX' } })
+        : Promise.resolve(0),
+      projectIds === undefined
+        ? this.prisma.device.count({ where: { isDeleted: false, deviceType: 'DNAKE' } })
+        : Promise.resolve(0),
+      projectIds === undefined
+        ? this.prisma.workShift.count({ where: { isDeleted: false } })
+        : Promise.resolve(0),
       this.prisma.employeeShift.count({
         where: {
           isDeleted: false,

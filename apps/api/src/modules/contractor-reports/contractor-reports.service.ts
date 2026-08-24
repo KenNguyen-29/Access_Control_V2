@@ -126,7 +126,20 @@ export class ContractorReportsService {
     // 3 queries total — avoid per-contractor Promise.all (exhausts Prisma pool / hangs API).
     const [contractors, registeredGroups, presentLogs] = await Promise.all([
       this.prisma.contractor.findMany({
-        where: { isDeleted: false },
+        where: {
+          isDeleted: false,
+          ...(params.projectIds !== undefined
+            ? {
+                projectLinks: {
+                  some: {
+                    projectId: {
+                      in: params.projectIds.length === 0 ? ([] as string[]) : params.projectIds,
+                    },
+                  },
+                },
+              }
+            : {}),
+        },
         orderBy: { name: 'asc' },
         select: { id: true, code: true, name: true },
       }),

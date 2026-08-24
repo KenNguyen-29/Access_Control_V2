@@ -38,6 +38,7 @@ import { cn } from '@/lib/utils';
 import { queryKeys } from '@/lib/queryKeys';
 import { getAccessLogs, getHomeDashboard, type AccessLog, type HomeDashboard } from '@/lib/api';
 import { usePermissions } from '@/hooks/usePermissions';
+import { useAuth } from '@/hooks/useAuth';
 
 function todayIso(): string {
   const d = new Date();
@@ -202,13 +203,19 @@ function RecentLogsTable({ logs }: { logs: AccessLog[] }) {
 
 function SystemResourcesCard({
   overview,
+  showDeviceInventory,
 }: {
   overview: HomeDashboard['overview'];
+  showDeviceInventory: boolean;
 }) {
   const items: Array<{ label: string; value: number; icon: LucideIcon }> = [
     { label: 'Nhân sự', value: overview.users, icon: Users },
-    { label: 'Thiết bị', value: overview.devices, icon: Cpu },
-    { label: 'Camera', value: overview.cameras, icon: Camera },
+    ...(showDeviceInventory
+      ? [
+          { label: 'Thiết bị', value: overview.devices, icon: Cpu },
+          { label: 'Camera', value: overview.cameras, icon: Camera },
+        ]
+      : []),
     { label: 'Dự án', value: overview.projects, icon: Building2 },
     { label: 'Nhà thầu', value: overview.contractors, icon: HardHat },
   ];
@@ -237,6 +244,8 @@ function SystemResourcesCard({
 
 export default function HomePage() {
   const { canAccess } = usePermissions();
+  const { account } = useAuth();
+  const accountId = account?.id ?? '';
   const [from, setFrom] = useState(() => daysAgoIso(6));
   const [to, setTo] = useState(todayIso);
   const [appliedFrom, setAppliedFrom] = useState(() => daysAgoIso(6));
@@ -254,15 +263,19 @@ export default function HomePage() {
   }, []);
 
   const dashboardQuery = useQuery({
-    queryKey: queryKeys.homeDashboard({ from: appliedFrom, to: appliedTo }),
+    queryKey: queryKeys.homeDashboard({
+      from: appliedFrom,
+      to: appliedTo,
+      accountId,
+    }),
     queryFn: () => getHomeDashboard({ from: appliedFrom, to: appliedTo }),
-    enabled: Boolean(appliedFrom && appliedTo && appliedFrom <= appliedTo),
+    enabled: Boolean(accountId && appliedFrom && appliedTo && appliedFrom <= appliedTo),
   });
 
   const logsQuery = useQuery({
-    queryKey: ['accessLogs', 'home-recent', appliedFrom, appliedTo],
+    queryKey: ['accessLogs', 'home-recent', accountId, appliedFrom, appliedTo],
     queryFn: () => getAccessLogs({ limit: 8, from: appliedFrom, to: appliedTo }),
-    enabled: Boolean(appliedFrom && appliedTo && appliedFrom <= appliedTo),
+    enabled: Boolean(accountId && appliedFrom && appliedTo && appliedFrom <= appliedTo),
   });
 
   const data = dashboardQuery.data;
@@ -473,7 +486,10 @@ export default function HomePage() {
             title="Tài nguyên hệ thống"
             description="Tổng quan dữ liệu nền tảng."
           >
-            <SystemResourcesCard overview={dashboard.overview} />
+            <SystemResourcesCard
+              overview={dashboard.overview}
+              showDeviceInventory={canAccess('/devices')}
+            />
           </DesignCard>
         </div>
       </>

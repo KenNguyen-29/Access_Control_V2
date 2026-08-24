@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useQueryClient } from '@tanstack/react-query';
 import { changePassword, getMe, login, logout as apiLogout } from '@/lib/api';
 
 export type Account = {
@@ -16,6 +17,7 @@ export type Account = {
 
 export function useAuth() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [account, setAccount] = useState<Account | null>(null);
   const [loading, setLoading] = useState(true);
@@ -46,6 +48,8 @@ export function useAuth() {
 
   const signIn = useCallback(
     async (username: string, password: string) => {
+      // Drop previous account's cached lists (prevents STAFF briefly seeing ADMIN data).
+      queryClient.clear();
       const result = await login(username, password);
       localStorage.setItem('accessToken', result.accessToken);
       localStorage.setItem('account', JSON.stringify(result.account));
@@ -59,7 +63,7 @@ export function useAuth() {
       }
       router.push('/home');
     },
-    [router],
+    [router, queryClient],
   );
 
   const signOut = useCallback(async () => {
@@ -68,13 +72,14 @@ export function useAuth() {
     } catch {
       /* ignore */
     }
+    queryClient.clear();
     localStorage.removeItem('accessToken');
     localStorage.removeItem('account');
     document.cookie = 'acv2_session=; path=/; Max-Age=0';
     setAccount(null);
     setIsAuthenticated(false);
     router.push('/login');
-  }, [router]);
+  }, [router, queryClient]);
 
   const updatePassword = useCallback(
     async (currentPassword: string, newPassword: string) => {

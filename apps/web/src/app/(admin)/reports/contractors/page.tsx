@@ -30,6 +30,8 @@ import {
   getWorkShifts,
   runContractorSnapshot,
 } from '@/lib/api';
+import { queryKeys } from '@/lib/queryKeys';
+import { useAuth } from '@/hooks/useAuth';
 
 const PAGE_SIZE = 10;
 
@@ -74,13 +76,17 @@ export default function ContractorReportsPage() {
   const [shiftPage, setShiftPage] = useState(1);
   const [monthlyPage, setMonthlyPage] = useState(1);
 
+  const { account } = useAuth();
+  const accountId = account?.id ?? '';
   const contractorsQuery = useQuery({
-    queryKey: ['contractors'],
+    queryKey: queryKeys.contractors(accountId),
     queryFn: () => getContractors(),
+    enabled: Boolean(accountId),
   });
   const projectsQuery = useQuery({
-    queryKey: ['projects', 'reports-filter'],
+    queryKey: ['projects', 'reports-filter', accountId],
     queryFn: () => getProjects(),
+    enabled: Boolean(accountId),
   });
   const shiftsQuery = useQuery({
     queryKey: ['workShifts'],
