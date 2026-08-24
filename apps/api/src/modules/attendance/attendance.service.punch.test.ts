@@ -85,8 +85,18 @@ function makeService(opts: {
 
   const calc = new AttendanceCalculationService(settings as never);
   const config = { get: (_key: string, fallback?: string) => fallback ?? '5' };
+  const storage = {
+    getAssetUrl: async () => undefined,
+    getSignedUrl: async () => undefined,
+  };
 
-  return new AttendanceService(prisma as never, config as never, calc, settings as never);
+  return new AttendanceService(
+    prisma as never,
+    config as never,
+    calc,
+    settings as never,
+    storage as never,
+  );
 }
 
 describe('AttendanceService.processPunch requires assigned shift', () => {

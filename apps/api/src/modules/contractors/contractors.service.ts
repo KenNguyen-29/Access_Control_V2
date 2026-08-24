@@ -8,10 +8,24 @@ import { UpdateContractorDto } from './dto/update-contractor.dto';
 export class ContractorsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async findAll(opts: { search?: string; page?: number; pageSize?: number } = {}) {
+  async findAll(
+    opts: { search?: string; page?: number; pageSize?: number } = {},
+    scopeProjectIds: string[] | null = null,
+  ) {
     const search = opts.search?.trim();
+    const scopeFilter =
+      scopeProjectIds === null
+        ? {}
+        : {
+            projectLinks: {
+              some: {
+                projectId: { in: scopeProjectIds },
+              },
+            },
+          };
     const where = {
       isDeleted: false,
+      ...scopeFilter,
       ...(search
         ? {
             OR: [
@@ -60,9 +74,19 @@ export class ContractorsService {
     return rows.map(mapRow);
   }
 
-  async findOne(id: string) {
+  async findOne(id: string, scopeProjectIds: string[] | null = null) {
     const row = await this.prisma.contractor.findFirst({
-      where: { id, isDeleted: false },
+      where: {
+        id,
+        isDeleted: false,
+        ...(scopeProjectIds === null
+          ? {}
+          : {
+              projectLinks: {
+                some: { projectId: { in: scopeProjectIds } },
+              },
+            }),
+      },
       include: {
         projectLinks: {
           include: { project: true },

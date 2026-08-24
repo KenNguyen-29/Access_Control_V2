@@ -2,8 +2,11 @@ import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } f
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import { Roles } from '../../common/decorators/roles.decorator';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RolesGuard } from '../../common/guards/roles.guard';
+import { ProjectScopeService } from '../../common/services/project-scope.service';
 import { paginatedResponse, successResponse } from '../../common/utils/response.util';
+import type { JwtPayload } from '../auth/jwt.strategy';
 import { ContractorsService } from './contractors.service';
 import { CreateContractorDto } from './dto/create-contractor.dto';
 import { TransferContractorProjectDto } from './dto/transfer-contractor-project.dto';
@@ -14,11 +17,15 @@ import { ContractorsQueryDto } from './dto/contractors-query.dto';
 @ApiBearerAuth()
 @Controller('contractors')
 export class ContractorsController {
-  constructor(private readonly service: ContractorsService) {}
+  constructor(
+    private readonly service: ContractorsService,
+    private readonly projectScope: ProjectScopeService,
+  ) {}
 
   @Get()
-  async findAll(@Query() query: ContractorsQueryDto) {
-    const result = await this.service.findAll(query);
+  async findAll(@Query() query: ContractorsQueryDto, @CurrentUser() user?: JwtPayload) {
+    const scope = await this.projectScope.scopeFromLiveUser(user);
+    const result = await this.service.findAll(query, scope);
     if (Array.isArray(result)) {
       return successResponse(result);
     }
@@ -26,8 +33,9 @@ export class ContractorsController {
   }
 
   @Get(':id')
-  async findOne(@Param('id') id: string) {
-    return successResponse(await this.service.findOne(id));
+  async findOne(@Param('id') id: string, @CurrentUser() user?: JwtPayload) {
+    const scope = await this.projectScope.scopeFromLiveUser(user);
+    return successResponse(await this.service.findOne(id, scope));
   }
 
   @Post()

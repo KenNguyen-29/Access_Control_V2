@@ -146,11 +146,33 @@ export class StatsService {
     private readonly calc: AttendanceCalculationService,
   ) {}
 
-  async overview(): Promise<StatsOverview> {
+  async overview(projectIds?: string[]): Promise<StatsOverview> {
     const startOfDay = new Date();
     startOfDay.setHours(0, 0, 0, 0);
     const endOfDay = new Date(startOfDay);
     endOfDay.setDate(endOfDay.getDate() + 1);
+
+    const userScope =
+      projectIds === undefined
+        ? { isDeleted: false }
+        : { isDeleted: false, projectId: { in: projectIds } };
+    const contractorScope =
+      projectIds === undefined
+        ? { isDeleted: false }
+        : {
+            isDeleted: false,
+            projectLinks: { some: { projectId: { in: projectIds } } },
+          };
+    const projectScope =
+      projectIds === undefined
+        ? { isDeleted: false }
+        : { isDeleted: false, id: { in: projectIds } };
+    const logScope =
+      projectIds === undefined ? {} : { projectId: { in: projectIds } };
+    const assignmentUserScope =
+      projectIds === undefined ? {} : { user: { projectId: { in: projectIds } } };
+    const attendanceUserScope =
+      projectIds === undefined ? {} : { user: { projectId: { in: projectIds } } };
 
     const [
       users,
@@ -172,13 +194,17 @@ export class StatsService {
       todayOnTime,
       todayRecordsForEarly,
     ] = await Promise.all([
-      this.prisma.user.count({ where: { isDeleted: false } }),
+      this.prisma.user.count({ where: userScope }),
       this.prisma.device.count({ where: { isDeleted: false, deviceType: 'CAMERA' } }),
       this.prisma.device.count({ where: { isDeleted: false, deviceType: 'AKUVOX' } }),
       this.prisma.device.count({ where: { isDeleted: false, deviceType: 'DNAKE' } }),
       this.prisma.workShift.count({ where: { isDeleted: false } }),
       this.prisma.employeeShift.count({
-        where: { isDeleted: false, OR: [{ endDate: null }, { endDate: { gte: startOfDay } }] },
+        where: {
+          isDeleted: false,
+          OR: [{ endDate: null }, { endDate: { gte: startOfDay } }],
+          ...assignmentUserScope,
+        },
       }),
       // Match shifts UI isAssignmentActive: endDate null OR endDate > today (ended-on-today = not active).
       this.prisma.employeeShift.findMany({
@@ -186,29 +212,37 @@ export class StatsService {
           isDeleted: false,
           startDate: { lte: startOfDay },
           OR: [{ endDate: null }, { endDate: { gt: startOfDay } }],
+          ...assignmentUserScope,
         },
         select: { userId: true },
         distinct: ['userId'],
       }),
       this.prisma.attendanceRecord.count({
-        where: { date: { gte: startOfDay, lt: endOfDay }, workShiftId: { not: null } },
+        where: {
+          date: { gte: startOfDay, lt: endOfDay },
+          workShiftId: { not: null },
+          ...attendanceUserScope,
+        },
       }),
       this.prisma.attendanceRecord.count({
         where: {
           date: { gte: startOfDay, lt: endOfDay },
           workShiftId: { not: null },
           status: 'LATE',
+          ...attendanceUserScope,
         },
       }),
-      this.prisma.accessLog.count({ where: { eventAt: { gte: startOfDay, lt: endOfDay } } }),
       this.prisma.accessLog.count({
-        where: { eventAt: { gte: startOfDay, lt: endOfDay }, isValid: false },
+        where: { eventAt: { gte: startOfDay, lt: endOfDay }, ...logScope },
       }),
-      this.prisma.contractor.count({ where: { isDeleted: false } }),
-      this.prisma.project.count({ where: { isDeleted: false } }),
+      this.prisma.accessLog.count({
+        where: { eventAt: { gte: startOfDay, lt: endOfDay }, isValid: false, ...logScope },
+      }),
+      this.prisma.contractor.count({ where: contractorScope }),
+      this.prisma.project.count({ where: projectScope }),
       this.prisma.user.groupBy({
         by: ['contractorId'],
-        where: { isDeleted: false, contractorId: { not: null } },
+        where: { ...userScope, contractorId: { not: null } },
         _count: { _all: true },
         orderBy: { _count: { contractorId: 'desc' } },
         take: 8,
@@ -217,12 +251,14 @@ export class StatsService {
         where: {
           eventAt: { gte: startOfDay, lt: endOfDay },
           action: 'CHECK_IN',
+          ...logScope,
         },
       }),
       this.prisma.accessLog.count({
         where: {
           eventAt: { gte: startOfDay, lt: endOfDay },
           action: 'CHECK_OUT',
+          ...logScope,
         },
       }),
       this.prisma.attendanceRecord.count({
@@ -231,6 +267,7 @@ export class StatsService {
           workShiftId: { not: null },
           checkInAt: { not: null },
           lateMinutes: 0,
+          ...attendanceUserScope,
         },
       }),
       this.prisma.attendanceRecord.findMany({
@@ -238,6 +275,7 @@ export class StatsService {
           date: { gte: startOfDay, lt: endOfDay },
           workShiftId: { not: null },
           checkInAt: { not: null },
+          ...attendanceUserScope,
         },
         select: {
           checkInAt: true,
@@ -311,7 +349,7 @@ export class StatsService {
     projectIds?: string[],
     params?: { from?: string; to?: string },
   ): Promise<HomeDashboard> {
-    const overview = await this.overview();
+    const overview = await this.overview(projectIds);
 
     const now = new Date();
     const todayLocal = new Date(now.getFullYear(), now.getMonth(), now.getDate());

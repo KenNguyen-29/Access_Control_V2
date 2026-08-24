@@ -355,6 +355,7 @@ export class AkuvoxEventService {
     skipPunch?: boolean;
   }) {
     const { device, user, eventAt, sourceEventId, rawPayload, pendingSnapshot } = params;
+    const snapshotFromPayload = pendingSnapshot ?? this.snapshotFromPayload(device.id, rawPayload);
 
     if (user?.id) {
       const cooldownSince = new Date(eventAt.getTime() - FACE_SCAN_COOLDOWN_MS);
@@ -494,8 +495,21 @@ export class AkuvoxEventService {
       `Processed event accessLogId=${accessLog.id} action=${action} attendanceId=${attendanceId ?? '—'} valid=${isValid}`,
     );
 
-    this.scheduleSnapshot(accessLog.id, device.id, checkinEvent, pendingSnapshot);
+    this.scheduleSnapshot(accessLog.id, device.id, checkinEvent, snapshotFromPayload);
 
     return { processed: true, accessLogId: accessLog.id, attendanceId };
+  }
+
+  private snapshotFromPayload(
+    deviceId: string,
+    raw: object,
+  ): { path: string; buffer: Buffer } | undefined {
+    const rec = raw as Record<string, unknown>;
+    const imageData = rec.captureImage ?? rec.imageBase64 ?? rec.pic ?? rec.photo ?? rec.image;
+    if (typeof imageData !== 'string' || !imageData.trim()) return undefined;
+    const base64 = imageData.replace(/^data:image\/\w+;base64,/, '');
+    const buffer = Buffer.from(base64, 'base64');
+    if (buffer.length < 80) return undefined;
+    return { path: `snapshots/${deviceId}/${Date.now()}.jpg`, buffer };
   }
 }

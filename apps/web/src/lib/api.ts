@@ -418,7 +418,15 @@ export type AccessLog = {
   isValid?: boolean;
   warningMessage?: string | null;
   zoneId?: string | null;
-  user?: { fullName: string; employeeCode: string; department?: Department | null } | null;
+  snapshotPath?: string | null;
+  snapshotUrl?: string | null;
+  user?: {
+    fullName: string;
+    employeeCode: string;
+    faceImagePath?: string | null;
+    faceImageUrl?: string | null;
+    department?: Department | null;
+  } | null;
   device: { id: string; name: string; code: string };
   zone?: { id: string; name: string } | null;
 };

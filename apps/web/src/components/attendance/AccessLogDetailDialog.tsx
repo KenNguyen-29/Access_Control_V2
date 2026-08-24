@@ -90,6 +90,8 @@ export function AccessLogDetailDialog({
     extras?.departmentName ||
     log.user?.department?.name ||
     '—';
+  const snapshotUrl = extras?.snapshotUrl || log.snapshotUrl || undefined;
+  const faceImageUrl = extras?.faceImageUrl || log.user?.faceImageUrl || undefined;
 
   return (
     <Dialog
@@ -103,8 +105,8 @@ export function AccessLogDetailDialog({
         <div className="flex gap-4">
           <FaceThumb
             name={name}
-            faceImageUrl={extras?.faceImageUrl}
-            snapshotUrl={extras?.snapshotUrl}
+            faceImageUrl={faceImageUrl}
+            snapshotUrl={snapshotUrl}
             invalid={invalid || hasWarning}
           />
           <div className="min-w-0 flex-1 space-y-1.5">

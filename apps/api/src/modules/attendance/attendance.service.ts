@@ -21,6 +21,7 @@ import {
   type AttendanceExcelColumnKey,
 } from './attendance-excel.util';
 import { attachPunchLocations } from './punch-location.util';
+import { StorageService } from '../storage/storage.service';
 
 export type AttendanceImportResult = {
   created: number;
@@ -49,7 +50,41 @@ export class AttendanceService {
     private readonly config: ConfigService,
     private readonly calc: AttendanceCalculationService,
     private readonly settings: SystemSettingsService,
+    private readonly storage: StorageService,
   ) {}
+
+  private async resolveMediaUrl(path: string | null | undefined): Promise<string | undefined> {
+    if (!path?.trim()) return undefined;
+    const normalized = path.replace(/\\/g, '/');
+    try {
+      return await this.storage.getAssetUrl(normalized, { forBrowser: true });
+    } catch {
+      try {
+        return await this.storage.getSignedUrl(normalized);
+      } catch {
+        return undefined;
+      }
+    }
+  }
+
+  private async withAccessLogMedia<
+    T extends {
+      snapshotPath: string | null;
+      user: { faceImagePath: string | null } | null;
+    },
+  >(items: T[]) {
+    return Promise.all(
+      items.map(async (item) => {
+        const snapshotUrl = await this.resolveMediaUrl(item.snapshotPath);
+        const faceImageUrl = await this.resolveMediaUrl(item.user?.faceImagePath);
+        return {
+          ...item,
+          snapshotUrl,
+          user: item.user ? { ...item.user, faceImageUrl } : item.user,
+        };
+      }),
+    );
+  }
 
   private async punchCooldownMinutes(): Promise<number> {
     const fromDb = await this.settings.getNumber(SETTING_KEY.PUNCH_COOLDOWN_MINUTES, NaN);
@@ -226,15 +261,19 @@ export class AttendanceService {
       hasLate?: boolean;
       hasEarlyLeave?: boolean;
       hasOt?: boolean;
+      projectIds?: string[];
     },
   ) {
     const page = query.page ?? 1;
     const pageSize = query.pageSize ?? 20;
     const search = query.search?.trim();
     const userFilter =
-      query.departmentId || search
+      query.departmentId || search || query.projectIds !== undefined
         ? {
             user: {
+              ...(query.projectIds !== undefined
+                ? { projectId: { in: query.projectIds } }
+                : {}),
               ...(query.departmentId ? { departmentId: query.departmentId } : {}),
               ...(search
                 ? {
@@ -286,7 +325,7 @@ export class AttendanceService {
     return { items: withLocation, total, page, pageSize };
   }
 
-  findAccessLogs(query: {
+  async findAccessLogs(query: {
     limit?: number;
     page?: number;
     pageSize?: number;
@@ -299,9 +338,11 @@ export class AttendanceService {
     action?: AccessAction;
     isValid?: boolean;
     unknownOnly?: boolean;
+    projectIds?: string[];
   } = {}) {
     const search = query.search?.trim();
     const where = {
+      ...(query.projectIds !== undefined ? { projectId: { in: query.projectIds } } : {}),
       ...(query.deviceId ? { deviceId: query.deviceId } : {}),
       ...(query.zoneId ? { zoneId: query.zoneId } : {}),
       ...(query.action ? { action: query.action } : {}),
@@ -341,7 +382,7 @@ export class AttendanceService {
     if (query.page != null) {
       const page = Math.max(1, query.page);
       const pageSize = Math.min(100, Math.max(1, query.pageSize ?? 10));
-      return this.prisma.$transaction([
+      const [rawItems, total] = await this.prisma.$transaction([
         this.prisma.accessLog.findMany({
           where,
           skip: (page - 1) * pageSize,
@@ -350,16 +391,19 @@ export class AttendanceService {
           include,
         }),
         this.prisma.accessLog.count({ where }),
-      ]).then(([items, total]) => ({ items, total, page, pageSize }));
+      ]);
+      const items = await this.withAccessLogMedia(rawItems);
+      return { items, total, page, pageSize };
     }
 
     const limit = query.limit ?? 50;
-    return this.prisma.accessLog.findMany({
+    const rawItems = await this.prisma.accessLog.findMany({
       where,
       take: limit,
       orderBy: { eventAt: 'desc' },
       include,
     });
+    return this.withAccessLogMedia(rawItems);
   }
 
   async findRecordsForExport(query: { userId?: string; from?: string; to?: string }) {

@@ -11,7 +11,10 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiBody, ApiConsumes, ApiTags } from '@nestjs/swagger';
 import { Response } from 'express';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { ProjectScopeService } from '../../common/services/project-scope.service';
 import { paginatedResponse, successResponse } from '../../common/utils/response.util';
+import type { JwtPayload } from '../auth/jwt.strategy';
 import { formatLocalDate, sendXlsx } from './attendance-excel.util';
 import { AttendanceRecordsQueryDto } from './dto/attendance-records-query.dto';
 import { AccessLogsQueryDto } from './dto/access-logs-query.dto';
@@ -21,17 +24,37 @@ import { AttendanceService } from './attendance.service';
 @ApiBearerAuth()
 @Controller('attendance')
 export class AttendanceController {
-  constructor(private readonly service: AttendanceService) {}
+  constructor(
+    private readonly service: AttendanceService,
+    private readonly projectScope: ProjectScopeService,
+  ) {}
+
+  private async scopedProjectIds(user?: JwtPayload) {
+    const scope = await this.projectScope.scopeFromLiveUser(user);
+    return this.projectScope.mergeProjectIdList(scope);
+  }
 
   @Get('records')
-  async findRecords(@Query() query: AttendanceRecordsQueryDto) {
-    const result = await this.service.findRecords(query);
+  async findRecords(
+    @Query() query: AttendanceRecordsQueryDto,
+    @CurrentUser() user?: JwtPayload,
+  ) {
+    const result = await this.service.findRecords({
+      ...query,
+      projectIds: await this.scopedProjectIds(user),
+    });
     return paginatedResponse(result.items, result.total, result.page, result.pageSize);
   }
 
   @Get('access-logs')
-  async findAccessLogs(@Query() query: AccessLogsQueryDto) {
-    const result = await this.service.findAccessLogs(query);
+  async findAccessLogs(
+    @Query() query: AccessLogsQueryDto,
+    @CurrentUser() user?: JwtPayload,
+  ) {
+    const result = await this.service.findAccessLogs({
+      ...query,
+      projectIds: await this.scopedProjectIds(user),
+    });
     if (Array.isArray(result)) {
       return successResponse(result);
     }

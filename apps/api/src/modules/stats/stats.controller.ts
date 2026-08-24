@@ -28,8 +28,9 @@ export class StatsController {
   }
 
   @Get('overview')
-  async overview() {
-    return successResponse(await this.service.overview());
+  async overview(@CurrentUser() user?: JwtPayload) {
+    const projectIds = await this.scopedProjectIds(user!);
+    return successResponse(await this.service.overview(projectIds));
   }
 
   @Get('home-dashboard')

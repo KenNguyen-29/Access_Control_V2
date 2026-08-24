@@ -638,7 +638,7 @@ export default function DevicesPage() {
 
       <DesignCard
         title={`Liên kết đầu đọc ↔ Camera (${mappings.length})`}
-        description="Gắn camera giám sát với đầu đọc Akuvox/DNAKE để hiển thị khi có sự kiện."
+        description="Tùy chọn: gắn camera phụ. Ảnh lúc quét mặt lấy từ chính máy DNAKE/Akuvox, không bắt buộc liên kết này."
       >
         <QueryBoundary
           isLoading={loading}
@@ -797,7 +797,9 @@ export default function DevicesPage() {
             />
             <FieldError message={fieldErrors.rtspUrl} />
             <p className="mt-1 text-xs text-muted-foreground">
-              Mẫu có sẵn — chỉ cần sửa IP (và cổng/đường dẫn nếu khác) cho đúng thiết bị.
+              {form.deviceType === 'CAMERA'
+                ? 'Mẫu có sẵn — chỉ cần sửa IP (và cổng/đường dẫn nếu khác) cho đúng camera.'
+                : 'Không bắt buộc. Để trống thì server tự cắt ảnh từ panel (DNAKE HTTP snapshot / RTSP mặc định theo IP máy). Chỉ điền nếu RTSP của máy khác mẫu mặc định.'}
             </p>
           </div>
           <div className="grid grid-cols-2 gap-3 rounded-sm border border-border bg-muted/20 p-3">
