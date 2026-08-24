@@ -42,7 +42,7 @@ export class UsersController {
 
   @Get()
   async findAll(@Query() query: UsersQueryDto, @CurrentUser() user: JwtPayload) {
-    const scope = this.projectScope.scopeFromUser(user);
+    const scope = await this.projectScope.scopeFromLiveUser(user);
     const scopeFilter = this.projectScope.mergeProjectFilter(scope, query.projectId);
     const result = await this.usersService.findAll(query, scopeFilter);
     return paginatedResponse(result.items, result.total, result.page, result.pageSize);
@@ -50,7 +50,7 @@ export class UsersController {
 
   @Get('ids')
   async findIds(@Query() query: UsersIdsQueryDto, @CurrentUser() user: JwtPayload) {
-    const scope = this.projectScope.scopeFromUser(user);
+    const scope = await this.projectScope.scopeFromLiveUser(user);
     const scopeFilter = this.projectScope.mergeProjectFilter(scope, query.projectId);
     const result = await this.usersService.findIds(query, scopeFilter);
     return successResponse(result);
@@ -106,10 +106,7 @@ export class UsersController {
   @Get(':id')
   async findOne(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
     const row = await this.usersService.findOne(id);
-    this.projectScope.assertProjectInScope(
-      this.projectScope.scopeFromUser(user),
-      row.projectId,
-    );
+    this.projectScope.assertProjectInScope(await this.projectScope.scopeFromLiveUser(user), row.projectId);
     return successResponse(row);
   }
 
@@ -117,10 +114,7 @@ export class UsersController {
   @UseGuards(RolesGuard)
   @Roles(UserRole.ADMIN, UserRole.HR)
   async create(@Body() dto: CreateUserDto, @CurrentUser() user: JwtPayload) {
-    this.projectScope.assertProjectInScope(
-      this.projectScope.scopeFromUser(user),
-      dto.projectId,
-    );
+    this.projectScope.assertProjectInScope(await this.projectScope.scopeFromLiveUser(user), dto.projectId);
     const created = await this.usersService.create(dto);
     return successResponse(created, 'User created');
   }
@@ -142,7 +136,7 @@ export class UsersController {
     @CurrentUser() account: JwtPayload,
   ) {
     const existing = await this.usersService.findOne(id);
-    const scope = this.projectScope.scopeFromUser(account);
+    const scope = await this.projectScope.scopeFromLiveUser(account);
     this.projectScope.assertProjectInScope(scope, existing.projectId);
     this.projectScope.assertProjectInScope(scope, dto.toProjectId);
     const result = await this.usersService.transferProject(id, dto, account.sub);
@@ -158,15 +152,10 @@ export class UsersController {
     @CurrentUser() user: JwtPayload,
   ) {
     const existing = await this.usersService.findOne(id);
-    this.projectScope.assertProjectInScope(
-      this.projectScope.scopeFromUser(user),
-      existing.projectId,
-    );
+    const scope = await this.projectScope.scopeFromLiveUser(user);
+    this.projectScope.assertProjectInScope(scope, existing.projectId);
     if (dto.projectId !== undefined) {
-      this.projectScope.assertProjectInScope(
-        this.projectScope.scopeFromUser(user),
-        dto.projectId,
-      );
+      this.projectScope.assertProjectInScope(scope, dto.projectId);
     }
     const updated = await this.usersService.update(id, dto);
     return successResponse(updated, 'User updated');
@@ -177,10 +166,7 @@ export class UsersController {
   @Roles(UserRole.ADMIN, UserRole.HR)
   async remove(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
     const existing = await this.usersService.findOne(id);
-    this.projectScope.assertProjectInScope(
-      this.projectScope.scopeFromUser(user),
-      existing.projectId,
-    );
+    this.projectScope.assertProjectInScope(await this.projectScope.scopeFromLiveUser(user), existing.projectId);
     const result = await this.usersService.remove(id);
     const failed = result.deviceRemove?.failed ?? 0;
     const message =

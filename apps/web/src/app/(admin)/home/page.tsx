@@ -452,7 +452,7 @@ export default function HomePage() {
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
           <DesignCard
             className="lg:col-span-2"
-            title="Giao dịch gần nhất"
+            title="Chấm công gần nhất"
             actions={
               canAccess('/reports') ? (
                 <Link

@@ -15,6 +15,20 @@ export class ProjectScopeService {
     return user.projectIds ?? [];
   }
 
+  async scopeFromLiveUser(user?: JwtPayload): Promise<ProjectScope> {
+    if (!user?.sub) return this.scopeFromUser(user);
+    const account = await this.prisma.account.findFirst({
+      where: { id: user.sub, isActive: true, isDeleted: false },
+      include: {
+        role: { select: { code: true } },
+        projectLinks: { select: { projectId: true } },
+      },
+    });
+    if (!account) return [];
+    if (account.role.code === 'ADMIN') return null;
+    return account.projectLinks.map((link) => link.projectId);
+  }
+
   async loadProjectIdsForAccount(accountId: string, role: string): Promise<string[] | null> {
     if (role === 'ADMIN') return null;
     const links = await this.prisma.accountProject.findMany({

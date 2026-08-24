@@ -23,7 +23,7 @@ export class ProjectsController {
 
   @Get()
   async findAll(@Query() query: ProjectsQueryDto, @CurrentUser() user?: JwtPayload) {
-    const scope = this.projectScope.scopeFromUser(user);
+    const scope = await this.projectScope.scopeFromLiveUser(user);
     const result = await this.service.findAll(query, scope);
     if (Array.isArray(result)) {
       return successResponse(result);
@@ -33,7 +33,7 @@ export class ProjectsController {
 
   @Get(':id')
   async findOne(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
-    this.projectScope.assertProjectInScope(this.projectScope.scopeFromUser(user), id);
+    this.projectScope.assertProjectInScope(await this.projectScope.scopeFromLiveUser(user), id);
     return successResponse(await this.service.findOne(id));
   }
 

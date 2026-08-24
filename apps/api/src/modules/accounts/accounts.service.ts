@@ -223,6 +223,18 @@ export class AccountsService {
         }
       }
 
+      if (
+        dto.roleId !== undefined ||
+        dto.projectIds !== undefined ||
+        dto.isActive !== undefined ||
+        dto.password !== undefined
+      ) {
+        await tx.refreshToken.updateMany({
+          where: { accountId: id, revokedAt: null },
+          data: { revokedAt: new Date() },
+        });
+      }
+
       const full = await tx.account.findUniqueOrThrow({
         where: { id },
         include: accountInclude,

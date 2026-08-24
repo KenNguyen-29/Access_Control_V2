@@ -15,15 +15,15 @@ export class StatsController {
     private readonly projectScope: ProjectScopeService,
   ) {}
 
-  private scopedProjectId(user: JwtPayload, projectId?: string) {
-    const scope = this.projectScope.scopeFromUser(user);
+  private async scopedProjectId(user: JwtPayload, projectId?: string) {
+    const scope = await this.projectScope.scopeFromLiveUser(user);
     const filter = this.projectScope.mergeProjectFilter(scope, projectId);
     const pid = filter.projectId;
     return typeof pid === 'string' ? pid : undefined;
   }
 
-  private scopedProjectIds(user: JwtPayload): string[] | undefined {
-    const scope = this.projectScope.scopeFromUser(user);
+  private async scopedProjectIds(user: JwtPayload): Promise<string[] | undefined> {
+    const scope = await this.projectScope.scopeFromLiveUser(user);
     return this.projectScope.mergeProjectIdList(scope);
   }
 
@@ -40,7 +40,7 @@ export class StatsController {
     @Query('from') from?: string,
     @Query('to') to?: string,
   ) {
-    const projectIds = this.scopedProjectIds(user!);
+    const projectIds = await this.scopedProjectIds(user!);
     return successResponse(await this.service.homeDashboard(projectIds, { from, to }));
   }
 
@@ -115,8 +115,8 @@ export class StatsController {
         to,
         contractorId,
         userId,
-        projectId: this.scopedProjectId(user!, projectId),
-        projectIds: this.scopedProjectIds(user!),
+        projectId: await this.scopedProjectId(user!, projectId),
+        projectIds: await this.scopedProjectIds(user!),
       }),
     );
   }

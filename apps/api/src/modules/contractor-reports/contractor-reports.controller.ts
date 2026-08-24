@@ -25,15 +25,15 @@ export class ContractorReportsController {
     private readonly projectScope: ProjectScopeService,
   ) {}
 
-  private scopedProjectId(user: JwtPayload, projectId?: string) {
-    const scope = this.projectScope.scopeFromUser(user);
+  private async scopedProjectId(user: JwtPayload, projectId?: string) {
+    const scope = await this.projectScope.scopeFromLiveUser(user);
     const filter = this.projectScope.mergeProjectFilter(scope, projectId);
     const pid = filter.projectId;
     return typeof pid === 'string' ? pid : undefined;
   }
 
-  private scopedProjectIds(user: JwtPayload): string[] | undefined {
-    const scope = this.projectScope.scopeFromUser(user);
+  private async scopedProjectIds(user: JwtPayload): Promise<string[] | undefined> {
+    const scope = await this.projectScope.scopeFromLiveUser(user);
     return this.projectScope.mergeProjectIdList(scope);
   }
 
@@ -47,7 +47,7 @@ export class ContractorReportsController {
     return successResponse(
       await this.service.headcountByContractor({
         date,
-        projectIds: this.scopedProjectIds(user!),
+        projectIds: await this.scopedProjectIds(user!),
         ...parsePage(page, pageSize),
       }),
     );
@@ -68,8 +68,8 @@ export class ContractorReportsController {
         from,
         to,
         contractorId,
-        projectId: this.scopedProjectId(user!, projectId),
-        projectIds: this.scopedProjectIds(user!),
+        projectId: await this.scopedProjectId(user!, projectId),
+        projectIds: await this.scopedProjectIds(user!),
         ...parsePage(page, pageSize),
       }),
     );
@@ -91,8 +91,8 @@ export class ContractorReportsController {
         from,
         to,
         contractorId,
-        projectId: this.scopedProjectId(user!, projectId),
-        projectIds: this.scopedProjectIds(user!),
+        projectId: await this.scopedProjectId(user!, projectId),
+        projectIds: await this.scopedProjectIds(user!),
         userId,
         ...parsePage(page, pageSize),
       }),
@@ -112,8 +112,8 @@ export class ContractorReportsController {
       await this.service.shiftPersonnel({
         contractorId,
         workShiftId,
-        projectId: this.scopedProjectId(user!, projectId),
-        projectIds: this.scopedProjectIds(user!),
+        projectId: await this.scopedProjectId(user!, projectId),
+        projectIds: await this.scopedProjectIds(user!),
         ...parsePage(page, pageSize),
       }),
     );
@@ -132,8 +132,8 @@ export class ContractorReportsController {
       from,
       to,
       contractorId,
-      projectId: this.scopedProjectId(user!, projectId),
-      projectIds: this.scopedProjectIds(user!),
+      projectId: await this.scopedProjectId(user!, projectId),
+      projectIds: await this.scopedProjectIds(user!),
     });
     res.setHeader(
       'Content-Type',
@@ -157,8 +157,8 @@ export class ContractorReportsController {
       from,
       to,
       contractorId,
-      projectId: this.scopedProjectId(user!, projectId),
-      projectIds: this.scopedProjectIds(user!),
+      projectId: await this.scopedProjectId(user!, projectId),
+      projectIds: await this.scopedProjectIds(user!),
       userId,
     });
     res.setHeader(
@@ -180,8 +180,8 @@ export class ContractorReportsController {
     const buf = await this.service.exportShiftPersonnelExcel({
       contractorId,
       workShiftId,
-      projectId: this.scopedProjectId(user!, projectId),
-      projectIds: this.scopedProjectIds(user!),
+      projectId: await this.scopedProjectId(user!, projectId),
+      projectIds: await this.scopedProjectIds(user!),
     });
     res.setHeader(
       'Content-Type',
@@ -199,7 +199,7 @@ export class ContractorReportsController {
   ) {
     const buf = await this.service.exportHeadcountExcel({
       date,
-      projectIds: this.scopedProjectIds(user!),
+      projectIds: await this.scopedProjectIds(user!),
     });
     res.setHeader(
       'Content-Type',
@@ -222,8 +222,8 @@ export class ContractorReportsController {
       await this.service.monthlyTimesheet({
         month,
         contractorId,
-        projectId: this.scopedProjectId(user!, projectId),
-        projectIds: this.scopedProjectIds(user!),
+        projectId: await this.scopedProjectId(user!, projectId),
+        projectIds: await this.scopedProjectIds(user!),
         ...parsePage(page, pageSize),
       }),
     );
@@ -240,8 +240,8 @@ export class ContractorReportsController {
     const buf = await this.service.exportMonthlyExcel({
       month,
       contractorId,
-      projectId: this.scopedProjectId(user!, projectId),
-      projectIds: this.scopedProjectIds(user!),
+      projectId: await this.scopedProjectId(user!, projectId),
+      projectIds: await this.scopedProjectIds(user!),
     });
     res.setHeader(
       'Content-Type',
@@ -262,8 +262,8 @@ export class ContractorReportsController {
     const buf = await this.service.exportMonthlyDetailExcel({
       month,
       contractorId,
-      projectId: this.scopedProjectId(user!, projectId),
-      projectIds: this.scopedProjectIds(user!),
+      projectId: await this.scopedProjectId(user!, projectId),
+      projectIds: await this.scopedProjectIds(user!),
     });
     res.setHeader(
       'Content-Type',
