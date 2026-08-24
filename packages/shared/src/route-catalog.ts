@@ -6,7 +6,6 @@ export const CONFIGURABLE_ROUTES: Array<{ prefix: string; label: string; group: 
   { prefix: '/reports/contractors', label: 'BC nhà thầu', group: 'Vận hành' },
   { prefix: '/analytics', label: 'Thống kê', group: 'Vận hành' },
   { prefix: '/projects', label: 'Dự án & Nhà thầu', group: 'Vận hành' },
-  { prefix: '/muster', label: 'Sơ tán khẩn cấp', group: 'Vận hành' },
   { prefix: '/users', label: 'Nhân sự', group: 'Quản lý' },
   { prefix: '/shifts', label: 'Ca làm', group: 'Quản lý' },
   { prefix: '/access-control', label: 'Phân quyền ra vào', group: 'Quản lý' },
@@ -40,7 +39,7 @@ export const DEFAULT_ALLOWED_ROUTES: Record<string, string[]> = {
     '/settings/zones',
     '/settings/credentials',
   ],
-  SECURITY: ['/home', '/dashboard', '/muster'],
+  SECURITY: ['/home', '/dashboard'],
   TECHNICIAN: ['/home', '/devices'],
   STAFF: ['/home', '/dashboard', '/users', '/reports', '/reports/contractors', '/analytics', '/projects'],
 };

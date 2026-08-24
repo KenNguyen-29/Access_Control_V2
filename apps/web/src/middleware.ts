@@ -23,7 +23,7 @@ export function middleware(request: NextRequest) {
   if (!hasSession && !isPublic && pathname !== '/') {
     // Soft guard: redirect unauthenticated users hitting app shells.
     // Client layout still enforces accessToken in localStorage.
-    if (pathname.startsWith('/home') || pathname.startsWith('/dashboard') || pathname.startsWith('/reports') || pathname.startsWith('/analytics') || pathname.startsWith('/projects') || pathname.startsWith('/muster') || pathname.startsWith('/shifts') || pathname.startsWith('/users') || pathname.startsWith('/devices') || pathname.startsWith('/access-control') || pathname.startsWith('/settings') || pathname.startsWith('/departments') || pathname.startsWith('/zones') || pathname.startsWith('/evac')) {
+    if (pathname.startsWith('/home') || pathname.startsWith('/dashboard') || pathname.startsWith('/reports') || pathname.startsWith('/analytics') || pathname.startsWith('/projects') || pathname.startsWith('/shifts') || pathname.startsWith('/users') || pathname.startsWith('/devices') || pathname.startsWith('/access-control') || pathname.startsWith('/settings') || pathname.startsWith('/departments') || pathname.startsWith('/zones') || pathname.startsWith('/evac')) {
       const url = request.nextUrl.clone();
       url.pathname = '/login';
       url.searchParams.set('next', pathname);
