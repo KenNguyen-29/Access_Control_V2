@@ -24,8 +24,10 @@ import {
   isValidImportEmail,
   isValidImportPhone,
   lookupZipImage,
+  indexVnName,
   mapUserHeaderRow,
   normalizePhone,
+  normalizeVnNameKey,
   parseUserType,
   parseZoneNames,
   workbookToBuffer,
@@ -753,35 +755,35 @@ export class UsersService {
       where: { isDeleted: false },
       select: { id: true, name: true },
     });
-    const deptByName = new Map(
-      departments.map((d) => [d.name.trim().toLowerCase(), d.id] as const),
-    );
+    const deptByName = new Map<string, string>();
+    for (const d of departments) indexVnName(deptByName, d.name, d.id);
+
     const contractors = await this.prisma.contractor.findMany({
       where: { isDeleted: false },
       select: { id: true, name: true, code: true },
     });
-    const contractorByName = new Map(
-      contractors.flatMap((c) => [
-        [c.name.trim().toLowerCase(), c.id] as const,
-        [c.code.trim().toLowerCase(), c.id] as const,
-      ]),
-    );
+    const contractorByName = new Map<string, string>();
+    for (const c of contractors) {
+      indexVnName(contractorByName, c.name, c.id);
+      indexVnName(contractorByName, c.code, c.id);
+    }
+
     const projects = await this.prisma.project.findMany({
       where: { isDeleted: false },
       select: { id: true, name: true, code: true },
     });
-    const projectByName = new Map(
-      projects.flatMap((p) => [
-        [p.name.trim().toLowerCase(), p.id] as const,
-        [p.code.trim().toLowerCase(), p.id] as const,
-      ]),
-    );
+    const projectByName = new Map<string, string>();
+    for (const p of projects) {
+      indexVnName(projectByName, p.name, p.id);
+      indexVnName(projectByName, p.code, p.id);
+    }
 
     const zones = await this.prisma.accessZone.findMany({
       where: { isDeleted: false },
       select: { id: true, name: true },
     });
-    const zoneByName = new Map(zones.map((z) => [z.name.trim().toLowerCase(), z.id] as const));
+    const zoneByName = new Map<string, string>();
+    for (const z of zones) indexVnName(zoneByName, z.name, z.id);
 
     const cell = (row: ExcelJS.Row, key: UserExcelColumnKey): string => {
       const col = headerMap[key];
@@ -853,7 +855,7 @@ export class UsersService {
 
       let departmentId: string | undefined;
       if (departmentName) {
-        departmentId = deptByName.get(departmentName.trim().toLowerCase());
+        departmentId = deptByName.get(normalizeVnNameKey(departmentName));
         if (!departmentId) {
           result.errors.push({
             row: rowNumber,
@@ -865,7 +867,7 @@ export class UsersService {
 
       let contractorId: string | undefined;
       if (contractorName) {
-        contractorId = contractorByName.get(contractorName.trim().toLowerCase());
+        contractorId = contractorByName.get(normalizeVnNameKey(contractorName));
         if (!contractorId) {
           result.errors.push({
             row: rowNumber,
@@ -885,7 +887,7 @@ export class UsersService {
 
       let projectId: string | undefined;
       if (projectName) {
-        projectId = projectByName.get(projectName.trim().toLowerCase());
+        projectId = projectByName.get(normalizeVnNameKey(projectName));
         if (!projectId) {
           result.errors.push({
             row: rowNumber,
@@ -915,7 +917,7 @@ export class UsersService {
       const zoneIds: string[] = [];
       let zoneError: string | null = null;
       for (const zn of zoneNames) {
-        const id = zoneByName.get(zn.toLowerCase());
+        const id = zoneByName.get(normalizeVnNameKey(zn));
         if (!id) {
           zoneError = `Không tìm thấy khu vực "${zn}"`;
           break;

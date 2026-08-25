@@ -95,6 +95,41 @@ export function normalizePhone(raw: string): string {
   return raw.trim().replace(/[\s.\-()]/g, '');
 }
 
+/**
+ * Lookup key for Vietnamese entity names in Excel import.
+ * Unifies old vs new tone placement on diphthongs (Hoà ↔ Hòa, thuỷ ↔ thủy).
+ */
+export function normalizeVnNameKey(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .normalize('NFC')
+    .replace(/\s+/g, ' ')
+    .replace(/oà/g, 'òa')
+    .replace(/oá/g, 'óa')
+    .replace(/oả/g, 'ỏa')
+    .replace(/oã/g, 'õa')
+    .replace(/oạ/g, 'ọa')
+    .replace(/oè/g, 'èo')
+    .replace(/oé/g, 'éo')
+    .replace(/oẻ/g, 'ẻo')
+    .replace(/oẽ/g, 'ẽo')
+    .replace(/oẹ/g, 'ẹo')
+    .replace(/uỳ/g, 'ùy')
+    .replace(/uý/g, 'úy')
+    .replace(/uỷ/g, 'ủy')
+    .replace(/uỹ/g, 'ũy')
+    .replace(/uỵ/g, 'ụy');
+}
+
+/** Index both raw lowercase and VN-normalized keys → same id. */
+export function indexVnName(map: Map<string, string>, name: string, id: string) {
+  const raw = name.trim().toLowerCase();
+  const key = normalizeVnNameKey(name);
+  if (raw) map.set(raw, id);
+  if (key) map.set(key, id);
+}
+
 export function isValidImportEmail(raw: string): boolean {
   return EMAIL_RE.test(raw.trim());
 }

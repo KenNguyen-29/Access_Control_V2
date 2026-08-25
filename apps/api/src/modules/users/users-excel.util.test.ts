@@ -5,6 +5,7 @@ import {
   isValidImportPhone,
   mapUserHeaderRow,
   normalizePhone,
+  normalizeVnNameKey,
   parseUserType,
   parseZoneNames,
   USER_EXCEL_COLUMNS,
@@ -14,6 +15,11 @@ import {
 import * as ExcelJS from 'exceljs';
 
 describe('users-excel util', () => {
+  it('unifies Hoà / Hòa for import name lookup', () => {
+    assert.equal(normalizeVnNameKey('Hoà Hiệp'), normalizeVnNameKey('Hòa Hiệp'));
+    assert.equal(normalizeVnNameKey('  HOÀ HIỆP '), 'hòa hiệp');
+  });
+
   it('validates email and VN phone', () => {
     assert.equal(isValidImportEmail('a@b.com'), true);
     assert.equal(isValidImportEmail('bad'), false);
