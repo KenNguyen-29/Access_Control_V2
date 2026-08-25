@@ -175,7 +175,7 @@ function RecentLogsTable({ logs }: { logs: AccessLog[] }) {
                 </p>
               </td>
               <td className="py-2 pr-2">
-                <p className="truncate text-foreground">{log.device.name}</p>
+                <p className="truncate text-foreground">{log.device?.name ?? '—'}</p>
                 <p className="truncate text-xs text-muted-foreground">{log.zone?.name ?? '—'}</p>
               </td>
               <td className="whitespace-nowrap py-2 pr-2 text-muted-foreground">

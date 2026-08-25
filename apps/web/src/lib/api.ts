@@ -429,7 +429,7 @@ export type AccessLog = {
     faceImageUrl?: string | null;
     department?: Department | null;
   } | null;
-  device: { id: string; name: string; code: string };
+  device?: { id: string; name: string; code: string } | null;
   zone?: { id: string; name: string } | null;
 };
 

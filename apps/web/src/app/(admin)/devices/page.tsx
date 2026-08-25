@@ -848,7 +848,7 @@ export default function DevicesPage() {
               <option value="">
                 {form.deviceType === 'CAMERA' ? '— Chọn dự án —' : '— Không gắn dự án —'}
               </option>
-              {projects.map((p) => (
+              {projects.filter(Boolean).map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.name} ({p.code})
                 </option>
