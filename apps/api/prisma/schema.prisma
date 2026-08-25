@@ -125,6 +125,7 @@ model Project {
   headcounts  DailyContractorHeadcount[]
   accountLinks AccountProject[]
   accessLogs  AccessLog[]
+  devices     Device[]
   transfersFrom UserProjectTransfer[] @relation("TransferFrom")
   transfersTo   UserProjectTransfer[] @relation("TransferTo")
 
@@ -321,6 +322,7 @@ model Device {
   macAddress    String?
   location      String?
   zoneId        String?
+  projectId     String?
   rtspUrl       String?
   rtspUsername  String?
   rtspPassword  String?
@@ -334,12 +336,14 @@ model Device {
   updatedAt     DateTime         @updatedAt
 
   zone            AccessZone?            @relation(fields: [zoneId], references: [id])
+  project         Project?               @relation(fields: [projectId], references: [id])
   akuvoxMappings  DeviceCameraMapping[]  @relation("AkuvoxDevice")
   cameraMappings  DeviceCameraMapping[]  @relation("CameraDevice")
   userPermissions UserDevicePermission[]
   accessLogs      AccessLog[]
 
   @@index([zoneId, isDeleted])
+  @@index([projectId, isDeleted])
   @@index([isDeleted, deviceType])
   @@index([deviceType, isDeleted, zoneId])
   @@map("devices")

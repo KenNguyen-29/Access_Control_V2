@@ -9,6 +9,11 @@ export class DevicesQueryDto extends PaginationDto {
   @IsString()
   zoneId?: string;
 
+  @ApiPropertyOptional({ description: 'Filter by project' })
+  @IsOptional()
+  @IsString()
+  projectId?: string;
+
   @ApiPropertyOptional({ enum: DeviceType })
   @IsOptional()
   @IsEnum(DeviceType)

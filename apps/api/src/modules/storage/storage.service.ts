@@ -32,6 +32,7 @@ export class StorageService implements OnModuleInit {
         join(process.cwd(), 'uploads'),
     );
     mkdirSync(join(this.uploadRoot, 'face-images'), { recursive: true });
+    mkdirSync(join(this.uploadRoot, 'snapshots'), { recursive: true });
     this.logger.log(`Local upload dir: ${this.uploadRoot}`);
 
     const apiPort = this.config.get<string>('API_PORT', '8080');
@@ -129,25 +130,46 @@ export class StorageService implements OnModuleInit {
     return `${browserBase.replace(/\/$/, '')}/api/files/${cleaned}`;
   }
 
-  /** FaceID paths use local disk URL; other keys still use MinIO signed URL. */
+  /**
+   * FaceID + punch snapshots: browser-reachable /api/files/… URLs.
+   * Other keys still use MinIO signed URL.
+   */
   async getAssetUrl(key: string, opts?: { forBrowser?: boolean }): Promise<string> {
     const normalized = key.replace(/\\/g, '/');
-    if (normalized.startsWith('face-images/')) {
+    if (normalized.startsWith('face-images/') || normalized.startsWith('snapshots/')) {
       return opts?.forBrowser ? this.getBrowserFileUrl(normalized) : this.getFileUrl(normalized);
     }
     return this.getSignedUrl(key);
   }
 
   async uploadFile(key: string, body: Buffer, contentType: string): Promise<string> {
+    const normalized = key.replace(/\\/g, '/');
+    // Punch snapshots also on disk so FE can load via API_PUBLIC_URL (MinIO host is internal).
+    if (normalized.startsWith('snapshots/')) {
+      this.saveToDisk(normalized, body);
+    }
     await this.client.send(
       new PutObjectCommand({
         Bucket: this.bucket,
-        Key: key,
+        Key: normalized,
         Body: body,
         ContentType: contentType,
       }),
     );
-    return key;
+    return normalized;
+  }
+
+  /** Stream object from MinIO (fallback when local disk miss). */
+  async getObjectBuffer(key: string): Promise<Buffer | null> {
+    try {
+      const res = await this.client.send(
+        new GetObjectCommand({ Bucket: this.bucket, Key: key.replace(/\\/g, '/') }),
+      );
+      const bytes = await res.Body?.transformToByteArray();
+      return bytes ? Buffer.from(bytes) : null;
+    } catch {
+      return null;
+    }
   }
 
   async getSignedUrl(key: string, expiresIn = 3600): Promise<string> {

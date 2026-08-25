@@ -31,7 +31,7 @@ export default function CheckinToast({
   const isCheckOut = shown.action === AccessAction.CHECK_OUT;
   const isCheckIn = shown.action === AccessAction.CHECK_IN;
   const isWarning = Boolean(shown.warningMessage) || !shown.isValid || (!isCheckIn && !isCheckOut);
-  const photo = shown.snapshotUrl || shown.faceImageUrl;
+  const photo = shown.snapshotUrl;
   const initial = (shown.fullName?.trim()?.[0] || '?').toUpperCase();
 
   const title = isWarning

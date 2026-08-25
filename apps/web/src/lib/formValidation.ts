@@ -195,6 +195,7 @@ export type DeviceFormFields = {
   name: string;
   deviceType: 'AKUVOX' | 'DNAKE' | 'CAMERA';
   zoneId: string;
+  projectId: string;
   ipAddress: string;
   location: string;
   rtspUrl: string;
@@ -218,6 +219,10 @@ export function validateDeviceForm(form: DeviceFormFields): DeviceFormFieldError
 
   if (isAttendancePanel(form.deviceType) && !form.zoneId.trim()) {
     errors.zoneId = 'Vui lòng chọn khu vực cho thiết bị chấm công';
+  }
+
+  if (form.deviceType === 'CAMERA' && !form.projectId.trim()) {
+    errors.projectId = 'Vui lòng chọn dự án cho camera';
   }
 
   const ip = form.ipAddress.trim();

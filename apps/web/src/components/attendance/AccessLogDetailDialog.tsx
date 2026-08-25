@@ -31,16 +31,13 @@ function formatEventAt(iso: string): string {
 
 function FaceThumb({
   name,
-  faceImageUrl,
   snapshotUrl,
   invalid,
 }: {
   name?: string;
-  faceImageUrl?: string;
   snapshotUrl?: string;
   invalid?: boolean;
 }) {
-  const src = snapshotUrl || faceImageUrl;
   const initial = (name?.trim()?.[0] || '?').toUpperCase();
 
   return (
@@ -50,21 +47,14 @@ function FaceThumb({
         invalid ? 'border-destructive/40' : 'border-primary/40',
       )}
     >
-      {src ? (
+      {snapshotUrl ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={src} alt={name ?? 'Face'} className="h-full w-full object-cover" />
+        <img src={snapshotUrl} alt={name ?? 'Snapshot'} className="h-full w-full object-cover" />
       ) : (
-        <div className="flex h-full w-full items-center justify-center bg-slate-100">
+        <div className="flex h-full w-full flex-col items-center justify-center gap-1 bg-slate-100 px-1 text-center">
           <span className="text-3xl font-bold text-slate-400">{initial}</span>
+          <span className="text-[10px] leading-tight text-slate-500">Không có ảnh chụp</span>
         </div>
-      )}
-      {snapshotUrl && faceImageUrl && snapshotUrl !== faceImageUrl && (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={faceImageUrl}
-          alt="Enroll"
-          className="absolute bottom-1 right-1 h-8 w-8 rounded border border-white object-cover shadow-sm"
-        />
       )}
     </div>
   );
@@ -91,7 +81,6 @@ export function AccessLogDetailDialog({
     log.user?.department?.name ||
     '—';
   const snapshotUrl = extras?.snapshotUrl || log.snapshotUrl || undefined;
-  const faceImageUrl = extras?.faceImageUrl || log.user?.faceImageUrl || undefined;
 
   return (
     <Dialog
@@ -105,7 +94,6 @@ export function AccessLogDetailDialog({
         <div className="flex gap-4">
           <FaceThumb
             name={name}
-            faceImageUrl={faceImageUrl}
             snapshotUrl={snapshotUrl}
             invalid={invalid || hasWarning}
           />

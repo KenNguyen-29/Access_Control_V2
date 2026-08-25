@@ -156,7 +156,7 @@ export class AkuvoxEventService {
     })();
   }
 
-  /** Prefer webhook image; otherwise capture from mapped camera. */
+  /** Prefer webhook image; otherwise capture JPEG from panel RTSP (go2rtc). */
   private scheduleSnapshot(
     accessLogId: string,
     deviceId: string,

@@ -96,7 +96,12 @@ export function AppNav() {
           >
             <div className="flex h-9 items-center gap-2 lg:h-10 lg:gap-2.5">
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src="/logo.png" alt="" aria-hidden className="h-full w-auto shrink-0 object-contain" />
+              <img
+                src="/logo.png"
+                alt=""
+                aria-hidden
+                className="h-full w-auto shrink-0 object-contain brightness-0 invert"
+              />
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src="/logo2.png" alt="TECHWAVE" className="max-h-full w-auto shrink-0 object-contain" />
             </div>

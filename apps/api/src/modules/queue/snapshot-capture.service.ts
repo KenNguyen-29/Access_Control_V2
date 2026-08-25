@@ -66,10 +66,15 @@ export class SnapshotCaptureService {
       buffer = await this.capturePanelRtsp(device);
     }
     if (!buffer || !this.isJpeg(buffer)) {
-      this.logger.warn(`No live snapshot from panel ${device.code}`);
+      this.logger.warn(
+        `No live snapshot from panel ${device.code} (ip=${device.ipAddress ?? '—'} rtsp=${
+          device.rtspUrl?.trim() ? 'set' : 'unset'
+        } go2rtc=${this.go2rtcEnabled ? 'on' : 'off'})`,
+      );
       return null;
     }
 
+    this.logger.log(`Live snapshot OK panel=${device.code} bytes=${buffer.length}`);
     return {
       path: `snapshots/${device.id}/${Date.now()}.jpg`,
       buffer,
@@ -222,24 +227,35 @@ export class SnapshotCaptureService {
     const username = device.rtspUsername?.trim() || cfg.username?.trim();
     const password = device.rtspPassword || cfg.password;
     const candidates = this.rtspCandidates(device);
+    if (candidates.length === 0) {
+      this.logger.warn(
+        `RTSP snapshot skipped ${device.code}: no rtspUrl and no ipAddress to build default path`,
+      );
+      return null;
+    }
+    const errors: string[] = [];
     for (const src of candidates) {
       const rtspUrl = buildRtspUrlWithCredentials(src, username, password);
       const streamName = `panel_${device.id}`;
       try {
         await this.upsertStream(streamName, rtspUrl);
         const buffer = await this.fetchFrame(streamName);
-        if (buffer && this.isJpeg(buffer)) return buffer;
+        if (buffer && this.isJpeg(buffer)) {
+          this.logger.log(`RTSP frame OK ${device.code} via ${src.split('@').pop() ?? src}`);
+          return buffer;
+        }
+        errors.push(`${src}: empty/non-jpeg frame`);
       } catch (err) {
-        this.logger.debug(
-          `RTSP snapshot failed ${device.code} src=${src}: ${
-            err instanceof Error ? err.message : err
-          }`,
-        );
+        const msg = err instanceof Error ? err.message : String(err);
+        errors.push(`${src}: ${msg}`);
+        this.logger.warn(`RTSP snapshot failed ${device.code}: ${msg}`);
       }
     }
+    this.logger.warn(`RTSP snapshot exhausted ${device.code}: ${errors.join(' | ')}`);
     return null;
   }
 
+  /** Prefer explicit rtspUrl; otherwise vendor default paths on device IP. */
   private rtspCandidates(device: Device): string[] {
     const explicit = device.rtspUrl?.trim();
     if (explicit) return [explicit];
@@ -248,7 +264,12 @@ export class SnapshotCaptureService {
     if (device.deviceType === DeviceType.DNAKE) {
       return [`rtsp://${ip}:554/stream1`, `rtsp://${ip}:554/Streaming/Channels/101`];
     }
-    return [`rtsp://${ip}:554/live/ch00_0`, `rtsp://${ip}:554/Streaming/Channels/101`];
+    // Akuvox common paths
+    return [
+      `rtsp://${ip}:554/live/ch00_0`,
+      `rtsp://${ip}:554/Streaming/Channels/101`,
+      `rtsp://${ip}:554/stream1`,
+    ];
   }
 
   private async upsertStream(streamName: string, rtspUrl: string) {

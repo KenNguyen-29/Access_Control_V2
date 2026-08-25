@@ -1,9 +1,16 @@
 import { randomInt } from 'crypto';
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Device, DeviceType, Prisma } from '@prisma/client';
 import { createConnection } from 'net';
 import { PrismaService } from '../../prisma/prisma.service';
+import type { ProjectScope } from '../../common/services/project-scope.service';
 import { Go2RtcService } from './go2rtc.service';
 import { DnakeService } from './dnake.service';
 import { CreateDeviceDto } from './dto/create-device.dto';
@@ -180,14 +187,49 @@ export class DevicesService {
     };
   }
 
+  private projectScopeWhere(scope: ProjectScope): Prisma.DeviceWhereInput {
+    if (scope === null) return {};
+    return { projectId: { in: scope } };
+  }
+
+  private assertDeviceInScope(projectId: string | null | undefined, scope: ProjectScope) {
+    if (scope === null) return;
+    if (!projectId || !scope.includes(projectId)) {
+      throw new ForbiddenException('Thiết bị ngoài phạm vi dự án được phép');
+    }
+  }
+
+  private async assertProjectExists(projectId: string) {
+    const project = await this.prisma.project.findFirst({
+      where: { id: projectId, isDeleted: false },
+      select: { id: true },
+    });
+    if (!project) {
+      throw new BadRequestException('Dự án không tồn tại');
+    }
+  }
+
   async findAll(
-    query: PaginationDto & { zoneId?: string; deviceType?: DeviceType },
+    query: PaginationDto & { zoneId?: string; deviceType?: DeviceType; projectId?: string },
+    scope: ProjectScope = null,
   ) {
     const page = query.page ?? 1;
     const pageSize = query.pageSize ?? 20;
     const search = query.search?.trim();
-    const where = {
+
+    let requestedProjectFilter: Prisma.DeviceWhereInput = {};
+    if (query.projectId) {
+      if (scope !== null && !scope.includes(query.projectId)) {
+        throw new ForbiddenException('Dự án ngoài phạm vi được phép');
+      }
+      requestedProjectFilter = { projectId: query.projectId };
+    } else {
+      requestedProjectFilter = this.projectScopeWhere(scope);
+    }
+
+    const where: Prisma.DeviceWhereInput = {
       isDeleted: false,
+      ...requestedProjectFilter,
       ...(query.zoneId ? { zoneId: query.zoneId } : {}),
       ...(query.deviceType ? { deviceType: query.deviceType } : {}),
       ...(search
@@ -205,7 +247,10 @@ export class DevicesService {
     const [items, total] = await Promise.all([
       this.prisma.device.findMany({
         where,
-        include: { zone: { select: { id: true, name: true } } },
+        include: {
+          zone: { select: { id: true, name: true } },
+          project: { select: { id: true, name: true, code: true } },
+        },
         skip: (page - 1) * pageSize,
         take: pageSize,
         orderBy: { name: 'asc' },
@@ -219,6 +264,9 @@ export class DevicesService {
         return {
           ...sanitized,
           zone: d.zone ? { id: d.zone.id, name: d.zone.name } : null,
+          project: d.project
+            ? { id: d.project.id, name: d.project.name, code: d.project.code }
+            : null,
         };
       }),
       total,
@@ -227,12 +275,35 @@ export class DevicesService {
     };
   }
 
-  async findOne(id: string) {
+  async findOne(id: string, scope: ProjectScope = null) {
     const device = await this.prisma.device.findFirst({
       where: { id, isDeleted: false },
+      include: {
+        zone: { select: { id: true, name: true } },
+        project: { select: { id: true, name: true, code: true } },
+      },
     });
     if (!device) throw new NotFoundException('Device not found');
-    return this.sanitize(device);
+    this.assertDeviceInScope(device.projectId, scope);
+    const sanitized = this.sanitize(device);
+    return {
+      ...sanitized,
+      zone: device.zone ? { id: device.zone.id, name: device.zone.name } : null,
+      project: device.project
+        ? { id: device.project.id, name: device.project.name, code: device.project.code }
+        : null,
+    };
+  }
+
+  /** Ensure device exists and is in project scope (WebRTC / open-door / sync). */
+  async assertAccessible(id: string, scope: ProjectScope) {
+    const device = await this.prisma.device.findFirst({
+      where: { id, isDeleted: false },
+      select: { id: true, projectId: true, deviceType: true },
+    });
+    if (!device) throw new NotFoundException('Device not found');
+    this.assertDeviceInScope(device.projectId, scope);
+    return device;
   }
 
   private nextDeviceCode(deviceType: DeviceType) {
@@ -246,7 +317,7 @@ export class DevicesService {
     return `${prefix}${suffix}`;
   }
 
-  async create(dto: CreateDeviceDto) {
+  async create(dto: CreateDeviceDto, scope: ProjectScope = null) {
     const { username: _u, password: _p, protocol: _pr, relay: _r, code: dtoCode, ...rest } = dto;
     const panelConfig = this.buildPanelConfig(dto);
     if (isPanelType(dto.deviceType)) {
@@ -259,6 +330,14 @@ export class DevicesService {
         deviceType: dto.deviceType,
         ipAddress: dto.ipAddress,
       });
+    }
+
+    if (dto.deviceType === DeviceType.CAMERA && !dto.projectId?.trim()) {
+      throw new BadRequestException('Vui lòng chọn dự án cho camera');
+    }
+    if (dto.projectId) {
+      await this.assertProjectExists(dto.projectId);
+      this.assertDeviceInScope(dto.projectId, scope);
     }
 
     const providedCode = dtoCode?.trim();
@@ -289,11 +368,12 @@ export class DevicesService {
     throw new ConflictException('Không thể tự sinh mã thiết bị, vui lòng thử lại');
   }
 
-  async update(id: string, dto: UpdateDeviceDto) {
+  async update(id: string, dto: UpdateDeviceDto, scope: ProjectScope = null) {
     const existing = await this.prisma.device.findFirst({
       where: { id, isDeleted: false },
     });
     if (!existing) throw new NotFoundException('Device not found');
+    this.assertDeviceInScope(existing.projectId, scope);
 
     const { username: _u, password: _p, protocol: _pr, relay: _r, code: _code, ...rest } = dto;
     const hasPanelFields =
@@ -325,6 +405,15 @@ export class DevicesService {
       });
     }
 
+    const nextProjectId = dto.projectId !== undefined ? dto.projectId : existing.projectId;
+    if (nextType === DeviceType.CAMERA && !nextProjectId?.trim()) {
+      throw new BadRequestException('Vui lòng chọn dự án cho camera');
+    }
+    if (dto.projectId) {
+      await this.assertProjectExists(dto.projectId);
+      this.assertDeviceInScope(dto.projectId, scope);
+    }
+
     const data: Prisma.DeviceUncheckedUpdateInput = {
       ...rest,
       ...(hasPanelFields && panelConfig && nextType === DeviceType.DNAKE
@@ -344,11 +433,12 @@ export class DevicesService {
     return this.sanitize(device);
   }
 
-  async remove(id: string) {
+  async remove(id: string, scope: ProjectScope = null) {
     const device = await this.prisma.device.findFirst({
       where: { id, isDeleted: false },
     });
     if (!device) throw new NotFoundException('Device not found');
+    this.assertDeviceInScope(device.projectId, scope);
 
     if (device.deviceType === DeviceType.CAMERA) {
       await this.go2rtc.removeStream(this.go2rtc.streamNameForDevice(device.id));

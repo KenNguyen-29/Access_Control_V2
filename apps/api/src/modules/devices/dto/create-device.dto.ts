@@ -138,4 +138,13 @@ export class CreateDeviceDto {
   @IsString()
   @IsNotEmpty({ message: 'Vui lòng chọn khu vực cho thiết bị chấm công' })
   zoneId?: string;
+
+  @ApiPropertyOptional({
+    description: 'Dự án — bắt buộc với CAMERA (phân quyền giám sát theo dự án)',
+  })
+  @Transform(emptyToUndefined)
+  @ValidateIf((o: CreateDeviceDto) => o.deviceType === DeviceType.CAMERA)
+  @IsString()
+  @IsNotEmpty({ message: 'Vui lòng chọn dự án cho camera' })
+  projectId?: string;
 }

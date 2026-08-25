@@ -342,6 +342,8 @@ export type Device = {
   location?: string | null;
   zoneId?: string | null;
   zone?: { id: string; name: string } | null;
+  projectId?: string | null;
+  project?: { id: string; name: string; code: string } | null;
   rtspUrl?: string | null;
   syncStatus?: string;
   isOnline?: boolean;
@@ -754,6 +756,7 @@ export async function getDevices(params?: {
   pageSize?: number;
   search?: string;
   zoneId?: string;
+  projectId?: string;
   deviceType?: string;
 }) {
   const q = new URLSearchParams();
@@ -761,6 +764,7 @@ export async function getDevices(params?: {
   if (params?.pageSize) q.set('pageSize', String(params.pageSize));
   if (params?.search) q.set('search', params.search);
   if (params?.zoneId) q.set('zoneId', params.zoneId);
+  if (params?.projectId) q.set('projectId', params.projectId);
   if (params?.deviceType) q.set('deviceType', params.deviceType);
   const qs = q.toString();
   return apiRequest<PaginatedData<Device>>(`/devices${qs ? `?${qs}` : ''}`);
@@ -805,6 +809,27 @@ export async function getAkuvoxWebhookInfo() {
 
 export async function testAkuvoxDoorLog(params?: { userId?: string; deviceIp?: string }) {
   return apiRequest<{ jobId: string; mode: string; result?: unknown }>('/devices/akuvox/test-door-log', {
+    method: 'POST',
+    body: JSON.stringify(params ?? {}),
+  });
+}
+
+export type OnvifDiscoveryHit = {
+  name: string;
+  ip: string;
+  xaddrs: string[];
+  rtspUrls: string[];
+  manufacturer?: string;
+  model?: string;
+};
+
+/** WS-Discovery ONVIF on LAN — returns IP + suggested RTSP URLs. */
+export async function scanOnvifDevices(params?: {
+  timeoutMs?: number;
+  username?: string;
+  password?: string;
+}) {
+  return apiRequest<{ items: OnvifDiscoveryHit[]; count: number }>('/devices/onvif/scan', {
     method: 'POST',
     body: JSON.stringify(params ?? {}),
   });

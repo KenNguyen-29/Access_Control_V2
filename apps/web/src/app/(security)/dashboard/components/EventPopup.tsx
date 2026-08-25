@@ -6,16 +6,15 @@ import { cn } from '@/lib/utils';
 
 function FaceThumb({
   name,
-  faceImageUrl,
   snapshotUrl,
+  pending,
   invalid,
 }: {
   name?: string;
-  faceImageUrl?: string;
   snapshotUrl?: string;
+  pending?: boolean;
   invalid?: boolean;
 }) {
-  const src = snapshotUrl || faceImageUrl;
   const initial = (name?.trim()?.[0] || '?').toUpperCase();
 
   return (
@@ -25,21 +24,16 @@ function FaceThumb({
         invalid ? 'border-destructive/40' : 'border-primary/40',
       )}
     >
-      {src ? (
+      {snapshotUrl ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={src} alt={name ?? 'Face'} className="h-full w-full object-cover" />
+        <img src={snapshotUrl} alt={name ?? 'Snapshot'} className="h-full w-full object-cover" />
       ) : (
-        <div className="flex h-full w-full items-center justify-center bg-slate-100">
-          <span className="text-2xl font-bold text-slate-400">{initial}</span>
+        <div className="flex h-full w-full flex-col items-center justify-center gap-0.5 bg-slate-100 px-1 text-center">
+          <span className="text-xl font-bold text-slate-400">{initial}</span>
+          <span className="text-[9px] leading-tight text-slate-500">
+            {pending ? 'Đang chụp…' : 'Không có ảnh chụp'}
+          </span>
         </div>
-      )}
-      {snapshotUrl && faceImageUrl && snapshotUrl !== faceImageUrl && (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={faceImageUrl}
-          alt="Enroll"
-          className="absolute bottom-1 right-1 h-7 w-7 rounded border border-white object-cover shadow-sm"
-        />
       )}
     </div>
   );
@@ -113,8 +107,8 @@ export default function EventPopup({ event }: { event: CheckinEvent | null }) {
       <div className="flex gap-3">
         <FaceThumb
           name={event.fullName}
-          faceImageUrl={event.faceImageUrl}
           snapshotUrl={event.snapshotUrl}
+          pending={!event.snapshotUrl}
           invalid={!event.isValid || hasWarning}
         />
 

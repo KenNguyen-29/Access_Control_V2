@@ -8,9 +8,11 @@ import { DnakeUnlockPoller } from './dnake-unlock.poller';
 import { Go2RtcProcessService } from './go2rtc-process.service';
 import { Go2RtcService } from './go2rtc.service';
 import { DeviceWebRtcService } from './device-webrtc.service';
+import { OnvifDiscoveryService } from './onvif-discovery.service';
 import { WebhooksModule } from '../webhooks/webhooks.module';
 import { QueueModule } from '../queue/queue.module';
 import { StorageModule } from '../storage/storage.module';
+import { RbacModule } from '../../common/rbac/rbac.module';
 
 @Module({
   imports: [
@@ -18,6 +20,7 @@ import { StorageModule } from '../storage/storage.module';
     WebhooksModule,
     QueueModule,
     StorageModule,
+    RbacModule,
   ],
   controllers: [DevicesController],
   providers: [
@@ -28,6 +31,7 @@ import { StorageModule } from '../storage/storage.module';
     Go2RtcProcessService,
     Go2RtcService,
     DeviceWebRtcService,
+    OnvifDiscoveryService,
   ],
   exports: [DevicesService, AkuvoxService, DnakeService],
 })

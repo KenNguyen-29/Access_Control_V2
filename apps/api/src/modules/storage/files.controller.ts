@@ -36,4 +36,41 @@ export class FilesController {
     });
     return new StreamableFile(this.storage.openLocalFile(relativePath));
   }
+
+  /**
+   * Punch-time snapshots (from panel RTSP). Prefer local disk; fallback MinIO for older objects.
+   */
+  @Public()
+  @Get('snapshots/:deviceId/:filename')
+  async serveSnapshot(
+    @Param('deviceId') deviceId: string,
+    @Param('filename') filename: string,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    if (
+      !deviceId ||
+      !filename ||
+      deviceId.includes('..') ||
+      deviceId.includes('/') ||
+      deviceId.includes('\\') ||
+      filename.includes('..') ||
+      filename.includes('/') ||
+      filename.includes('\\')
+    ) {
+      throw new NotFoundException('File not found');
+    }
+    const relativePath = `snapshots/${deviceId}/${filename}`;
+    res.set({
+      'Content-Type': 'image/jpeg',
+      'Cache-Control': 'public, max-age=3600',
+    });
+    if (this.storage.existsOnDisk(relativePath)) {
+      return new StreamableFile(this.storage.openLocalFile(relativePath));
+    }
+    const fromMinio = await this.storage.getObjectBuffer(relativePath);
+    if (!fromMinio?.length) {
+      throw new NotFoundException('File not found');
+    }
+    return new StreamableFile(fromMinio);
+  }
 }

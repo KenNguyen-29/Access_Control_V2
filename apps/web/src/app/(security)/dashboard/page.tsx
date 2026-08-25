@@ -24,7 +24,6 @@ import {
   getSystemSettings,
   updateMusterStatus,
   type AccessLog,
-  type Device,
 } from '@/lib/api';
 import { SETTING_KEYS } from '@/lib/settingsCatalog';
 import { AccessAction, type CheckinEvent } from '@acv2/shared';
@@ -174,21 +173,22 @@ export default function DashboardPage() {
   }, []);
 
   useEffect(() => {
-    getDevices({ page: 1, pageSize: 100 })
+    getDevices({ page: 1, pageSize: 100, deviceType: 'CAMERA' })
       .then((res) => {
-        const cams = res.items
-          .filter((d: Device) => d.deviceType === 'CAMERA')
-          .map<CameraItem>((d) => ({
-            id: d.id,
-            code: d.code,
-            name: d.name,
-            location: d.location ?? undefined,
-            ip: d.ipAddress ?? undefined,
-            online: d.isOnline ?? false,
-          }));
+        const cams = res.items.map<CameraItem>((d) => ({
+          id: d.id,
+          code: d.code,
+          name: d.name,
+          location: d.location ?? undefined,
+          ip: d.ipAddress ?? undefined,
+          online: d.isOnline ?? false,
+        }));
         if (cams.length > 0) {
           setCameras(cams);
           setSelectedCode(cams[0].code);
+        } else {
+          setCameras([]);
+          setSelectedCode('');
         }
       })
       .catch(() => {});

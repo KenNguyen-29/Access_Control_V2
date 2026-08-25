@@ -16,6 +16,7 @@ import { DevicesService } from './devices.service';
 import { AkuvoxService } from './akuvox.service';
 import { DnakeService } from './dnake.service';
 import { DeviceWebRtcService } from './device-webrtc.service';
+import { OnvifDiscoveryService } from './onvif-discovery.service';
 import { CreateDeviceDto } from './dto/create-device.dto';
 import { UpdateDeviceDto } from './dto/update-device.dto';
 import { DevicesQueryDto } from './dto/devices-query.dto';
@@ -23,6 +24,9 @@ import { WebRtcOfferDto } from './dto/webrtc-offer.dto';
 import { AkuvoxWebhookSecurityService } from '../webhooks/akuvox-webhook-security.service';
 import { WebhooksService } from '../webhooks/webhooks.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { ProjectScopeService } from '../../common/services/project-scope.service';
+import type { JwtPayload } from '../auth/jwt.strategy';
 
 @ApiTags('devices')
 @ApiBearerAuth()
@@ -33,10 +37,16 @@ export class DevicesController {
     private readonly akuvox: AkuvoxService,
     private readonly dnake: DnakeService,
     private readonly webrtc: DeviceWebRtcService,
+    private readonly onvif: OnvifDiscoveryService,
     private readonly webhookSecurity: AkuvoxWebhookSecurityService,
     private readonly webhooks: WebhooksService,
     private readonly prisma: PrismaService,
+    private readonly projectScope: ProjectScopeService,
   ) {}
+
+  private liveScope(user?: JwtPayload) {
+    return this.projectScope.scopeFromLiveUser(user);
+  }
 
   @Get('akuvox/webhook-info')
   getAkuvoxWebhookInfo() {
@@ -44,6 +54,28 @@ export class DevicesController {
       webhookUrl: this.webhookSecurity.getWebhookUrl(),
       note: 'Cấu hình URL này trên Akuvox (HTTP push / door log). Thiết bị được map theo IP client.',
     });
+  }
+
+  @Post('onvif/scan')
+  async scanOnvif(
+    @Body()
+    body?: {
+      timeoutMs?: number;
+      username?: string;
+      password?: string;
+    },
+  ) {
+    const items = await this.onvif.scan({
+      timeoutMs: body?.timeoutMs,
+      username: body?.username?.trim() || undefined,
+      password: body?.password || undefined,
+    });
+    return successResponse(
+      { items, count: items.length },
+      items.length
+        ? `Tìm thấy ${items.length} thiết bị ONVIF`
+        : 'Không thấy thiết bị ONVIF (kiểm tra LAN / host network)',
+    );
   }
 
   @Post('akuvox/test-door-log')
@@ -70,24 +102,33 @@ export class DevicesController {
   }
 
   @Get()
-  async findAll(@Query() query: DevicesQueryDto) {
-    const result = await this.service.findAll(query);
+  async findAll(@Query() query: DevicesQueryDto, @CurrentUser() user?: JwtPayload) {
+    const scope = await this.liveScope(user);
+    const result = await this.service.findAll(query, scope);
     return paginatedResponse(result.items, result.total, result.page, result.pageSize);
   }
 
   @Get(':id')
-  async findOne(@Param('id') id: string) {
-    return successResponse(await this.service.findOne(id));
+  async findOne(@Param('id') id: string, @CurrentUser() user?: JwtPayload) {
+    const scope = await this.liveScope(user);
+    return successResponse(await this.service.findOne(id, scope));
   }
 
   @Post(':id/webrtc')
-  async webrtcExchange(@Param('id') id: string, @Body() dto: WebRtcOfferDto) {
+  async webrtcExchange(
+    @Param('id') id: string,
+    @Body() dto: WebRtcOfferDto,
+    @CurrentUser() user?: JwtPayload,
+  ) {
+    const scope = await this.liveScope(user);
+    await this.service.assertAccessible(id, scope);
     return successResponse(await this.webrtc.exchange(id, dto));
   }
 
   @Post()
-  async create(@Body() dto: CreateDeviceDto) {
-    return successResponse(await this.service.create(dto), 'Device created');
+  async create(@Body() dto: CreateDeviceDto, @CurrentUser() user?: JwtPayload) {
+    const scope = await this.liveScope(user);
+    return successResponse(await this.service.create(dto, scope), 'Device created');
   }
 
   @Post('users/:userId/sync')
@@ -113,18 +154,26 @@ export class DevicesController {
   }
 
   @Patch(':id')
-  async update(@Param('id') id: string, @Body() dto: UpdateDeviceDto) {
-    return successResponse(await this.service.update(id, dto), 'Device updated');
+  async update(
+    @Param('id') id: string,
+    @Body() dto: UpdateDeviceDto,
+    @CurrentUser() user?: JwtPayload,
+  ) {
+    const scope = await this.liveScope(user);
+    return successResponse(await this.service.update(id, dto, scope), 'Device updated');
   }
 
   @Delete(':id')
-  async remove(@Param('id') id: string) {
-    const result = await this.service.remove(id);
+  async remove(@Param('id') id: string, @CurrentUser() user?: JwtPayload) {
+    const scope = await this.liveScope(user);
+    const result = await this.service.remove(id, scope);
     return successResponse(result, 'Đã xóa thiết bị');
   }
 
   @Post(':id/open-door')
-  async openDoor(@Param('id') id: string) {
+  async openDoor(@Param('id') id: string, @CurrentUser() user?: JwtPayload) {
+    const scope = await this.liveScope(user);
+    await this.service.assertAccessible(id, scope);
     const device = await this.prisma.device.findFirst({
       where: { id, isDeleted: false },
       select: { deviceType: true },
@@ -139,7 +188,9 @@ export class DevicesController {
   }
 
   @Post(':id/sync-credentials')
-  async syncCredentials(@Param('id') id: string) {
+  async syncCredentials(@Param('id') id: string, @CurrentUser() user?: JwtPayload) {
+    const scope = await this.liveScope(user);
+    await this.service.assertAccessible(id, scope);
     const device = await this.prisma.device.findFirst({
       where: { id, isDeleted: false },
       select: { deviceType: true },
@@ -154,7 +205,9 @@ export class DevicesController {
   }
 
   @Post(':id/test-connection')
-  async testConnection(@Param('id') id: string) {
+  async testConnection(@Param('id') id: string, @CurrentUser() user?: JwtPayload) {
+    const scope = await this.liveScope(user);
+    await this.service.assertAccessible(id, scope);
     const result = await this.service.testConnection(id);
     return successResponse(
       result,
