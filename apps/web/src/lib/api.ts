@@ -1138,6 +1138,8 @@ export type WeeklyRow = {
   status: string;
   zoneName?: string | null;
   deviceName?: string | null;
+  checkInSnapshotUrl?: string | null;
+  checkOutSnapshotUrl?: string | null;
 };
 
 export type WeeklyTimesheet = {

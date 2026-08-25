@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AttendanceCalculationService } from '../attendance/attendance-calculation.service';
 import { attachPunchLocations } from '../attendance/punch-location.util';
+import { StorageService } from '../storage/storage.service';
 
 export interface StatsOverview {
   users: number;
@@ -105,6 +106,10 @@ export interface WeeklyRow {
   status: string;
   zoneName: string | null;
   deviceName: string | null;
+  /** Live panel snapshot at check-in (browser URL). */
+  checkInSnapshotUrl: string | null;
+  /** Live panel snapshot at check-out (browser URL). */
+  checkOutSnapshotUrl: string | null;
 }
 
 export interface WeeklyTimesheet {
@@ -144,7 +149,21 @@ export class StatsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly calc: AttendanceCalculationService,
+    private readonly storage: StorageService,
   ) {}
+
+  private async resolveSnapshotUrl(path: string | null | undefined): Promise<string | null> {
+    if (!path?.trim()) return null;
+    try {
+      return await this.storage.getAssetUrl(path, { forBrowser: true });
+    } catch {
+      try {
+        return await this.storage.getSignedUrl(path);
+      } catch {
+        return null;
+      }
+    }
+  }
 
   async overview(projectIds?: string[]): Promise<StatsOverview> {
     const startOfDay = new Date();
@@ -759,43 +778,51 @@ export class StatsService {
 
     const policy = await this.calc.getPolicyOptions();
     const withLocation = await attachPunchLocations(this.prisma, records);
-    const rows: WeeklyRow[] = withLocation.map((r) => {
-      const effective = r.workShift
-        ? this.calc.applyLateGraceFloor(r.workShift, policy.lateGraceFloor)
-        : null;
-      const metrics = this.calc.computeMetricsFromTimes(
-        effective,
-        r.checkInAt,
-        r.checkOutAt,
-        r.date,
-        asOf,
-        {
-          earlyLeaveGraceMinutes: policy.earlyLeaveGraceMinutes,
-          otAfterMinutes: policy.otAfterMinutes,
-        },
-      );
-      return {
-        userId: r.userId,
-        fullName: r.user?.fullName ?? r.userId,
-        employeeCode: r.user?.employeeCode ?? '',
-        departmentName: r.user?.department?.name ?? null,
-        date: formatDateOnly(r.date),
-        weekday: r.date.getUTCDay(),
-        shiftName: r.workShift?.name ?? null,
-        shiftCode: r.workShift?.code ?? null,
-        checkInAt: r.checkInAt,
-        checkOutAt: r.checkOutAt,
-        lateMinutes: metrics.lateMinutes,
-        earlyArrivalMinutes: metrics.earlyArrivalMinutes,
-        earlyLeaveMinutes: metrics.earlyLeaveMinutes,
-        otMinutes: metrics.otMinutes,
-        workedMinutes: metrics.workedMinutes,
-        salaryCoefficient: r.workShift?.salaryCoefficient ?? 1,
-        status: metrics.status,
-        zoneName: r.punchLocation?.zoneName ?? null,
-        deviceName: r.punchLocation?.deviceName ?? null,
-      };
-    });
+    const rows: WeeklyRow[] = await Promise.all(
+      withLocation.map(async (r) => {
+        const effective = r.workShift
+          ? this.calc.applyLateGraceFloor(r.workShift, policy.lateGraceFloor)
+          : null;
+        const metrics = this.calc.computeMetricsFromTimes(
+          effective,
+          r.checkInAt,
+          r.checkOutAt,
+          r.date,
+          asOf,
+          {
+            earlyLeaveGraceMinutes: policy.earlyLeaveGraceMinutes,
+            otAfterMinutes: policy.otAfterMinutes,
+          },
+        );
+        const [checkInSnapshotUrl, checkOutSnapshotUrl] = await Promise.all([
+          this.resolveSnapshotUrl(r.checkInSnapshotPath),
+          this.resolveSnapshotUrl(r.checkOutSnapshotPath),
+        ]);
+        return {
+          userId: r.userId,
+          fullName: r.user?.fullName ?? r.userId,
+          employeeCode: r.user?.employeeCode ?? '',
+          departmentName: r.user?.department?.name ?? null,
+          date: formatDateOnly(r.date),
+          weekday: r.date.getUTCDay(),
+          shiftName: r.workShift?.name ?? null,
+          shiftCode: r.workShift?.code ?? null,
+          checkInAt: r.checkInAt,
+          checkOutAt: r.checkOutAt,
+          lateMinutes: metrics.lateMinutes,
+          earlyArrivalMinutes: metrics.earlyArrivalMinutes,
+          earlyLeaveMinutes: metrics.earlyLeaveMinutes,
+          otMinutes: metrics.otMinutes,
+          workedMinutes: metrics.workedMinutes,
+          salaryCoefficient: r.workShift?.salaryCoefficient ?? 1,
+          status: metrics.status,
+          zoneName: r.punchLocation?.zoneName ?? null,
+          deviceName: r.punchLocation?.deviceName ?? null,
+          checkInSnapshotUrl,
+          checkOutSnapshotUrl,
+        };
+      }),
+    );
 
     rows.sort((a, b) => {
       const byName = a.fullName.localeCompare(b.fullName, 'vi');

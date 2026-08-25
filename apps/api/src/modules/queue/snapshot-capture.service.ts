@@ -29,6 +29,10 @@ export class SnapshotCaptureService {
   private readonly go2rtcEnabled: boolean;
   private readonly timeoutMs: number;
   private readonly dnakeMock: boolean;
+  /** Blank/placeholder go2rtc frames are often ~5–15KB; real panel frames are larger. */
+  private readonly minJpegBytes: number;
+  private readonly frameRetries: number;
+  private readonly frameRetryDelayMs: number;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -41,6 +45,9 @@ export class SnapshotCaptureService {
     this.go2rtcEnabled = config.get<string>('GO2RTC_ENABLED', 'true') === 'true';
     this.timeoutMs = Number(config.get<string>('SNAPSHOT_CAPTURE_TIMEOUT_MS', '8000'));
     this.dnakeMock = config.get<string>('DNAKE_MOCK_MODE', 'true') === 'true';
+    this.minJpegBytes = Number(config.get<string>('SNAPSHOT_MIN_JPEG_BYTES', '20000'));
+    this.frameRetries = Math.max(1, Number(config.get<string>('SNAPSHOT_FRAME_RETRIES', '5')));
+    this.frameRetryDelayMs = Number(config.get<string>('SNAPSHOT_FRAME_RETRY_MS', '400'));
   }
 
   async captureForReaderDevice(
@@ -59,7 +66,10 @@ export class SnapshotCaptureService {
     }
 
     let buffer: Buffer | null = null;
-    if (device.deviceType === DeviceType.DNAKE) {
+    if (device.deviceType === DeviceType.AKUVOX) {
+      buffer = await this.captureAkuvoxHttp(device);
+    }
+    if (!buffer && device.deviceType === DeviceType.DNAKE) {
       buffer = await this.captureDnakePanel(device);
     }
     if (!buffer) {
@@ -91,6 +101,74 @@ export class SnapshotCaptureService {
     return buf.length > 80 && buf[0] === 0xff && buf[1] === 0xd8;
   }
 
+  /** Reject tiny placeholder frames (go2rtc often returns blank ~10–15KB JPEGs). */
+  private isUsefulJpeg(buf: Buffer | null): boolean {
+    return !!buf && this.isJpeg(buf) && buf.length >= this.minJpegBytes;
+  }
+
+  private sleep(ms: number) {
+    return new Promise<void>((resolve) => setTimeout(resolve, ms));
+  }
+
+  /**
+   * Akuvox MJPEG/JPEG snapshot over HTTP (preferred over RTSP).
+   * Docs: http://IP:8080/jpeg.cgi or /picture.jpg (enable MJPEG Authorization on panel).
+   */
+  private async captureAkuvoxHttp(device: Device): Promise<Buffer | null> {
+    if (!device.ipAddress?.trim()) return null;
+    const cfg = this.panelConfig(device);
+    const username =
+      device.rtspUsername?.trim() || cfg.username?.trim() || undefined;
+    const password = device.rtspPassword || cfg.password || undefined;
+    if (!username || !password) {
+      this.logger.debug(
+        `Akuvox HTTP snapshot skipped ${device.code}: missing username/password`,
+      );
+      return null;
+    }
+    const auth = Buffer.from(`${username}:${password}`, 'utf8').toString('base64');
+    const protocol = cfg.protocol || 'http';
+    const ip = device.ipAddress.trim();
+    const urls = [
+      `${protocol}://${ip}:8080/jpeg.cgi`,
+      `${protocol}://${ip}:8080/picture.jpg`,
+      `${protocol}://${ip}:8080/snapshot.cgi`,
+      `${protocol}://${ip}/jpeg.cgi`,
+    ];
+    for (const url of urls) {
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+        try {
+          const res = await fetch(url, {
+            signal: controller.signal,
+            headers: { Authorization: `Basic ${auth}` },
+          });
+          if (!res.ok) continue;
+          const buf = Buffer.from(await res.arrayBuffer());
+          if (this.isUsefulJpeg(buf)) {
+            this.logger.log(`Akuvox HTTP snapshot OK ${device.code} via ${url} bytes=${buf.length}`);
+            return buf;
+          }
+          if (this.isJpeg(buf)) {
+            this.logger.debug(
+              `Akuvox HTTP snapshot too small ${device.code} via ${url} bytes=${buf.length}`,
+            );
+          }
+        } finally {
+          clearTimeout(timer);
+        }
+      } catch (err) {
+        this.logger.debug(
+          `Akuvox HTTP snapshot failed ${device.code} ${url}: ${
+            err instanceof Error ? err.message : err
+          }`,
+        );
+      }
+    }
+    return null;
+  }
+
   private async captureDnakePanel(device: Device): Promise<Buffer | null> {
     if (this.dnakeMock) {
       this.logger.debug(`[MOCK] DNAKE snapshot device=${device.code}`);
@@ -115,7 +193,7 @@ export class SnapshotCaptureService {
         const uri = this.resourceUri(data);
         if (!uri) continue;
         const buf = await this.fetchPanelFile(device, uri);
-        if (buf && this.isJpeg(buf)) return buf;
+        if (this.isUsefulJpeg(buf) || (buf && this.isJpeg(buf))) return buf;
       } catch (err) {
         this.logger.debug(
           `DNAKE snapshot ${path} failed device=${device.code}: ${
@@ -234,42 +312,74 @@ export class SnapshotCaptureService {
       return null;
     }
     const errors: string[] = [];
+    let bestWeak: Buffer | null = null;
     for (const src of candidates) {
       const rtspUrl = buildRtspUrlWithCredentials(src, username, password);
       const streamName = `panel_${device.id}`;
       try {
         await this.upsertStream(streamName, rtspUrl);
-        const buffer = await this.fetchFrame(streamName);
-        if (buffer && this.isJpeg(buffer)) {
-          this.logger.log(`RTSP frame OK ${device.code} via ${src.split('@').pop() ?? src}`);
+        // Let go2rtc connect + decode a keyframe before grabbing.
+        await this.sleep(this.frameRetryDelayMs);
+        const buffer = await this.fetchFrameWithRetry(streamName);
+        if (buffer && this.isUsefulJpeg(buffer)) {
+          this.logger.log(
+            `RTSP frame OK ${device.code} via ${src.split('@').pop() ?? src} bytes=${buffer.length}`,
+          );
           return buffer;
         }
-        errors.push(`${src}: empty/non-jpeg frame`);
+        if (buffer && this.isJpeg(buffer)) {
+          if (!bestWeak || buffer.length > bestWeak.length) bestWeak = buffer;
+          errors.push(`${src}: weak jpeg ${buffer.length}B (<${this.minJpegBytes})`);
+        } else {
+          errors.push(`${src}: empty/non-jpeg frame`);
+        }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         errors.push(`${src}: ${msg}`);
         this.logger.warn(`RTSP snapshot failed ${device.code}: ${msg}`);
       }
     }
-    this.logger.warn(`RTSP snapshot exhausted ${device.code}: ${errors.join(' | ')}`);
+    // Never persist blank placeholders — better no image than white square.
+    this.logger.warn(
+      `RTSP snapshot exhausted ${device.code}: ${errors.join(' | ')}${
+        bestWeak ? ` (best weak=${bestWeak.length}B discarded)` : ''
+      }`,
+    );
     return null;
   }
 
-  /** Prefer explicit rtspUrl; otherwise vendor default paths on device IP. */
+  /**
+   * Prefer Akuvox native `live/ch00_0`. Explicit URL (e.g. ONVIF Hikvision-style
+   * `/Streaming/Channels/101`) is tried too, but natives always remain candidates —
+   * that path often returns a blank-but-valid JPEG on Akuvox.
+   */
   private rtspCandidates(device: Device): string[] {
     const explicit = device.rtspUrl?.trim();
-    if (explicit) return [explicit];
     const ip = device.ipAddress?.trim();
-    if (!ip) return [];
-    if (device.deviceType === DeviceType.DNAKE) {
-      return [`rtsp://${ip}:554/stream1`, `rtsp://${ip}:554/Streaming/Channels/101`];
+    const list: string[] = [];
+    const push = (u?: string) => {
+      const v = u?.trim();
+      if (v && !list.includes(v)) list.push(v);
+    };
+
+    if (device.deviceType === DeviceType.AKUVOX && ip) {
+      push(`rtsp://${ip}:554/live/ch00_0`);
+      push(`rtsp://${ip}/live/ch00_0`);
     }
-    // Akuvox common paths
-    return [
-      `rtsp://${ip}:554/live/ch00_0`,
-      `rtsp://${ip}:554/Streaming/Channels/101`,
-      `rtsp://${ip}:554/stream1`,
-    ];
+    push(explicit);
+    if (!ip) return list;
+
+    if (device.deviceType === DeviceType.DNAKE) {
+      push(`rtsp://${ip}:554/stream1`);
+      push(`rtsp://${ip}:554/Streaming/Channels/101`);
+      return list;
+    }
+
+    push(`rtsp://${ip}:554/live/ch00_1`);
+    push(`rtsp://${ip}:554/stream1`);
+    // Hikvision-style last — can "succeed" with blank frames on Akuvox.
+    push(`rtsp://${ip}:554/Streaming/Channels/101`);
+    return list;
   }
 
   private async upsertStream(streamName: string, rtspUrl: string) {
@@ -302,5 +412,25 @@ export class SnapshotCaptureService {
       }),
     );
     return Buffer.from(response.data as ArrayBuffer);
+  }
+
+  /** Poll go2rtc until a substantial JPEG appears (stream warm-up). */
+  private async fetchFrameWithRetry(streamName: string): Promise<Buffer | null> {
+    let best: Buffer | null = null;
+    for (let i = 0; i < this.frameRetries; i++) {
+      try {
+        const buf = await this.fetchFrame(streamName);
+        if (this.isJpeg(buf) && (!best || buf.length > best.length)) {
+          best = buf;
+        }
+        if (this.isUsefulJpeg(buf)) return buf;
+      } catch {
+        /* retry */
+      }
+      if (i + 1 < this.frameRetries) {
+        await this.sleep(this.frameRetryDelayMs);
+      }
+    }
+    return best;
   }
 }

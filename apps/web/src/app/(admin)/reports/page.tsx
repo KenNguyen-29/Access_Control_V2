@@ -79,8 +79,57 @@ function formatMinutes(minutes: number) {
   if (!minutes) return '0p';
   const h = Math.floor(minutes / 60);
   const m = minutes % 60;
-  if (h > 0) return `${h}g${m > 0 ? ` ${m}p` : ''}`;
-  return `${m}p`;
+  return h > 0 ? `${h}h ${m}p` : `${m}p`;
+}
+
+/** Thumbnail pair: check-in / check-out live snapshots. */
+function PunchSnapshotCell({
+  checkInUrl,
+  checkOutUrl,
+  name,
+}: {
+  checkInUrl?: string | null;
+  checkOutUrl?: string | null;
+  name?: string;
+}) {
+  const thumb = (url: string | null | undefined, label: string) => {
+    if (!url) {
+      return (
+        <div
+          className="flex h-11 w-11 items-center justify-center rounded border border-dashed border-border bg-muted/40 text-[9px] text-muted-foreground"
+          title={`Chưa có ảnh ${label.toLowerCase()}`}
+        >
+          {label}
+        </div>
+      );
+    }
+    return (
+      <a
+        href={url}
+        target="_blank"
+        rel="noreferrer"
+        className="group relative block h-11 w-11 overflow-hidden rounded border border-border bg-muted"
+        title={`Ảnh ${label.toLowerCase()} — bấm xem lớn`}
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={url}
+          alt={`${name ?? 'NV'} · ${label}`}
+          className="h-full w-full object-cover transition group-hover:opacity-90"
+        />
+        <span className="absolute inset-x-0 bottom-0 bg-black/55 py-px text-center text-[8px] font-semibold uppercase tracking-wide text-white">
+          {label}
+        </span>
+      </a>
+    );
+  };
+
+  return (
+    <div className="flex items-center gap-1.5">
+      {thumb(checkInUrl, 'Vào')}
+      {thumb(checkOutUrl, 'Ra')}
+    </div>
+  );
 }
 
 const WEEKDAY_LABELS = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
@@ -752,7 +801,7 @@ export default function ReportsPage() {
 
           <DesignCard
             title={`Chấm công theo tuần (${weeklyFilteredCount})`}
-            description="Chi tiết chấm công từng ngày theo nhân viên, kèm hệ số lương của ca."
+            description="Chi tiết chấm công từng ngày theo nhân viên, kèm ảnh snapshot lúc vào/ra và hệ số lương của ca."
             actions={
               <div className="flex items-center gap-2">
                 <Button variant="outline" size="icon" className="h-9 w-9" onClick={() => shiftWeek(-7)}>
@@ -830,7 +879,7 @@ export default function ReportsPage() {
               emptyDescription="Chuyển sang tuần khác hoặc nới bộ lọc."
             >
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[1180px] text-sm">
+                <table className="w-full min-w-[1280px] text-sm">
                   <thead>
                     <tr className="border-b border-border bg-muted/30 text-left">
                       <th className="p-2 font-semibold">Nhân viên</th>
@@ -840,6 +889,7 @@ export default function ReportsPage() {
                       <th className="p-2 font-semibold">Máy</th>
                       <th className="p-2 font-semibold">Giờ vào</th>
                       <th className="p-2 font-semibold">Giờ ra</th>
+                      <th className="p-2 font-semibold">Ảnh</th>
                       <th className="p-2 text-right font-semibold">Giờ làm</th>
                       <th className="p-2 text-right font-semibold">Đi muộn</th>
                       <th className="p-2 text-right font-semibold">Đi sớm</th>
@@ -891,6 +941,13 @@ export default function ReportsPage() {
                           <td className="p-2 text-xs text-muted-foreground">{r.deviceName || '—'}</td>
                           <td className="p-2 font-mono text-xs">{formatTime(r.checkInAt)}</td>
                           <td className="p-2 font-mono text-xs">{formatTime(r.checkOutAt)}</td>
+                          <td className="p-2">
+                            <PunchSnapshotCell
+                              checkInUrl={r.checkInSnapshotUrl}
+                              checkOutUrl={r.checkOutSnapshotUrl}
+                              name={group.fullName}
+                            />
+                          </td>
                           <td className="p-2 text-right font-medium">
                             {r.workedMinutes > 0 ? formatMinutes(r.workedMinutes) : '—'}
                             {!r.checkOutAt && r.checkInAt && (
