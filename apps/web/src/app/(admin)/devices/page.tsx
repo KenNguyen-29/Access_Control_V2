@@ -16,6 +16,7 @@ import {
   Wifi,
   WifiOff,
   Loader2,
+  Activity,
   Radar,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -168,7 +169,7 @@ export default function DevicesPage() {
   const zones = zonesQuery.data ?? [];
   const projects = useMemo(() => {
     const raw = projectsQuery.data;
-    return Array.isArray(raw) ? raw : (raw?.items ?? []);
+    return Array.isArray(raw) ? raw : [];
   }, [projectsQuery.data]);
   const zoneNameById = useMemo(
     () => new Map(zones.map((z) => [z.id, z.name])),
