@@ -6,7 +6,7 @@ export interface CheckinEvent {
   employeeCode?: string;
   fullName?: string;
   departmentName?: string;
-  deviceId: string;
+  deviceId?: string;
   deviceName?: string;
   action: AccessAction;
   timestamp: string;

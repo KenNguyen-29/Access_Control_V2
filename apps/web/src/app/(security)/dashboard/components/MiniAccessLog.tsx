@@ -74,11 +74,13 @@ function checkinEventToAccessLog(event: CheckinEvent): AccessLog {
           employeeCode: event.employeeCode ?? '',
         }
       : null,
-    device: {
-      id: event.deviceId,
-      name: event.deviceName ?? '—',
-      code: event.deviceId,
-    },
+    device: event.deviceId
+      ? {
+          id: event.deviceId,
+          name: event.deviceName ?? '—',
+          code: event.deviceId,
+        }
+      : null,
   };
 }
 
