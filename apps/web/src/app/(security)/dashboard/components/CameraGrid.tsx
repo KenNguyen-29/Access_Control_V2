@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { Monitor, Maximize2, Loader2, VideoOff, X } from 'lucide-react';
+import { Monitor, Maximize2, Minimize2, Loader2, VideoOff } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ApiError, exchangeDeviceWebRtc } from '@/lib/api';
 
@@ -196,37 +196,53 @@ export default function CameraGrid({
   selectedCode,
   onSelect,
   onExpand,
+  expanded = false,
 }: {
   cameras: CameraItem[];
   layout?: number;
   selectedCode?: string | null;
   onSelect?: (code: string) => void;
   onExpand?: (cam: CameraItem) => void;
+  /** True when a single camera fills the whole grid frame (1×1). */
+  expanded?: boolean;
 }) {
   const slots = Array.from({ length: layout }).map((_, i) => cameras[i] ?? null);
+  const fillFrame = layout === 1;
 
   return (
-    <div className={cn('grid h-full w-full content-center gap-0.5 p-0.5', GRID_COLS[layout] ?? 'grid-cols-3')}>
+    <div
+      className={cn(
+        'grid h-full w-full gap-0.5 p-0.5',
+        fillFrame ? 'grid-cols-1 grid-rows-1' : cn('content-center', GRID_COLS[layout] ?? 'grid-cols-3'),
+      )}
+    >
       {slots.map((cam, i) =>
         cam ? (
           <CameraSlot
             key={cam.code}
             cam={cam}
             selected={cam.code === selectedCode}
+            fillFrame={fillFrame}
+            expanded={expanded && cam.code === selectedCode}
             onClick={() => onSelect?.(cam.code)}
             onExpand={onExpand ? () => onExpand(cam) : undefined}
           />
         ) : (
-          <EmptySlot key={`empty-${i}`} />
+          <EmptySlot key={`empty-${i}`} fillFrame={fillFrame} />
         ),
       )}
     </div>
   );
 }
 
-function EmptySlot() {
+function EmptySlot({ fillFrame }: { fillFrame?: boolean }) {
   return (
-    <div className="relative flex aspect-video w-full items-center justify-center overflow-hidden border border-slate-800 bg-[#0a0c10]">
+    <div
+      className={cn(
+        'relative flex w-full items-center justify-center overflow-hidden border border-slate-800 bg-[#0a0c10]',
+        fillFrame ? 'h-full min-h-0' : 'aspect-video',
+      )}
+    >
       <div className="pointer-events-none absolute inset-x-0 top-0 h-full overflow-hidden">
         <div className="h-1/3 w-full animate-scan bg-gradient-to-b from-transparent via-primary/10 to-transparent" />
       </div>
@@ -302,11 +318,15 @@ function DiagBadges({ diag }: { diag: StreamDiag }) {
 function CameraSlot({
   cam,
   selected,
+  fillFrame,
+  expanded,
   onClick,
   onExpand,
 }: {
   cam: CameraItem;
   selected?: boolean;
+  fillFrame?: boolean;
+  expanded?: boolean;
   onClick?: () => void;
   onExpand?: () => void;
 }) {
@@ -324,7 +344,8 @@ function CameraSlot({
         }
       }}
       className={cn(
-        'group relative aspect-video w-full cursor-pointer overflow-hidden border bg-slate-950 text-left outline-none',
+        'group relative w-full cursor-pointer overflow-hidden border bg-slate-950 text-left outline-none',
+        fillFrame ? 'h-full min-h-0' : 'aspect-video',
         selected
           ? 'z-10 border-2 border-primary shadow-[0_0_15px_rgba(17,152,97,0.35)] ring-1 ring-primary/50'
           : 'border-slate-800',
@@ -349,18 +370,21 @@ function CameraSlot({
         </span>
       </div>
 
-      {/* Expand button — opens the single-camera detail view */}
+      {/* Expand = fill whole grid frame; again = restore multi-cam layout (not a modal). */}
       {onExpand && (
         <button
           type="button"
-          title="Xem chi tiết camera"
+          title={expanded ? 'Thu về lưới nhiều camera' : 'Phóng toàn khung'}
           onClick={(e) => {
             e.stopPropagation();
             onExpand();
           }}
-          className="absolute right-2 top-2 z-10 flex h-7 w-7 items-center justify-center rounded-sm border border-white/10 bg-black/40 text-white/80 opacity-0 backdrop-blur-md transition-opacity hover:bg-black/70 hover:text-white group-hover:opacity-100"
+          className={cn(
+            'absolute right-2 top-2 z-10 flex h-7 w-7 items-center justify-center rounded-sm border border-white/10 bg-black/40 text-white/80 backdrop-blur-md transition-opacity hover:bg-black/70 hover:text-white',
+            expanded ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
+          )}
         >
-          <Maximize2 className="h-3.5 w-3.5" />
+          {expanded ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
         </button>
       )}
 
@@ -377,97 +401,6 @@ function CameraSlot({
       <Corner className="right-1 top-1 border-r border-t" />
       <Corner className="bottom-1 left-1 border-b border-l" />
       <Corner className="bottom-1 right-1 border-b border-r" />
-    </div>
-  );
-}
-
-/** Full single-camera detail view (modal overlay) for close inspection / testing. */
-export function CameraDetailModal({ cam, onClose }: { cam: CameraItem; onClose: () => void }) {
-  const { videoRef, diag, state } = useCameraStream(cam);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
-  const playbackLabel =
-    state === 'live' ? 'LIVE' : state === 'connecting' ? 'Đang kết nối' : 'Mất tín hiệu';
-
-  return (
-    <div
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
-      onClick={onClose}
-    >
-      <div
-        className="flex w-full max-w-4xl flex-col overflow-hidden rounded-md border border-slate-800 bg-[#0a0c10] shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-slate-800 px-4 py-2.5">
-          <div className="flex flex-col gap-1">
-            <div className="flex items-center gap-2.5">
-              <StatusDot state={state} />
-              <span className="text-sm font-semibold text-white">{cam.name}</span>
-              <span
-                className={cn(
-                  'rounded-sm px-1.5 py-0.5 text-[10px] font-bold uppercase',
-                  state === 'live'
-                    ? 'bg-red-500/20 text-red-300'
-                    : state === 'connecting'
-                      ? 'bg-amber-500/20 text-amber-300'
-                      : 'bg-slate-700/40 text-slate-400',
-                )}
-              >
-                {playbackLabel}
-              </span>
-            </div>
-            <p className="font-mono text-[11px] text-slate-400">
-              Net {linkLabel(diag.network)} · RTSP {linkLabel(diag.rtsp)} · Play {playbackLabel}
-              {diag.reason ? ` · ${diag.reason}` : ''}
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="flex h-8 w-8 items-center justify-center rounded-sm border border-slate-700 text-slate-300 hover:bg-slate-800 hover:text-white"
-            title="Đóng (Esc)"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-
-        {/* Video */}
-        <div className="relative aspect-video w-full bg-black">
-          <video
-            ref={videoRef}
-            autoPlay
-            playsInline
-            muted
-            className={cn('h-full w-full object-contain', state === 'live' ? 'opacity-100' : 'opacity-0')}
-          />
-          <StreamOverlay diag={diag} />
-        </div>
-
-        {/* Meta footer */}
-        <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 border-t border-slate-800 px-4 py-3 text-xs sm:grid-cols-4">
-          <Meta label="Mã" value={cam.code} mono />
-          <Meta label="IP" value={cam.ip || '—'} mono />
-          <Meta label="Vị trí" value={cam.location || '—'} />
-          <Meta label="Playback" value={playbackLabel} />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function Meta({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
-  return (
-    <div className="flex flex-col gap-0.5">
-      <span className="text-[10px] uppercase tracking-wider text-slate-500">{label}</span>
-      <span className={cn('truncate text-slate-200', mono && 'font-mono')}>{value}</span>
     </div>
   );
 }

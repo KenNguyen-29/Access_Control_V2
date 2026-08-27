@@ -68,11 +68,6 @@ const CameraGrid = dynamic(() => import('./components/CameraGrid'), {
   ),
 });
 
-const CameraDetailModal = dynamic(
-  () => import('./components/CameraGrid').then((m) => m.CameraDetailModal),
-  { ssr: false },
-);
-
 const LAYOUTS = [
   { value: 1, label: '1×1' },
   { value: 4, label: '2×2' },
@@ -89,14 +84,17 @@ export default function DashboardPage() {
   const [search, setSearch] = useState('');
   const [selectedCode, setSelectedCode] = useState<string>(DEMO_CAMERAS[0]?.code ?? '');
   const [layout, setLayout] = useState<number>(4);
+  /** Layout to restore when exiting single-camera expand (not a modal). */
+  const layoutBeforeExpandRef = useRef<number>(4);
   const [popupTimeoutMs, setPopupTimeoutMs] = useState(6000);
   const [alertSoundEnabled, setAlertSoundEnabled] = useState(false);
   const [tab, setTab] = useState('events');
-  const [detailCam, setDetailCam] = useState<CameraItem | null>(null);
   const [emergencyOpen, setEmergencyOpen] = useState(false);
   const [emergencyPeople, setEmergencyPeople] = useState<EmergencyOverlayPerson[]>([]);
   const gridAreaRef = useRef<HTMLElement>(null);
   const [isGridFullscreen, setIsGridFullscreen] = useState(false);
+
+  const isCamExpanded = layout === 1;
 
   useEffect(() => {
     const onFullscreenChange = () => {
@@ -115,6 +113,34 @@ export default function DashboardPage() {
       void el.requestFullscreen();
     }
   }, []);
+
+  /** Expand camera to fill the whole grid frame (1×1) — not a modal. */
+  const expandCameraInFrame = useCallback(
+    (cam: CameraItem) => {
+      if (layout === 1 && selectedCode === cam.code) {
+        setLayout(layoutBeforeExpandRef.current || 4);
+        return;
+      }
+      if (layout !== 1) layoutBeforeExpandRef.current = layout;
+      setSelectedCode(cam.code);
+      setLayout(1);
+    },
+    [layout, selectedCode],
+  );
+
+  const setLayoutRemembering = useCallback((next: number) => {
+    if (next !== 1) layoutBeforeExpandRef.current = next;
+    setLayout(next);
+  }, []);
+
+  useEffect(() => {
+    if (!isCamExpanded) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setLayout(layoutBeforeExpandRef.current || 4);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [isCamExpanded]);
 
   useEffect(() => {
     let cancelled = false;
@@ -376,7 +402,8 @@ export default function DashboardPage() {
             layout={layout}
             selectedCode={selectedCode}
             onSelect={setSelectedCode}
-            onExpand={setDetailCam}
+            onExpand={expandCameraInFrame}
+            expanded={isCamExpanded}
           />
         </div>
 
@@ -418,7 +445,7 @@ export default function DashboardPage() {
                       key={l.value}
                       type="button"
                       onClick={() => {
-                        setLayout(l.value);
+                        setLayoutRemembering(l.value);
                         close();
                       }}
                       className={cn(
@@ -437,13 +464,17 @@ export default function DashboardPage() {
             </Popover>
             <button
               type="button"
-              onClick={() => selectedCam && setDetailCam(selectedCam)}
+              onClick={() => selectedCam && expandCameraInFrame(selectedCam)}
               disabled={!selectedCam}
               className="inline-flex h-8 items-center gap-1.5 rounded-sm border border-slate-300 bg-white px-2.5 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50"
-              title="Xem chi tiết camera đang chọn"
+              title={
+                isCamExpanded
+                  ? 'Thu về lưới nhiều camera'
+                  : 'Phóng camera đang chọn toàn khung'
+              }
             >
-              <Maximize className="h-4 w-4" />
-              Chi tiết
+              {isCamExpanded ? <Minimize className="h-4 w-4" /> : <Maximize className="h-4 w-4" />}
+              {isCamExpanded ? 'Thu nhỏ' : 'Phóng to'}
             </button>
         <button
           type="button"
@@ -478,8 +509,6 @@ export default function DashboardPage() {
           </TabsContent>
         </Tabs>
       </aside>
-
-      {detailCam && <CameraDetailModal cam={detailCam} onClose={() => setDetailCam(null)} />}
 
       <EmergencyOverlay
         open={emergencyOpen}
