@@ -6,13 +6,15 @@ import { json, urlencoded, NextFunction, Request, Response } from 'express';
 import { AppModule } from './app.module';
 import { AllExceptionsFilter } from './common/filters/http-exception.filter';
 import { akuvoxDoorLogMiddleware } from './common/middleware/akuvox-door-log.middleware';
+import { resolveCorsOrigin } from './common/utils/network.util';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
   const configService = app.get(ConfigService);
-  const port = configService.get<number>('API_PORT', 8080);
-  const corsOrigin = configService.get<string>('CORS_ORIGIN', 'http://localhost:3000');
+  const port = configService.get<number>('API_PORT', 8010);
+  const bindHost = configService.get<string>('API_BIND_HOST', '0.0.0.0').trim() || '0.0.0.0';
+  const corsOrigin = resolveCorsOrigin(configService.get<string>('CORS_ORIGIN', ''));
   const bodyLimit = configService.get<string>('JSON_BODY_LIMIT', '15mb');
 
   app.use(akuvoxDoorLogMiddleware);
@@ -78,9 +80,9 @@ async function bootstrap() {
   const document = SwaggerModule.createDocument(app, swaggerConfig);
   SwaggerModule.setup('api/docs', app, document);
 
-  await app.listen(port);
-  console.log(`API running on http://localhost:${port}`);
-  console.log(`Swagger docs at http://localhost:${port}/api/docs`);
+  await app.listen(port, bindHost);
+  console.log(`API listening on ${bindHost}:${port}`);
+  console.log(`Swagger docs at http://${bindHost}:${port}/api/docs`);
 }
 
 bootstrap();

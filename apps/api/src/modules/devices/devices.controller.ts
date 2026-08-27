@@ -8,6 +8,8 @@ import {
   Patch,
   Post,
   Query,
+  Req,
+  UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { DeviceType } from '@prisma/client';
@@ -21,12 +23,18 @@ import { CreateDeviceDto } from './dto/create-device.dto';
 import { UpdateDeviceDto } from './dto/update-device.dto';
 import { DevicesQueryDto } from './dto/devices-query.dto';
 import { WebRtcOfferDto } from './dto/webrtc-offer.dto';
+import { OnvifScanDto } from './dto/onvif-scan.dto';
+import { OnvifProfilesDto } from './dto/onvif-profiles.dto';
+import { OnvifTestStreamDto } from './dto/onvif-test-stream.dto';
 import { AkuvoxWebhookSecurityService } from '../webhooks/akuvox-webhook-security.service';
 import { WebhooksService } from '../webhooks/webhooks.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ProjectScopeService } from '../../common/services/project-scope.service';
+import { Roles } from '../../common/decorators/roles.decorator';
+import { RolesGuard } from '../../common/guards/roles.guard';
 import type { JwtPayload } from '../auth/jwt.strategy';
+import type { Request } from 'express';
 
 @ApiTags('devices')
 @ApiBearerAuth()
@@ -49,53 +57,99 @@ export class DevicesController {
   }
 
   @Get('akuvox/webhook-info')
-  getAkuvoxWebhookInfo() {
+  async getAkuvoxWebhookInfo(
+    @Req() request: Request,
+    @Query('deviceIp') deviceIp?: string,
+  ) {
+    const normalizedIp = deviceIp?.trim();
+    const webhookUrl = normalizedIp
+      ? await this.webhookSecurity.getWebhookUrlForDevice(normalizedIp, request)
+      : this.webhookSecurity.getWebhookUrl(request);
     return successResponse({
-      webhookUrl: this.webhookSecurity.getWebhookUrl(),
-      note: 'Cấu hình URL này trên Akuvox (HTTP push / door log). Thiết bị được map theo IP client.',
+      webhookUrl,
+      note: normalizedIp
+        ? 'URL đã chọn theo route VPN/LAN từ máy chủ đến IP Akuvox này.'
+        : 'Cấu hình URL này trên Akuvox (HTTP push / door log). Có thể truyền deviceIp để chọn đúng route VPN.',
     });
   }
 
   @Post('onvif/scan')
-  async scanOnvif(
-    @Body()
-    body?: {
-      timeoutMs?: number;
-      username?: string;
-      password?: string;
-    },
-  ) {
-    const items = await this.onvif.scan({
-      timeoutMs: body?.timeoutMs,
-      username: body?.username?.trim() || undefined,
-      password: body?.password || undefined,
-    });
+  @UseGuards(RolesGuard)
+  @Roles('ADMIN', 'TECHNICIAN')
+  async scanOnvif(@Body() body: OnvifScanDto) {
+    const items = await this.onvif.scan({ timeoutMs: body?.timeoutMs });
     return successResponse(
-      { items, count: items.length },
+      { items, count: items.length, source: 'native' },
       items.length
         ? `Tìm thấy ${items.length} thiết bị ONVIF`
         : 'Không thấy thiết bị ONVIF (kiểm tra LAN / host network)',
     );
   }
 
+  @Post('onvif/profiles')
+  @UseGuards(RolesGuard)
+  @Roles('ADMIN', 'TECHNICIAN')
+  async onvifProfiles(@Body() body: OnvifProfilesDto) {
+    return successResponse(
+      await this.onvif.fetchProfiles({
+        ip: body.ipAddress,
+        serviceUrl: body.serviceUrl,
+        username: body.username,
+        password: body.password,
+      }),
+      'Đã lấy profile ONVIF',
+    );
+  }
+
+  @Post('onvif/test-stream')
+  @UseGuards(RolesGuard)
+  @Roles('ADMIN', 'TECHNICIAN')
+  async onvifTestStream(@Body() body: OnvifTestStreamDto) {
+    return successResponse(
+      await this.service.testOnvifStream({
+        ipAddress: body.ipAddress,
+        rtspUrl: body.rtspUrl,
+        username: body.username,
+        password: body.password,
+        timeoutMs: body.timeoutMs,
+      }),
+      'Đã kiểm tra luồng RTSP',
+    );
+  }
+
   @Post('akuvox/test-door-log')
-  async testAkuvoxDoorLog(@Body() body: { userId?: string; deviceIp?: string }) {
-    const userId = body.userId?.trim() || 'NV-0003';
-    const deviceIp = body.deviceIp?.trim() || '192.168.71.186';
+  async testAkuvoxDoorLog(@Body() body: {
+    userId?: string;
+    deviceIp?: string;
+    deviceCode?: string;
+    status?: string;
+    type?: string;
+    name?: string;
+    date?: string;
+    time?: string;
+  }) {
+    const limit = (value: string | undefined, fallback: string, max = 100) => {
+      const trimmed = value?.trim();
+      return trimmed ? trimmed.slice(0, max) : fallback;
+    };
+    const userId = limit(body.userId, 'NV-0003');
+    const deviceIp = limit(body.deviceIp, '192.168.71.186', 45);
+    const deviceCode = body.deviceCode?.trim().slice(0, 32) || undefined;
     const now = new Date();
-    const date = now.toISOString().slice(0, 10);
-    const time = now.toTimeString().slice(0, 8);
+    const date = limit(body.date, now.toISOString().slice(0, 10), 20);
+    const time = limit(body.time, now.toTimeString().slice(0, 8), 12);
 
     const result = await this.webhooks.processDoorLog(
       {
-        Type: 'Face',
-        Status: 'Success',
+        Type: limit(body.type, 'Face', 30),
+        Status: limit(body.status, 'Success', 30),
         UserID: userId,
         Date: date,
         Time: time,
-        Name: 'Test User',
+        Name: limit(body.name, 'Simulator', 100),
       },
       deviceIp,
+      deviceCode,
     );
 
     return successResponse(result, 'Test door_log dispatched');

@@ -1,6 +1,6 @@
 # Deploy tự động (CI/CD)
 
-Push lên `main` → **CI** (GitHub cloud) chạy test/build → **Deploy** chạy trên **self-hosted runner** trên máy `192.168.2.148`.
+Push lên `main` → **CI** (GitHub cloud) chạy test/build → **Deploy** chạy trên **self-hosted runner** trên máy chủ đích.
 
 > Máy LAN (`192.168.x.x`) không nhận SSH từ GitHub cloud. Cần **runner cài trên chính máy chủ** (hoặc máy cùng mạng LAN).
 
@@ -28,7 +28,7 @@ Server đã có data: deploy đánh dấu baseline đã apply rồi chạy seed 
 ### 1. Docker + git
 
 ```bash
-ssh admintechfarm@192.168.2.148
+ssh <SERVER_USER>@<SERVER_HOST>
 
 sudo apt update && sudo apt install -y git curl
 curl -fsSL https://get.docker.com | sudo sh
@@ -43,9 +43,12 @@ mkdir -p ~/Access_Control_V2
 nano ~/Access_Control_V2/.env
 ```
 
-Dán nội dung từ [`.env.production.example`](../.env.production.example), sửa IP `192.168.2.148` và mật khẩu.
+Dán nội dung từ [`.env.production.example`](../.env.production.example) và thay các secret cần thiết.
 
 Mặc định port công ty: **web 3003**, **API 8010** (`WEB_HOST_PORT`, `API_HOST_PORT`).
+Web build mặc định gọi same-origin và proxy `/api`, `/socket.io` tới
+`API_PROXY_TARGET=http://api:8080`; không cần điền IP máy chủ vào
+`NEXT_PUBLIC_API_URL`/`NEXT_PUBLIC_WS_URL`.
 
 Deploy lần đầu tự tạo **roles** + tài khoản **admin / admin123** (đổi mật khẩu sau khi vào). Demo nhà thầu (tùy chọn):
 
@@ -95,7 +98,7 @@ Mỗi lần `git push origin main`:
 
 1. Tab **Actions** → workflow **CI** chạy xong
 2. Workflow **Deploy** tự chạy trên runner máy chủ
-3. Truy cập: `http://192.168.2.148:3003` (web), API `http://192.168.2.148:8010/api` (đổi port qua `WEB_HOST_PORT` / `API_HOST_PORT` trong `.env`).
+3. Truy cập `http://<SERVER_HOST>:3003` (web), API `http://<SERVER_HOST>:8010/api` (đổi port qua `WEB_HOST_PORT` / `API_HOST_PORT` trong `.env`). Web dùng same-origin proxy nên không cần nhúng IP vào bản build.
 
 Không cần SSH thủ công để `git pull` nữa.
 
@@ -125,7 +128,7 @@ Mở TCP **3003** (web), **8010** (API) cho LAN — hoặc đúng `WEB_HOST_PORT
 | Missing `.env` | Tạo `~/Access_Control_V2/.env` như bước 2 |
 | CI pass, Deploy skip | Chỉ deploy khi push **main** và CI **success** |
 | Health check fail | `docker compose -f docker-compose.prod.yml logs api` trên server |
-| Ảnh FaceID `localhost:8080` / ERR_CONNECTION_REFUSED | Trong `.env` set `API_PUBLIC_URL=http://<LAN-IP>:8010` (cùng host với `NEXT_PUBLIC_API_URL`). Redeploy API. |
+| Ảnh FaceID hoặc callback không tới được | Để trống `API_PUBLIC_URL` để API chọn source address theo route Windows tới từng panel (LAN/VPN); nếu có reverse proxy/NAT chung, đặt URL public của proxy và kiểm tra firewall/route. |
 | Ảnh mất sau rebuild | Volume `face_uploads` giữ `/app/uploads`. Upload lại ảnh nếu volume mới tạo lần đầu. |
 
 ---
@@ -136,7 +139,10 @@ Trong `~/Access_Control_V2/.env`:
 
 ```env
 AKUVOX_MOCK_MODE=false
-API_PUBLIC_URL=http://192.168.2.148:8010
+# Optional: leave empty for automatic per-device LAN/VPN route selection;
+# set the reverse-proxy URL only when every panel can reach that common URL.
+API_PUBLIC_URL=
 ```
 
-Action URL / door_log: `http://192.168.2.148:8010/api/...`
+Action URL / door_log: dùng URL trả về tại **Thiết bị → webhook-info**; với
+VPN nhiều site, thêm `?deviceIp=<IP_PANEL>` để lấy URL theo đúng route.

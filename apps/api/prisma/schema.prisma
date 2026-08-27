@@ -29,6 +29,11 @@ enum DeviceType {
   CAMERA
 }
 
+enum CameraConnectionSource {
+  ONVIF
+  MANUAL
+}
+
 enum CredentialType {
   FACE
   CARD
@@ -326,6 +331,13 @@ model Device {
   rtspUrl       String?
   rtspUsername  String?
   rtspPassword  String?
+  connectionSource CameraConnectionSource?
+  onvifServiceUrl String?
+  onvifProfileToken String?
+  onvifPort     Int?
+  manufacturer  String?
+  model         String?
+  lastConnectionError String?
   akuvoxConfig  Json?
   dnakeConfig   Json?
   isOnline      Boolean          @default(false)

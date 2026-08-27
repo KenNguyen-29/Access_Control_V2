@@ -12,6 +12,7 @@ out/
 .env
 .env.local
 .env.*.local
+tools/start-access-control.local.ps1
 
 # Logs
 logs/

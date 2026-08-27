@@ -7,5 +7,11 @@ rtsp:
 webrtc:
   listen: ":8555"
   candidates:
-    - __HOST_LAN_IP__:8555
+    # Resolve the current Docker Desktop host address at connection time.
+    # This avoids baking a site-specific LAN IP into the image/config.
+    - host.docker.internal:8555
+    - 127.0.0.1:8555
     - stun:8555
+
+ffmpeg:
+  mjpeg_fps: "-r 5"

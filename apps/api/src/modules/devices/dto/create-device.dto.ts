@@ -14,7 +14,7 @@ import {
   ValidateIf,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { DeviceType } from '@prisma/client';
+import { CameraConnectionSource, DeviceType } from '@prisma/client';
 
 function emptyToUndefined({ value }: { value: unknown }) {
   if (typeof value !== 'string') return value;
@@ -87,6 +87,46 @@ export class CreateDeviceDto {
   @IsOptional()
   @IsString()
   rtspPassword?: string;
+
+  @ApiPropertyOptional({ enum: CameraConnectionSource })
+  @IsOptional()
+  @IsEnum(CameraConnectionSource)
+  connectionSource?: CameraConnectionSource;
+
+  @ApiPropertyOptional({ description: 'ONVIF device-service XAddr' })
+  @Transform(emptyToUndefined)
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  onvifServiceUrl?: string;
+
+  @ApiPropertyOptional({ description: 'ONVIF media profile token' })
+  @Transform(emptyToUndefined)
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  onvifProfileToken?: string;
+
+  @ApiPropertyOptional({ description: 'ONVIF device-service port' })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(65535)
+  onvifPort?: number;
+
+  @ApiPropertyOptional()
+  @Transform(emptyToUndefined)
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  manufacturer?: string;
+
+  @ApiPropertyOptional()
+  @Transform(emptyToUndefined)
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  model?: string;
 
   @ApiPropertyOptional({
     description: 'Tài khoản HTTP API của Akuvox/DNAKE (bắt buộc với panel chấm công)',

@@ -16,8 +16,10 @@ COPY --from=web-deps /app/packages/shared/node_modules ./packages/shared/node_mo
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY packages/shared packages/shared
 COPY apps/web apps/web
-ARG NEXT_PUBLIC_API_URL=http://localhost:8080/api
-ARG NEXT_PUBLIC_WS_URL=http://localhost:8080
+ARG API_PROXY_TARGET=http://api:8080
+ARG NEXT_PUBLIC_API_URL=
+ARG NEXT_PUBLIC_WS_URL=
+ENV API_PROXY_TARGET=$API_PROXY_TARGET
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_WS_URL=$NEXT_PUBLIC_WS_URL
 RUN pnpm --filter @acv2/shared build && pnpm --filter @acv2/web build

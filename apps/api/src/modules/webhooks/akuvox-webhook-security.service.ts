@@ -3,6 +3,15 @@ import { ConfigService } from '@nestjs/config';
 import { SystemSettingsService } from '../system-settings/system-settings.service';
 import { SETTING_KEY } from '../system-settings/system-setting-keys';
 import { extractClientIp } from './akuvox-door-log.util';
+import {
+  resolveApiPublicBaseUrl,
+  resolveApiPublicBaseUrlForTarget,
+} from '../../common/utils/network.util';
+
+type PublicRequest = {
+  protocol?: string;
+  headers?: Record<string, string | string[] | undefined>;
+};
 
 @Injectable()
 export class AkuvoxWebhookSecurityService {
@@ -23,14 +32,41 @@ export class AkuvoxWebhookSecurityService {
     return clientIp;
   }
 
-  getWebhookUrl(): string {
-    const base = this.config
-      .get<string>('API_PUBLIC_URL', 'http://localhost:8080')
-      .replace(/\/$/, '');
+  getWebhookUrl(request?: PublicRequest): string {
+    const resolved = resolveApiPublicBaseUrl(this.config);
+    // Prefer the detected server address. A direct browser request often has
+    // the FE proxy's host (for example localhost:3003), which a panel cannot
+    // call. A real reverse proxy is still honoured through x-forwarded-host.
+    return this.buildWebhookUrl(resolved.url, resolved.configured, request, false);
+  }
+
+  /** Resolve the callback address using the OS route to one specific panel. */
+  async getWebhookUrlForDevice(deviceIp: string, request?: PublicRequest): Promise<string> {
+    const resolved = await resolveApiPublicBaseUrlForTarget(this.config, deviceIp);
+    return this.buildWebhookUrl(resolved.url, resolved.configured, request, false);
+  }
+
+  private buildWebhookUrl(
+    resolvedUrl: string,
+    configured: boolean,
+    request?: PublicRequest,
+    preferRequestOrigin = true,
+  ): string {
+    const forwardedHost = this.firstHeader(request?.headers?.['x-forwarded-host']);
+    const requestHost = preferRequestOrigin
+      ? forwardedHost || this.firstHeader(request?.headers?.host)
+      : forwardedHost;
+    const forwardedProtocol = this.firstHeader(request?.headers?.['x-forwarded-proto']);
+    const protocol = forwardedProtocol || request?.protocol || resolvedUrl.split(':')[0];
+    // When the UI is served through a reverse proxy, returning the request
+    // origin makes the generated URL usable from that same network path.
+    const base = !configured && requestHost
+      ? `${protocol}://${requestHost}`
+      : resolvedUrl;
     return `${base}/api/akuvox/door_log`;
   }
 
-  async getIntegrationInfo() {
+  async getIntegrationInfo(request?: PublicRequest) {
     const [token, allowedIps, mockMode] = await Promise.all([
       this.settings.getRaw(SETTING_KEY.AKUVOX_WEBHOOK_TOKEN),
       this.settings.getRaw(SETTING_KEY.AKUVOX_ALLOWED_IPS),
@@ -41,7 +77,7 @@ export class AkuvoxWebhookSecurityService {
     const envMock = this.config.get<string>('AKUVOX_MOCK_MODE', 'false') === 'true';
 
     return {
-      webhookUrl: this.getWebhookUrl(),
+      webhookUrl: this.getWebhookUrl(request),
       tokenConfigured: Boolean((token && token.trim()) || envToken),
       allowedIps: (allowedIps ?? envIps) || '',
       mockMode: mockMode || envMock,
@@ -50,6 +86,11 @@ export class AkuvoxWebhookSecurityService {
         ips: allowedIps != null && allowedIps !== '' ? 'db' : envIps ? 'env' : 'none',
       },
     };
+  }
+
+  private firstHeader(value: string | string[] | undefined): string | undefined {
+    const first = Array.isArray(value) ? value[0] : value;
+    return first?.split(',')[0]?.trim() || undefined;
   }
 
   private async resolveAllowedIps(): Promise<string[]> {

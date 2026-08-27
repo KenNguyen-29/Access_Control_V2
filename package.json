@@ -14,7 +14,10 @@
     "docker:prod:down": "docker compose -f docker-compose.prod.yml down",
     "db:migrate": "pnpm --filter @acv2/api prisma:migrate",
     "db:seed": "pnpm --filter @acv2/api prisma:seed",
-    "db:generate": "pnpm --filter @acv2/api prisma:generate"
+    "db:generate": "pnpm --filter @acv2/api prisma:generate",
+    "simulator:akuvox": "powershell -ExecutionPolicy Bypass -File tools/simulate-akuvox.ps1",
+    "simulator:shortcut": "powershell -ExecutionPolicy Bypass -File tools/install-akuvox-simulator-shortcut.ps1",
+    "shortcut:install": "powershell -ExecutionPolicy Bypass -File tools/install-access-control-shortcut.ps1"
   },
   "engines": {
     "node": ">=20"

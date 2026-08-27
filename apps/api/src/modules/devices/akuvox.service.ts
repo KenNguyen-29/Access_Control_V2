@@ -113,12 +113,15 @@ export class AkuvoxService {
     return `HTTP ${result.status}`;
   }
 
-  private buildLegacyPayload(user: { employeeCode: string; fullName: string; faceImagePath?: string | null }) {
+  private buildLegacyPayload(
+    user: { employeeCode: string; fullName: string; faceImagePath?: string | null },
+    faceUrl?: string,
+  ) {
     return {
       UserID: user.employeeCode,
       Name: user.fullName,
       PrivateKey: user.employeeCode,
-      FaceURL: user.faceImagePath ? this.storage.getFileUrl(user.faceImagePath) : undefined,
+      FaceURL: user.faceImagePath ? faceUrl : undefined,
     };
   }
 
@@ -127,6 +130,7 @@ export class AkuvoxService {
     user: { employeeCode: string; fullName: string; faceImagePath?: string | null },
     cred?: { cardNumber?: string | null },
     existingId?: string,
+    faceUrl?: string,
   ) {
     const cfg = this.parseConfig(device);
     const relay = cfg.relay ?? 1;
@@ -136,7 +140,7 @@ export class AkuvoxService {
       UserID: user.employeeCode,
       Name: user.fullName,
       CardCode: cred?.cardNumber || '',
-      FaceUrl: user.faceImagePath ? this.storage.getFileUrl(user.faceImagePath) : '',
+      FaceUrl: user.faceImagePath ? faceUrl || '' : '',
       PrivatePIN: '',
       WebRelay: '0',
       Building: '',
@@ -174,6 +178,9 @@ export class AkuvoxService {
     user: { employeeCode: string; fullName: string; faceImagePath?: string | null },
     cred?: { cardNumber?: string | null },
   ) {
+    const faceUrl = user.faceImagePath
+      ? await this.storage.getFileUrlForDevice(user.faceImagePath, device.ipAddress)
+      : undefined;
     const cfg = this.parseConfig(device);
     const modernEndpoint = '/api/user/add';
     const modernPayload = async () => {
@@ -185,7 +192,15 @@ export class AkuvoxService {
           target: 'user',
           action: existingId ? 'set' : 'add',
           data: {
-            item: [this.buildModernUserItem(device, user, cred, existingId ?? undefined)],
+            item: [
+              this.buildModernUserItem(
+                device,
+                user,
+                cred,
+                existingId ?? undefined,
+                faceUrl,
+              ),
+            ],
           },
         }),
       };
@@ -203,7 +218,7 @@ export class AkuvoxService {
     const tryLegacy = async () =>
       this.request(device, '/fcgi/do?action=AddUser', {
         method: 'POST',
-        body: JSON.stringify(this.buildLegacyPayload(user)),
+        body: JSON.stringify(this.buildLegacyPayload(user, faceUrl)),
       });
 
     const preferLegacy = cfg.apiVersion === 'legacy';

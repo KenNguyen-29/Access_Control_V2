@@ -33,9 +33,14 @@ export class DeviceWebRtcService {
     );
     const streamName = this.go2rtc.streamNameForDevice(device.id);
 
-    await this.go2rtc.removeStream(streamName);
+    // PATCH/PUT updates the source without tearing down an existing consumer.
+    // Removing it first makes reconnects race the lazy producer and can leave
+    // the dashboard with a stale/broken stream.
     await this.go2rtc.upsertStream(streamName, rtspUrl);
-    await this.go2rtc.probeStream(streamName);
+    // Do not probe and immediately close a consumer before the WebRTC
+    // handshake. go2rtc stops lazy producers when the probe consumer closes,
+    // which races the next consumer and surfaces as FFmpeg "Broken pipe".
+    // The WebRTC exchange itself starts the producer and reports RTSP errors.
     return this.go2rtc.exchangeWebRtc(streamName, offer);
   }
 }

@@ -1,13 +1,15 @@
-import { randomInt } from 'crypto';
+import { randomInt, randomUUID } from 'crypto';
 import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
+  OnApplicationBootstrap,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Device, DeviceType, Prisma } from '@prisma/client';
+import { CameraConnectionSource, Device, DeviceType, Prisma } from '@prisma/client';
 import { createConnection } from 'net';
 import { PrismaService } from '../../prisma/prisma.service';
 import type { ProjectScope } from '../../common/services/project-scope.service';
@@ -16,6 +18,11 @@ import { DnakeService } from './dnake.service';
 import { CreateDeviceDto } from './dto/create-device.dto';
 import { UpdateDeviceDto } from './dto/update-device.dto';
 import { PaginationDto } from '../../common/dto/pagination.dto';
+import {
+  buildRtspUrlWithCredentials,
+  canonicalizeRtspUrl,
+  redactRtspUrl,
+} from './utils/rtsp-url.util';
 
 type PanelConfig = {
   username?: string;
@@ -36,13 +43,63 @@ function isPanelType(type: DeviceType) {
 }
 
 @Injectable()
-export class DevicesService {
+export class DevicesService implements OnApplicationBootstrap {
+  private readonly logger = new Logger(DevicesService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     private readonly go2rtc: Go2RtcService,
     private readonly dnake: DnakeService,
   ) {}
+
+  /** Register camera sources up front so go2rtc has a visible stream before the first viewer. */
+  async onApplicationBootstrap(): Promise<void> {
+    try {
+      const cameras = await this.prisma.device.findMany({
+        where: { deviceType: DeviceType.CAMERA, isDeleted: false, rtspUrl: { not: null } },
+        select: { id: true, code: true, rtspUrl: true, rtspUsername: true, rtspPassword: true },
+      });
+      await Promise.all(
+        cameras.map((camera) =>
+          this.prewarmCameraStream(camera).catch((error) => {
+            this.logger.debug(
+              `Camera stream prewarm skipped ${camera.code}: ${this.safeError(error)}`,
+            );
+          }),
+        ),
+      );
+    } catch (error) {
+      this.logger.debug(`Camera stream prewarm unavailable: ${this.safeError(error)}`);
+    }
+  }
+
+  private async prewarmCameraStream(device: {
+    id: string;
+    code: string;
+    rtspUrl: string | null;
+    rtspUsername: string | null;
+    rtspPassword: string | null;
+  }): Promise<void> {
+    if (!device.rtspUrl?.trim() || !this.go2rtc.isEnabled()) return;
+    await this.go2rtc.upsertStream(
+      this.go2rtc.streamNameForDevice(device.id),
+      buildRtspUrlWithCredentials(device.rtspUrl, device.rtspUsername, device.rtspPassword),
+    );
+  }
+
+  private scheduleCameraPrewarm(device: Device): void {
+    if (device.deviceType !== DeviceType.CAMERA) return;
+    void this.prewarmCameraStream(device).catch((error) => {
+      this.logger.debug(`Camera stream prewarm skipped ${device.code}: ${this.safeError(error)}`);
+    });
+  }
+
+  private safeError(error: unknown): string {
+    return error instanceof Error
+      ? error.message.replace(/rtsps?:\/\/[^@\s]+@/gi, 'rtsp://***@')
+      : 'Unknown error';
+  }
 
   /** Translate Prisma unique-constraint errors into a friendly 409 on the device code. */
   private rethrowKnownError(err: unknown): never {
@@ -209,6 +266,185 @@ export class DevicesService {
     }
   }
 
+  private buildCameraData(
+    dto: CreateDeviceDto | UpdateDeviceDto,
+    ipAddress: string,
+    existing?: Device,
+  ) {
+    const rtspUrl = dto.rtspUrl !== undefined ? dto.rtspUrl : existing?.rtspUrl;
+    if (!rtspUrl?.trim()) {
+      throw new BadRequestException('Vui lòng nhập RTSP URL cho camera');
+    }
+    let cleanRtspUrl: string;
+    let embeddedUsername = '';
+    let embeddedPassword = '';
+    try {
+      const normalized = canonicalizeRtspUrl(rtspUrl);
+      if (normalized.hostname !== ipAddress.trim()) {
+        throw new BadRequestException('RTSP URL phải trỏ đúng IP camera');
+      }
+      cleanRtspUrl = normalized.cleanUrl;
+      embeddedUsername = normalized.username;
+      embeddedPassword = normalized.password;
+    } catch (error) {
+      if (error instanceof BadRequestException) throw error;
+      throw new BadRequestException(
+        error instanceof Error ? error.message : 'RTSP URL không hợp lệ',
+      );
+    }
+
+    const hasOnvifInput =
+      dto.onvifServiceUrl !== undefined || dto.onvifProfileToken !== undefined;
+    const source =
+      dto.connectionSource ??
+      (hasOnvifInput ? CameraConnectionSource.ONVIF : existing?.connectionSource) ??
+      CameraConnectionSource.MANUAL;
+    const rtspUsername = dto.rtspUsername ?? existing?.rtspUsername ?? embeddedUsername;
+    const rtspPassword = dto.rtspPassword ?? existing?.rtspPassword ?? embeddedPassword;
+    if (source === CameraConnectionSource.MANUAL) {
+      return {
+        rtspUrl: cleanRtspUrl,
+        rtspUsername: rtspUsername || undefined,
+        rtspPassword: rtspPassword || undefined,
+        connectionSource: CameraConnectionSource.MANUAL,
+        onvifServiceUrl: null,
+        onvifProfileToken: null,
+        onvifPort: null,
+        manufacturer: null,
+        model: null,
+        lastConnectionError: null,
+      };
+    }
+
+    const serviceUrl = (dto.onvifServiceUrl ?? existing?.onvifServiceUrl ?? '').trim();
+    const profileToken = (dto.onvifProfileToken ?? existing?.onvifProfileToken ?? '').trim();
+    if (!serviceUrl || !profileToken) {
+      throw new BadRequestException(
+        'Camera ONVIF phải có service URL và profile token. Hãy lấy profile trước khi lưu.',
+      );
+    }
+    try {
+      const parsed = new URL(serviceUrl);
+      if (!['http:', 'https:'].includes(parsed.protocol) || parsed.hostname !== ipAddress.trim()) {
+        throw new Error('host mismatch');
+      }
+    } catch {
+      throw new BadRequestException('ONVIF service URL phải trỏ đúng IP camera');
+    }
+    const parsedPort = (() => {
+      try {
+        const port = new URL(serviceUrl).port;
+        return port ? Number(port) : 80;
+      } catch {
+        return 80;
+      }
+    })();
+    const onvifPort = dto.onvifPort ?? existing?.onvifPort ?? parsedPort;
+    if (!Number.isInteger(onvifPort) || onvifPort < 1 || onvifPort > 65535) {
+      throw new BadRequestException('Cổng ONVIF không hợp lệ');
+    }
+    return {
+      rtspUrl: cleanRtspUrl,
+      rtspUsername: rtspUsername || undefined,
+      rtspPassword: rtspPassword || undefined,
+      connectionSource: CameraConnectionSource.ONVIF,
+      onvifServiceUrl: serviceUrl,
+      onvifProfileToken: profileToken,
+      onvifPort,
+      manufacturer: dto.manufacturer?.trim() || existing?.manufacturer || null,
+      model: dto.model?.trim() || existing?.model || null,
+      lastConnectionError: null,
+    };
+  }
+
+  /** Persist ONVIF metadata for Akuvox/DNAKE too; their username/password are stored in panelConfig. */
+  private buildPanelOnvifData(
+    dto: CreateDeviceDto | UpdateDeviceDto,
+    ipAddress: string,
+    existing?: Device,
+  ) {
+    const hasOnvifInput =
+      dto.onvifServiceUrl !== undefined || dto.onvifProfileToken !== undefined;
+    const source =
+      dto.connectionSource ??
+      (hasOnvifInput ? CameraConnectionSource.ONVIF : existing?.connectionSource) ??
+      CameraConnectionSource.MANUAL;
+    const rtspUrl = dto.rtspUrl !== undefined ? dto.rtspUrl : existing?.rtspUrl;
+    const trimmedRtspUrl = typeof rtspUrl === 'string' ? rtspUrl.trim() : '';
+
+    if (source === CameraConnectionSource.MANUAL) {
+      return {
+        ...(rtspUrl !== undefined ? { rtspUrl: trimmedRtspUrl || null } : {}),
+        connectionSource: CameraConnectionSource.MANUAL,
+        onvifServiceUrl: null,
+        onvifProfileToken: null,
+        onvifPort: null,
+        manufacturer: null,
+        model: null,
+        lastConnectionError: null,
+      };
+    }
+
+    const serviceUrl = (dto.onvifServiceUrl ?? existing?.onvifServiceUrl ?? '').trim();
+    const profileToken = (dto.onvifProfileToken ?? existing?.onvifProfileToken ?? '').trim();
+    if (!serviceUrl || !profileToken) {
+      throw new BadRequestException(
+        'Thiết bị ONVIF phải có service URL và profile token. Hãy lấy profile trước khi lưu.',
+      );
+    }
+    try {
+      const parsed = new URL(serviceUrl);
+      if (
+        !['http:', 'https:'].includes(parsed.protocol) ||
+        parsed.hostname !== ipAddress.trim() ||
+        parsed.username ||
+        parsed.password
+      ) {
+        throw new Error('host mismatch');
+      }
+    } catch {
+      throw new BadRequestException('ONVIF service URL phải trỏ đúng IP thiết bị');
+    }
+
+    let normalizedRtsp: string | null = rtspUrl?.trim() || null;
+    if (normalizedRtsp) {
+      try {
+        const parsed = canonicalizeRtspUrl(normalizedRtsp);
+        if (parsed.hostname !== ipAddress.trim()) {
+          throw new BadRequestException('RTSP URL phải trỏ đúng IP thiết bị');
+        }
+        normalizedRtsp = parsed.cleanUrl;
+      } catch (error) {
+        if (error instanceof BadRequestException) throw error;
+        throw new BadRequestException(
+          error instanceof Error ? error.message : 'RTSP URL không hợp lệ',
+        );
+      }
+    }
+    const parsedPort = (() => {
+      try {
+        const port = new URL(serviceUrl).port;
+        return port ? Number(port) : 80;
+      } catch {
+        return 80;
+      }
+    })();
+    const onvifPort = dto.onvifPort ?? existing?.onvifPort ?? parsedPort;
+    if (!Number.isInteger(onvifPort) || onvifPort < 1 || onvifPort > 65535) {
+      throw new BadRequestException('Cổng ONVIF không hợp lệ');
+    }
+    return {
+      rtspUrl: normalizedRtsp,
+      connectionSource: CameraConnectionSource.ONVIF,
+      onvifServiceUrl: serviceUrl,
+      onvifProfileToken: profileToken,
+      onvifPort,
+      manufacturer: dto.manufacturer?.trim() || existing?.manufacturer || null,
+      model: dto.model?.trim() || existing?.model || null,
+      lastConnectionError: null,
+    };
+  }
+
   async findAll(
     query: PaginationDto & { zoneId?: string; deviceType?: DeviceType; projectId?: string },
     scope: ProjectScope = null,
@@ -318,7 +554,21 @@ export class DevicesService {
   }
 
   async create(dto: CreateDeviceDto, scope: ProjectScope = null) {
-    const { username: _u, password: _p, protocol: _pr, relay: _r, code: dtoCode, ...rest } = dto;
+    const {
+      username: _u,
+      password: _p,
+      protocol: _pr,
+      relay: _r,
+      code: dtoCode,
+      rtspUrl: _rtspUrl,
+      connectionSource: _connectionSource,
+      onvifServiceUrl: _onvifServiceUrl,
+      onvifProfileToken: _onvifProfileToken,
+      onvifPort: _onvifPort,
+      manufacturer: _manufacturer,
+      model: _model,
+      ...rest
+    } = dto;
     const panelConfig = this.buildPanelConfig(dto);
     if (isPanelType(dto.deviceType)) {
       this.assertPanelCredentials(dto.deviceType, panelConfig ?? {}, true);
@@ -340,17 +590,24 @@ export class DevicesService {
       this.assertDeviceInScope(dto.projectId, scope);
     }
 
+    const connectionData =
+      dto.deviceType === DeviceType.CAMERA
+        ? this.buildCameraData(dto, dto.ipAddress)
+        : this.buildPanelOnvifData(dto, dto.ipAddress);
+
     const providedCode = dtoCode?.trim();
     for (let attempt = 0; attempt < 8; attempt += 1) {
       const data: Prisma.DeviceUncheckedCreateInput = {
         ...rest,
         code: providedCode || this.nextDeviceCode(dto.deviceType),
+        ...connectionData,
         ...(dto.deviceType === DeviceType.AKUVOX && panelConfig ? { akuvoxConfig: panelConfig } : {}),
         ...(dto.deviceType === DeviceType.DNAKE && panelConfig ? { dnakeConfig: panelConfig } : {}),
       };
 
       try {
         const device = await this.prisma.device.create({ data });
+        this.scheduleCameraPrewarm(device);
         return this.sanitize(device);
       } catch (err) {
         if (
@@ -375,7 +632,21 @@ export class DevicesService {
     if (!existing) throw new NotFoundException('Device not found');
     this.assertDeviceInScope(existing.projectId, scope);
 
-    const { username: _u, password: _p, protocol: _pr, relay: _r, code: _code, ...rest } = dto;
+    const {
+      username: _u,
+      password: _p,
+      protocol: _pr,
+      relay: _r,
+      code: _code,
+      rtspUrl: _rtspUrl,
+      connectionSource: _connectionSource,
+      onvifServiceUrl: _onvifServiceUrl,
+      onvifProfileToken: _onvifProfileToken,
+      onvifPort: _onvifPort,
+      manufacturer: _manufacturer,
+      model: _model,
+      ...rest
+    } = dto;
     const hasPanelFields =
       dto.username !== undefined ||
       dto.password !== undefined ||
@@ -383,6 +654,7 @@ export class DevicesService {
       dto.relay !== undefined;
 
     const nextType = dto.deviceType ?? existing.deviceType;
+    const nextIp = dto.ipAddress !== undefined ? dto.ipAddress : existing.ipAddress;
     const existingPanel =
       nextType === DeviceType.DNAKE ? existing.dnakeConfig : existing.akuvoxConfig;
     const panelConfig = hasPanelFields
@@ -397,7 +669,6 @@ export class DevicesService {
         zoneId: nextZoneId,
         excludeDeviceId: id,
       });
-      const nextIp = dto.ipAddress !== undefined ? dto.ipAddress : existing.ipAddress;
       await this.assertUniqueAkuvoxIp({
         deviceType: nextType,
         ipAddress: nextIp,
@@ -414,8 +685,31 @@ export class DevicesService {
       this.assertDeviceInScope(dto.projectId, scope);
     }
 
+    const connectionData =
+      nextType === DeviceType.CAMERA
+        ? this.buildCameraData(dto, nextIp ?? '', existing)
+        : existing.deviceType === DeviceType.CAMERA
+          ? {
+              rtspUrl: null,
+              rtspUsername: null,
+              rtspPassword: null,
+              connectionSource: null,
+              onvifServiceUrl: null,
+              onvifProfileToken: null,
+              onvifPort: null,
+              manufacturer: null,
+              model: null,
+              lastConnectionError: null,
+            }
+          : this.buildPanelOnvifData(
+              dto,
+              nextIp ?? '',
+              existing.deviceType === nextType ? existing : undefined,
+            );
+
     const data: Prisma.DeviceUncheckedUpdateInput = {
       ...rest,
+      ...connectionData,
       ...(hasPanelFields && panelConfig && nextType === DeviceType.DNAKE
         ? { dnakeConfig: panelConfig }
         : {}),
@@ -430,6 +724,7 @@ export class DevicesService {
     } catch (err) {
       this.rethrowKnownError(err);
     }
+    this.scheduleCameraPrewarm(device);
     return this.sanitize(device);
   }
 
@@ -522,6 +817,64 @@ export class DevicesService {
     return `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`;
   }
 
+  /** Probe an unsaved ONVIF stream through a temporary go2rtc source. */
+  async testOnvifStream(input: {
+    ipAddress: string;
+    rtspUrl: string;
+    username?: string;
+    password?: string;
+    timeoutMs?: number;
+  }) {
+    const ipAddress = input.ipAddress.trim();
+    let cleanUrl: string;
+    try {
+      const normalized = canonicalizeRtspUrl(input.rtspUrl);
+      if (normalized.hostname !== ipAddress) {
+        throw new BadRequestException('RTSP URL phải trỏ đúng IP camera đã chọn');
+      }
+      cleanUrl = normalized.cleanUrl;
+    } catch (error) {
+      if (error instanceof BadRequestException) throw error;
+      throw new BadRequestException(
+        error instanceof Error ? error.message : 'RTSP URL không hợp lệ',
+      );
+    }
+
+    const username = input.username?.trim() || '';
+    const password = input.password || '';
+    if (username.length > 256 || password.length > 256) {
+      throw new BadRequestException('Thông tin xác thực RTSP quá dài');
+    }
+
+    const timeoutMs = Math.min(15000, Math.max(1000, Math.round(Number(input.timeoutMs) || 7000)));
+    const streamName = `onvif_probe_${randomUUID().replace(/-/g, '')}`;
+    const startedAt = Date.now();
+    try {
+      await this.go2rtc.upsertStream(
+        streamName,
+        buildRtspUrlWithCredentials(cleanUrl, username, password),
+      );
+      await this.go2rtc.probeStream(streamName, timeoutMs);
+      return {
+        online: true,
+        rtspUrl: cleanUrl,
+        latencyMs: Date.now() - startedAt,
+        checkedAt: new Date().toISOString(),
+        message: 'Đọc frame RTSP thành công',
+      };
+    } catch {
+      return {
+        online: false,
+        rtspUrl: redactRtspUrl(cleanUrl),
+        latencyMs: Date.now() - startedAt,
+        checkedAt: new Date().toISOString(),
+        message: 'Không đọc được luồng RTSP. Kiểm tra URL, credential và kết nối camera.',
+      };
+    } finally {
+      await this.go2rtc.removeStream(streamName);
+    }
+  }
+
   async testConnection(id: string) {
     const device = await this.prisma.device.findFirst({
       where: { id, isDeleted: false },
@@ -601,7 +954,11 @@ export class DevicesService {
     const checkedAt = new Date();
     await this.prisma.device.update({
       where: { id: device.id },
-      data: { isOnline: online, lastHeartbeat: online ? checkedAt : device.lastHeartbeat },
+      data: {
+        isOnline: online,
+        lastHeartbeat: online ? checkedAt : device.lastHeartbeat,
+        lastConnectionError: online ? null : detail,
+      },
     });
 
     return {

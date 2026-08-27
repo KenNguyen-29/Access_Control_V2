@@ -132,7 +132,9 @@ export class CredentialsService {
       },
     });
 
-    const photoUrl = this.storage.getFileUrl(key);
+    // Return a browser/reverse-proxy URL. Akuvox sync builds a separate
+    // per-panel FaceURL so VPN sites receive the address on their route.
+    const photoUrl = this.storage.getBrowserFileUrl(key);
 
     const zoneCount = await this.prisma.userAccessPermission.count({
       where: { userId: user.id, isDeleted: false },

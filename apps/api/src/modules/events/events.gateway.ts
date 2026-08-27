@@ -6,11 +6,14 @@ import {
 import { Server } from 'socket.io';
 import { CheckinEvent, FireEmergencyEvent, SOCKET_EVENTS } from '@acv2/shared';
 import { RealtimeMetricsService } from './realtime-metrics.service';
+import { adaptiveCorsOrigin } from '../../common/utils/network.util';
 
 @WebSocketGateway({
   namespace: '/events',
   cors: {
-    origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
+    // Evaluate after ConfigModule has loaded .env. Empty means adaptive;
+    // deployments can still provide a strict comma-separated allow-list.
+    origin: adaptiveCorsOrigin,
     credentials: true,
   },
 })

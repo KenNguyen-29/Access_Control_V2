@@ -1,6 +1,19 @@
 import { ApiResponse, PaginatedData } from '@acv2/shared';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080/api';
+/**
+ * Keep the browser independent of a site-specific server address. A deployed
+ * FE normally proxies `/api` to the API on the same origin; an explicit
+ * NEXT_PUBLIC_API_URL is still supported for split-origin deployments.
+ */
+const CONFIGURED_API_URL = (process.env.NEXT_PUBLIC_API_URL || '').trim().replace(/\/$/, '');
+
+export function getApiBaseUrl(): string {
+  if (CONFIGURED_API_URL) return CONFIGURED_API_URL;
+  if (typeof window !== 'undefined') return `${window.location.origin}/api`;
+  // API calls are client-side today. Keep a valid local fallback for tooling
+  // that invokes this module without a browser (tests/build diagnostics).
+  return 'http://127.0.0.1:8010/api';
+}
 
 export class ApiError extends Error {
   constructor(
@@ -9,6 +22,26 @@ export class ApiError extends Error {
   ) {
     super(message);
     this.name = 'ApiError';
+  }
+}
+
+const SERVER_UNAVAILABLE_MESSAGE = 'Không thể kết nối tới máy chủ. Vui lòng thử lại sau.';
+const REQUEST_FAILED_MESSAGE = 'Yêu cầu không thành công. Vui lòng thử lại.';
+
+type ApiErrorResponse = ApiResponse<unknown> & { error?: string; statusCode?: number };
+
+/**
+ * Next's same-origin proxy can return a plain-text 500 page while the API is
+ * stopped. Never pass that implementation detail (or a JSON parse exception)
+ * to the UI.
+ */
+async function readApiResponse(res: Response): Promise<ApiErrorResponse | null> {
+  const text = await res.text();
+  if (!text.trim()) return null;
+  try {
+    return JSON.parse(text) as ApiErrorResponse;
+  } catch {
+    return null;
   }
 }
 
@@ -23,7 +56,7 @@ async function refreshAccessToken(): Promise<string | null> {
   if (refreshPromise) return refreshPromise;
   refreshPromise = (async () => {
     try {
-      const res = await fetch(`${API_URL}/auth/refresh`, {
+      const res = await fetch(`${getApiBaseUrl()}/auth/refresh`, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
@@ -65,11 +98,16 @@ export async function apiRequest<T>(
     headers.Authorization = `Bearer ${token}`;
   }
 
-  const res = await fetch(`${API_URL}${path}`, {
-    ...options,
-    headers,
-    credentials: 'include',
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${getApiBaseUrl()}${path}`, {
+      ...options,
+      headers,
+      credentials: 'include',
+    });
+  } catch {
+    throw new ApiError(SERVER_UNAVAILABLE_MESSAGE, 0);
+  }
 
   if (res.status === 401 && !_retried && !path.startsWith('/auth/')) {
     const next = await refreshAccessToken();
@@ -94,10 +132,18 @@ export async function apiRequest<T>(
     return (await res.blob()) as T;
   }
 
-  const json = (await res.json()) as ApiResponse<T> & { error?: string; statusCode?: number };
+  const json = (await readApiResponse(res)) as (ApiResponse<T> & { error?: string; statusCode?: number }) | null;
 
-  if (!res.ok || !json.success) {
-    throw new ApiError(json.error || json.message || 'Request failed', res.status);
+  if (!res.ok) {
+    const message =
+      res.status >= 500
+        ? SERVER_UNAVAILABLE_MESSAGE
+        : json?.error || json?.message || REQUEST_FAILED_MESSAGE;
+    throw new ApiError(message, res.status);
+  }
+
+  if (!json?.success) {
+    throw new ApiError(json?.error || json?.message || REQUEST_FAILED_MESSAGE, res.status);
   }
 
   return json.data as T;
@@ -345,6 +391,13 @@ export type Device = {
   projectId?: string | null;
   project?: { id: string; name: string; code: string } | null;
   rtspUrl?: string | null;
+  connectionSource?: 'ONVIF' | 'MANUAL' | null;
+  onvifServiceUrl?: string | null;
+  onvifProfileToken?: string | null;
+  onvifPort?: number | null;
+  manufacturer?: string | null;
+  model?: string | null;
+  lastConnectionError?: string | null;
   syncStatus?: string;
   isOnline?: boolean;
   lastHeartbeat?: string | null;
@@ -803,8 +856,11 @@ export async function testDeviceConnection(id: string) {
   return apiRequest<DeviceConnectionResult>(`/devices/${id}/test-connection`, { method: 'POST' });
 }
 
-export async function getAkuvoxWebhookInfo() {
-  return apiRequest<{ webhookUrl: string; note: string }>('/devices/akuvox/webhook-info');
+export async function getAkuvoxWebhookInfo(deviceIp?: string) {
+  const query = deviceIp?.trim() ? `?deviceIp=${encodeURIComponent(deviceIp.trim())}` : '';
+  return apiRequest<{ webhookUrl: string; note: string }>(
+    `/devices/akuvox/webhook-info${query}`,
+  );
 }
 
 export async function testAkuvoxDoorLog(params?: { userId?: string; deviceIp?: string }) {
@@ -814,24 +870,70 @@ export async function testAkuvoxDoorLog(params?: { userId?: string; deviceIp?: s
   });
 }
 
+export type OnvifProfile = {
+  token: string;
+  name: string;
+  rtspUrl: string;
+  width?: number | null;
+  height?: number | null;
+};
+
 export type OnvifDiscoveryHit = {
   name: string;
   ip: string;
   xaddrs: string[];
   rtspUrls: string[];
+  serviceUrl: string;
+  onvifPort: number;
   manufacturer?: string;
   model?: string;
+  profiles?: OnvifProfile[];
 };
 
-/** WS-Discovery ONVIF on LAN — returns IP + suggested RTSP URLs. */
-export async function scanOnvifDevices(params?: {
-  timeoutMs?: number;
+/** WS-Discovery ONVIF on LAN — returns discovered device-service endpoints. */
+export async function scanOnvifDevices(params?: { timeoutMs?: number }) {
+  return apiRequest<{ items: OnvifDiscoveryHit[]; count: number; source?: string }>('/devices/onvif/scan', {
+    method: 'POST',
+    body: JSON.stringify(params ?? {}),
+  });
+}
+
+export async function fetchOnvifProfiles(params: {
+  ipAddress: string;
+  serviceUrl?: string;
   username?: string;
   password?: string;
 }) {
-  return apiRequest<{ items: OnvifDiscoveryHit[]; count: number }>('/devices/onvif/scan', {
+  return apiRequest<{
+    ip: string;
+    name: string;
+    manufacturer?: string;
+    model?: string;
+    serviceUrl: string;
+    onvifPort: number;
+    profiles: OnvifProfile[];
+  }>('/devices/onvif/profiles', {
     method: 'POST',
-    body: JSON.stringify(params ?? {}),
+    body: JSON.stringify(params),
+  });
+}
+
+export async function testOnvifStream(params: {
+  ipAddress: string;
+  rtspUrl: string;
+  username?: string;
+  password?: string;
+  timeoutMs?: number;
+}) {
+  return apiRequest<{
+    online: boolean;
+    rtspUrl: string;
+    latencyMs: number;
+    checkedAt: string;
+    message: string;
+  }>('/devices/onvif/test-stream', {
+    method: 'POST',
+    body: JSON.stringify(params),
   });
 }
 

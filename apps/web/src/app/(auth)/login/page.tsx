@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Eye, EyeOff, Lock, User } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
+import { ApiError } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { FieldError } from '@/components/ui/field-error';
@@ -41,7 +42,11 @@ export default function LoginPage() {
       await signIn(username, password);
     } catch (err) {
       setExiting(false);
-      setError(err instanceof Error ? err.message : 'Đăng nhập thất bại');
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : 'Không thể kết nối tới máy chủ. Vui lòng thử lại sau.',
+      );
     } finally {
       setLoading(false);
     }

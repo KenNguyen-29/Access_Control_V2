@@ -246,14 +246,6 @@ export function validateDeviceForm(form: DeviceFormFields): DeviceFormFieldError
     if (needsPassword && !form.password.trim()) {
       errors.password = 'Vui lòng nhập Password thiết bị';
     }
-  } else {
-    if (!form.username.trim()) {
-      errors.username = 'Vui lòng nhập tài khoản';
-    }
-    const needsPassword = !form.isEdit || !form.hasExistingPassword;
-    if (needsPassword && !form.password.trim()) {
-      errors.password = 'Vui lòng nhập mật khẩu';
-    }
   }
 
   return errors;

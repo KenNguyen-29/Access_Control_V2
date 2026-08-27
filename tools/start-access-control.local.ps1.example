@@ -1,0 +1,7 @@
+# Copy this file to start-access-control.local.ps1 for local-only overrides.
+# The real file is ignored by git. Do not commit camera credentials.
+# $env:MOCK_CAMERA_ENABLED = 'true'
+# $env:MOCK_CAMERA_IP = '192.168.1.4'
+# $env:MOCK_CAMERA_SOURCE = 'rtsp://192.168.1.4:554/rtsp/streaming?channel=1&subtype=0'
+# $env:MOCK_CAMERA_USERNAME = 'admin'
+# $env:MOCK_CAMERA_PASSWORD = 'your-rtsp-password'

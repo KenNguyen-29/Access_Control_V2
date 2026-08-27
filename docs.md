@@ -65,7 +65,10 @@ See [`.env.example`](./.env.example). Important keys:
 
 - `DATABASE_URL`, `REDIS_HOST` / `REDIS_PORT`
 - `MINIO_*`, `JWT_SECRET`
-- `GO2RTC_BASE_URL`, `GO2RTC_ENABLED`, `GO2RTC_AUTO_START`, `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_WS_URL`
+- `GO2RTC_BASE_URL`, `GO2RTC_ENABLED`, `GO2RTC_AUTO_START`, `API_PROXY_TARGET`
+- `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_WS_URL` (optional split-origin overrides)
+- `API_PUBLIC_URL`, `PUBLIC_HOST`, `PUBLIC_PROTOCOL` (optional device/reverse-proxy URL)
+- `API_BIND_HOST` (defaults to `0.0.0.0` so LAN clients can reach the server)
 - `AKUVOX_MOCK_MODE` (default `true` for local without panels)
 
 ## Local development
@@ -82,9 +85,9 @@ pnpm --filter @acv2/api go2rtc:install   # once, for camera live view
 pnpm dev
 ```
 
-- Web: http://localhost:3000  
-- API: http://localhost:8080/api  
-- Swagger: http://localhost:8080/api/docs  
+- Web: http://localhost:3003
+- API: http://localhost:8010/api
+- Swagger: http://localhost:8010/api/docs
 
 Default login: `admin` / `admin123`
 
@@ -96,7 +99,9 @@ pnpm docker:prod
 docker compose -f docker-compose.prod.yml up -d --build
 ```
 
-Builds `apps/api` and `apps/web` images and wires them to postgres, redis, minio. Camera live view still relies on go2rtc running on the host.
+Builds `apps/api` and `apps/web` images and wires them to postgres, redis, minio.
+On Windows native, go2rtc is launched on the host; the optional Compose service
+uses a dynamic `host.docker.internal` candidate instead of a fixed LAN IP.
 
 ## Multi-site / VPN deploy
 
@@ -113,8 +118,13 @@ Kiến trúc theo sơ đồ khách: **máy Face tại công trường chỉ gử
 
 | Loại | Chiều kết nối | Ghi chú |
 |------|---------------|--------|
-| **Akuvox** | **Công trường → API trung tâm :8080** | Panel gọi webhook/door_log tới server. Firewall HQ: inbound TCP **8080** từ dải VPN site. Action URL nên kèm `deviceCode` (tránh nhầm khi NAT chung IP). |
+| **Akuvox** | **Công trường → API trung tâm :8010** | Panel gọi webhook/door_log tới server. Firewall HQ: inbound TCP **8010** từ dải VPN site. Action URL nên kèm `deviceCode` (tránh nhầm khi NAT chung IP). |
 | **DNAKE** | **API trung tâm → IP panel** | Server poll `/api/v1/logs/unlock` tới IP panel trên VPN. Firewall site: cho phép HQ gọi HTTP panel; không cần webhook DNAKE Cloud. |
+
+> WS-Discovery là multicast UDP `239.255.255.250:3702`. VPN dạng bridge/L2
+> phải chuyển multicast thì quét tự động mới thấy panel/camera ở site; VPN
+> routed/L3 không chuyển multicast thì nhập IP thiết bị và bấm **Lấy profile**
+> (ứng dụng không quét subnet/CIDR).
 
 ### Checklist mỗi công trường mới
 
@@ -123,16 +133,18 @@ Kiến trúc theo sơ đồ khách: **máy Face tại công trường chỉ gử
 3. **Akuvox** — web panel → **Setting → Action URL** (Door / Relay Triggered), bật và dán:
 
 ```text
-http://<IP_SERVER_VPN>:8080/api/webhooks/akuvox?ip=$ip&active_user=$active_user&relay1status=$relay1status&deviceCode=<MA_THIET_BI>
+http://<IP_SERVER_VPN>:8010/api/webhooks/akuvox?ip=$ip&active_user=$active_user&relay1status=$relay1status&deviceCode=<MA_THIET_BI>
 ```
 
 Door log (nếu dùng): cùng host, path `/api/webhooks/akuvox/door-log` + query `deviceCode`.
 
 4. Trên server trung tâm (`.env` / `apps/api/.env`):
-   - `API_PUBLIC_URL=http://<IP_SERVER_VPN>:8080` (máy Face tải ảnh mặt từ URL này)
+   - Để trống `API_PUBLIC_URL` để mỗi FaceURL/webhook chọn đúng địa chỉ nguồn
+     theo route Windows tới IP panel (LAN hoặc VPN). Khi một reverse proxy/NAT
+     cung cấp một hostname chung cho mọi site, mới đặt `API_PUBLIC_URL` vào URL đó.
    - `AKUVOX_MOCK_MODE=false`
    - `DNAKE_POLL_ENABLED=true` (nếu có DNAKE)
-   - Firewall: Akuvox → mở **inbound TCP 8080**; DNAKE → HQ phải route tới IP panel
+   - Firewall: Akuvox → mở **inbound TCP 8010**; DNAKE → HQ phải route tới IP panel
 5. Gán quyền zone cho nhân viên (provision, mặc định **1 khu**) → sync face xuống máy thuộc zone đó.
 6. (Tuỳ chọn) Camera + mapping đầu đọc↔camera để snapshot vào/ra trên màn Giám sát.
 
@@ -152,12 +164,12 @@ Door log (nếu dùng): cùng host, path `/api/webhooks/akuvox/door-log` + query
 
 ```bash
 # Login
-curl -s -X POST http://localhost:8080/api/auth/login \
+curl -s -X POST http://localhost:8010/api/auth/login \
   -H "Content-Type: application/json" \
   -d '{"username":"admin","password":"admin123"}'
 
 # Webhook (uses seed device AKUVOX-MAIN + EMP001 when seeded)
-curl -s -X POST http://localhost:8080/api/webhooks/akuvox \
+curl -s -X POST http://localhost:8010/api/webhooks/akuvox \
   -H "Content-Type: application/json" \
   -d '{"eventId":"test-001","employeeCode":"EMP001","deviceCode":"AKUVOX-MAIN","timestamp":"2026-07-14T08:10:00Z"}'
 ```

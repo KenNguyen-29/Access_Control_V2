@@ -1,4 +1,4 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, Req } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
 import { successResponse } from '../../common/utils/response.util';
@@ -7,6 +7,7 @@ import { HealthService } from '../health/health.service';
 import { AkuvoxWebhookSecurityService } from '../webhooks/akuvox-webhook-security.service';
 import { SystemSettingsService } from '../system-settings/system-settings.service';
 import { SETTING_KEY } from '../system-settings/system-setting-keys';
+import type { Request } from 'express';
 
 @ApiTags('integration')
 @ApiBearerAuth()
@@ -20,9 +21,9 @@ export class IntegrationController {
   ) {}
 
   @Get('status')
-  async status() {
+  async status(@Req() request: Request) {
     const [akuvox, health, mockMode] = await Promise.all([
-      this.webhookSecurity.getIntegrationInfo(),
+      this.webhookSecurity.getIntegrationInfo(request),
       this.health.check(),
       this.settings.getBoolean(SETTING_KEY.AKUVOX_MOCK_MODE, false),
     ]);

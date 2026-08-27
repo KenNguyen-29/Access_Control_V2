@@ -6,6 +6,7 @@ import { AttendanceModule } from '../attendance/attendance.module';
 import { AkuvoxEventProcessor } from './akuvox-event.processor';
 import { AkuvoxEventService } from './akuvox-event.service';
 import { SnapshotCaptureService } from './snapshot-capture.service';
+import { RtspFrameBufferService } from './rtsp-frame-buffer.service';
 import { AKUVOX_QUEUE } from './queue.constants';
 import { isRedisEnabled } from '../../common/utils/redis.util';
 
@@ -28,7 +29,7 @@ const redisProviders = isRedisEnabled() ? [AkuvoxEventProcessor] : [];
     AttendanceModule,
     ...redisImports,
   ],
-  providers: [AkuvoxEventService, SnapshotCaptureService, ...redisProviders],
+  providers: [AkuvoxEventService, SnapshotCaptureService, RtspFrameBufferService, ...redisProviders],
   exports: [AkuvoxEventService, SnapshotCaptureService, ...(isRedisEnabled() ? [BullModule] : [])],
 })
 export class QueueModule {}

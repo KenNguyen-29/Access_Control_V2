@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { AxiosError } from 'axios';
 import { firstValueFrom } from 'rxjs';
 import { Go2RtcProcessService } from './go2rtc-process.service';
+import { resolveMockCameraSource } from './utils/mock-camera.util';
 
 export interface WebRtcSessionDescription {
   type: string;
@@ -16,6 +17,11 @@ export class Go2RtcService {
   private readonly baseUrl: string;
   private readonly enabled: boolean;
   private readonly timeoutMs: number;
+  private readonly mockCameraEnabled: boolean;
+  private readonly mockCameraIp: string;
+  private readonly mockCameraSource: string;
+  private readonly mockCameraUsername: string;
+  private readonly mockCameraPassword: string;
 
   constructor(
     private readonly http: HttpService,
@@ -27,6 +33,13 @@ export class Go2RtcService {
       .replace(/\/$/, '');
     this.enabled = config.get<string>('GO2RTC_ENABLED', 'true') === 'true';
     this.timeoutMs = Number(config.get<string>('GO2RTC_TIMEOUT_MS', '15000'));
+    this.mockCameraEnabled = config.get<string>('MOCK_CAMERA_ENABLED', 'false') === 'true';
+    this.mockCameraIp = config.get<string>('MOCK_CAMERA_IP', '192.168.1.4').trim();
+    this.mockCameraSource = config
+      .get<string>('MOCK_CAMERA_SOURCE', 'http://127.0.0.1:19084/stream.mjpeg')
+      .trim();
+    this.mockCameraUsername = config.get<string>('MOCK_CAMERA_USERNAME', '').trim();
+    this.mockCameraPassword = config.get<string>('MOCK_CAMERA_PASSWORD', '');
   }
 
   isEnabled(): boolean {
@@ -49,7 +62,23 @@ export class Go2RtcService {
       );
     }
 
-    const params = { src: rtspUrl, name: streamName };
+    const resolvedSource = resolveMockCameraSource(rtspUrl, {
+      enabled: this.mockCameraEnabled,
+      virtualIp: this.mockCameraIp,
+      source: this.mockCameraSource,
+      username: this.mockCameraUsername,
+      password: this.mockCameraPassword,
+    });
+    // MJPEG is ideal for snapshots but is not a WebRTC video codec. Ask
+    // go2rtc/FFmpeg to transcode the virtual source to H.264 for live view.
+    const source =
+      resolvedSource !== rtspUrl && !/^ffmpeg:/i.test(resolvedSource)
+        ? `ffmpeg:${resolvedSource}#video=h264`
+        : resolvedSource;
+    const params = {
+      src: source,
+      name: streamName,
+    };
     try {
       await firstValueFrom(
         this.http.patch(`${this.baseUrl}/api/streams`, null, {
@@ -81,12 +110,12 @@ export class Go2RtcService {
     }
   }
 
-  async probeStream(streamName: string): Promise<void> {
+  async probeStream(streamName: string, timeoutMs = 8000): Promise<void> {
     try {
       await firstValueFrom(
         this.http.get(`${this.baseUrl}/api/streams`, {
           params: { src: streamName, video: 'all', audio: 'all' },
-          timeout: 8000,
+          timeout: Math.min(15000, Math.max(1000, timeoutMs)),
         }),
       );
     } catch (err) {
@@ -181,16 +210,18 @@ export class Go2RtcService {
   }
 
   private describeError(err: unknown): string {
+    const sanitize = (value: string) =>
+      value.replace(/(rtsps?:\/\/)([^\s/@]+):([^\s/@]*?)@/gi, '$1***:***@');
     if (err instanceof AxiosError) {
       const status = err.response?.status;
       const body =
         typeof err.response?.data === 'string'
           ? err.response.data
           : JSON.stringify(err.response?.data ?? {});
-      if (status) return `HTTP ${status} ${body || err.message}`;
-      return err.code ?? err.message;
+      if (status) return sanitize(`HTTP ${status} ${body || err.message}`);
+      return sanitize(err.code ?? err.message);
     }
-    if (err instanceof Error) return err.message;
+    if (err instanceof Error) return sanitize(err.message);
     return 'Unknown error';
   }
 }

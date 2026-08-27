@@ -13,6 +13,10 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { createReadStream, existsSync, mkdirSync, writeFileSync } from 'fs';
 import { dirname, join, resolve, sep } from 'path';
 import type { ReadStream } from 'fs';
+import {
+  resolveApiPublicBaseUrl,
+  resolveApiPublicBaseUrlForTarget,
+} from '../../common/utils/network.util';
 
 @Injectable()
 export class StorageService implements OnModuleInit {
@@ -22,6 +26,11 @@ export class StorageService implements OnModuleInit {
   /** Root folder on disk for FaceID (PostgreSQL stores relative paths under this). */
   private uploadRoot!: string;
   private publicBaseUrl!: string;
+  private publicBaseUrlConfigured = false;
+  private readonly deviceBaseUrlCache = new Map<
+    string,
+    { expiresAt: number; baseUrl: string }
+  >();
 
   constructor(private readonly config: ConfigService) {}
 
@@ -35,10 +44,9 @@ export class StorageService implements OnModuleInit {
     mkdirSync(join(this.uploadRoot, 'snapshots'), { recursive: true });
     this.logger.log(`Local upload dir: ${this.uploadRoot}`);
 
-    const apiPort = this.config.get<string>('API_PORT', '8080');
-    this.publicBaseUrl = (
-      this.config.get<string>('API_PUBLIC_URL') || `http://localhost:${apiPort}`
-    ).replace(/\/$/, '');
+    const publicBase = resolveApiPublicBaseUrl(this.config);
+    this.publicBaseUrl = publicBase.url;
+    this.publicBaseUrlConfigured = publicBase.configured;
 
     const endpoint = this.config.get<string>('MINIO_ENDPOINT', 'localhost');
     const port = this.config.get<string>('MINIO_PORT', '9000');
@@ -116,15 +124,48 @@ export class StorageService implements OnModuleInit {
   }
 
   /**
+   * Build a FaceURL for a specific panel route. A central Windows server may
+   * have several LAN/VPN adapters, so the source address must be selected for
+   * the target panel rather than cached as one global LAN IP.
+   */
+  async getFileUrlForDevice(
+    relativePath: string,
+    deviceIp?: string | null,
+  ): Promise<string> {
+    const cleaned = relativePath.replace(/^[/\\]+/, '').replace(/\\/g, '/');
+    const baseUrl = await this.getPublicBaseUrlForDevice(deviceIp);
+    return `${baseUrl}/api/files/${cleaned}`;
+  }
+
+  private async getPublicBaseUrlForDevice(deviceIp?: string | null): Promise<string> {
+    if (!deviceIp?.trim()) return this.publicBaseUrl;
+
+    const key = deviceIp.trim();
+    const cached = this.deviceBaseUrlCache.get(key);
+    if (cached && cached.expiresAt > Date.now()) return cached.baseUrl;
+
+    const resolved = await resolveApiPublicBaseUrlForTarget(this.config, key);
+    this.deviceBaseUrlCache.set(key, {
+      baseUrl: resolved.url,
+      expiresAt: Date.now() + 30_000,
+    });
+    return resolved.url;
+  }
+
+  /**
    * URL for browser/FE preview.
-   * Optional API_BROWSER_URL for local FE on localhost while API_PUBLIC_URL is LAN.
-   * In production, ignore localhost browser URLs (LAN clients cannot open them).
+   * Optional API_BROWSER_URL for deployments where the browser reaches the API
+   * through a different origin. Without an explicit public URL, return a
+   * same-origin path so the FE/reverse proxy can adapt to its current host.
    */
   getBrowserFileUrl(relativePath: string): string {
     const cleaned = relativePath.replace(/^[/\\]+/, '').replace(/\\/g, '/');
     const configured = (this.config.get<string>('API_BROWSER_URL') || '').replace(/\/$/, '');
     const isProd = this.config.get<string>('NODE_ENV') === 'production';
     const configuredIsLocal = /^(https?:\/\/)?(localhost|127\.0\.0\.1)(:|\/|$)/i.test(configured);
+    if (!configured && !this.publicBaseUrlConfigured) {
+      return `/api/files/${cleaned}`;
+    }
     const browserBase =
       configured && !(isProd && configuredIsLocal) ? configured : this.publicBaseUrl;
     return `${browserBase.replace(/\/$/, '')}/api/files/${cleaned}`;

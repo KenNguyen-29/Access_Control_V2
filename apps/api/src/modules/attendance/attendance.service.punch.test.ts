@@ -79,6 +79,14 @@ function makeService(opts: {
     },
   };
 
+  // processPunch serializes writes through a transaction; keep this unit test
+  // focused on the attendance decision without requiring a live Prisma client.
+  (prisma as any).$transaction = async (callback: (tx: any) => unknown) =>
+    callback({
+      $executeRaw: async () => undefined,
+      attendanceRecord: prisma.attendanceRecord,
+    });
+
   const settings = {
     getNumber: async (_key: string, fallback: number) => fallback,
   };

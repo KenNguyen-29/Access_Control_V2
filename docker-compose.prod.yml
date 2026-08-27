@@ -50,22 +50,21 @@ services:
       retries: 3
       start_period: 10s
 
-  # Same Docker network as API → http://go2rtc:1984 (no host.docker.internal).
+  # The native Windows launcher is the preferred deployment. This service is
+  # retained for Docker hosts and advertises host.docker.internal dynamically.
   go2rtc:
     image: alexxit/go2rtc:latest
     container_name: acv2-go2rtc
     restart: unless-stopped
-    environment:
-      HOST_LAN_IP: ${HOST_LAN_IP:-192.168.2.148}
     volumes:
-      - ./deploy/go2rtc/go2rtc.yaml:/template/go2rtc.yaml:ro
+      - ./deploy/go2rtc/go2rtc.yaml:/config/go2rtc.yaml:ro
+    extra_hosts:
+      # Docker Desktop resolves this automatically; host-gateway keeps the
+      # same config usable on Linux Docker hosts without a fixed LAN address.
+      - "host.docker.internal:host-gateway"
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
-        set -eu
-        mkdir -p /config
-        sed "s/__HOST_LAN_IP__/$${HOST_LAN_IP}/g" /template/go2rtc.yaml > /config/go2rtc.yaml
-        cat /config/go2rtc.yaml
         exec /sbin/tini -- go2rtc -config /config/go2rtc.yaml
     ports:
       - "1984:1984"
@@ -115,10 +114,18 @@ services:
       GO2RTC_BASE_URL: http://go2rtc:1984
       GO2RTC_ENABLED: "true"
       GO2RTC_AUTO_START: "false"
+      RTSP_WARM_BUFFER_ENABLED: "true"
+      RTSP_WARM_FFMPEG_TEMPLATE: mjpeg_fps
+      RTSP_WARM_BUFFER_MS: ${RTSP_WARM_BUFFER_MS:-3000}
+      RTSP_WARM_MAX_FRAME_AGE_MS: ${RTSP_WARM_MAX_FRAME_AGE_MS:-5000}
+      RTSP_WARM_MIN_JPEG_BYTES: ${RTSP_WARM_MIN_JPEG_BYTES:-16000}
       API_PORT: 8080
+      API_BIND_HOST: 0.0.0.0
       TZ: Asia/Ho_Chi_Minh
-      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3003}
-      API_PUBLIC_URL: ${API_PUBLIC_URL:-http://localhost:8010}
+      CORS_ORIGIN: ${CORS_ORIGIN:-}
+      API_PUBLIC_URL: ${API_PUBLIC_URL:-}
+      PUBLIC_HOST: ${PUBLIC_HOST:-}
+      PUBLIC_PROTOCOL: ${PUBLIC_PROTOCOL:-http}
       REDIS_ENABLED: ${REDIS_ENABLED:-true}
       AKUVOX_MOCK_MODE: ${AKUVOX_MOCK_MODE:-true}
       FACE_UPLOAD_DIR: /app/uploads
@@ -135,8 +142,9 @@ services:
       context: .
       dockerfile: apps/web/Dockerfile
       args:
-        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8010/api}
-        NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-http://localhost:8010}
+        API_PROXY_TARGET: ${API_PROXY_TARGET:-http://api:8080}
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-}
+        NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-}
     container_name: acv2-web
     restart: unless-stopped
     depends_on:

@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useState } from 'react';
 import { ApiError } from '@/lib/api';
 
-/** Nest --watch restarts leave ~2–5s with nothing on :8080 → ERR_CONNECTION_REFUSED. */
+/** Nest --watch restarts leave ~2–5s with nothing on :8010 → ERR_CONNECTION_REFUSED. */
 function isTransientNetworkError(error: unknown) {
   if (error instanceof TypeError) return true; // Failed to fetch / NetworkError
   if (error instanceof ApiError) return error.status === 0 || error.status >= 500;

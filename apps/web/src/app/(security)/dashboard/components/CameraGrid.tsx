@@ -35,6 +35,37 @@ function connectDelayMs(id: string): number {
 }
 
 /**
+ * The backend performs a single non-trickle SDP exchange. Wait until the
+ * browser has appended its host candidates before sending the offer; sending
+ * the initial SDP immediately leaves ICE with no usable remote candidates.
+ */
+function waitForIceGatheringComplete(
+  connection: RTCPeerConnection,
+  timeoutMs = 5000,
+): Promise<void> {
+  if (connection.iceGatheringState === 'complete') return Promise.resolve();
+
+  return new Promise((resolve) => {
+    let timer: ReturnType<typeof setTimeout> | null = setTimeout(done, timeoutMs);
+
+    const onStateChange = () => {
+      if (connection.iceGatheringState === 'complete') done();
+    };
+
+    function done() {
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      connection.removeEventListener('icegatheringstatechange', onStateChange);
+      resolve();
+    }
+
+    connection.addEventListener('icegatheringstatechange', onStateChange);
+  });
+}
+
+/**
  * Connects a camera's WebRTC stream into a <video> via backend-proxied SDP
  * (POST /devices/:id/webrtc → go2rtc). Shared by the grid slots and the
  * single-camera detail view.
@@ -74,16 +105,6 @@ function useCameraStream(cam: CameraItem, enabled = true) {
 
     const connect = async () => {
       if (cancelled) return;
-      if (network === 'down') {
-        setDiag({
-          network: 'down',
-          rtsp: 'down',
-          playback: 'offline',
-          reason: 'Mạng thiết bị không phản hồi — kiểm tra IP/cáp trước khi mở luồng',
-        });
-        return;
-      }
-
       const connection = new RTCPeerConnection({ iceServers: ICE_SERVERS });
       pc = connection;
 
@@ -97,7 +118,7 @@ function useCameraStream(cam: CameraItem, enabled = true) {
         video.srcObject = stream;
         void video.play().catch(() => undefined);
         setDiag({
-          network: network === 'unknown' ? 'up' : network,
+          network: 'up',
           rtsp: 'up',
           playback: 'live',
           reason: null,
@@ -110,7 +131,7 @@ function useCameraStream(cam: CameraItem, enabled = true) {
         if (s === 'connected') {
           setDiag((prev) => ({
             ...prev,
-            network: prev.network === 'unknown' ? 'up' : prev.network,
+            network: 'up',
             rtsp: 'up',
             playback: 'live',
             reason: null,
@@ -130,9 +151,14 @@ function useCameraStream(cam: CameraItem, enabled = true) {
       try {
         const offer = await connection.createOffer();
         await connection.setLocalDescription(offer);
-        if (cancelled || !offer.sdp) return;
+        await waitForIceGatheringComplete(connection);
+        const localDescription = connection.localDescription;
+        if (cancelled || !localDescription?.sdp) return;
 
-        const answer = await exchangeDeviceWebRtc(deviceId, { type: 'offer', sdp: offer.sdp });
+        const answer = await exchangeDeviceWebRtc(deviceId, {
+          type: localDescription.type,
+          sdp: localDescription.sdp,
+        });
         if (cancelled) return;
 
         setDiag((prev) => ({
@@ -177,10 +203,9 @@ function linkLabel(s: LinkState) {
   return '…';
 }
 
-export const DEMO_CAMERAS: CameraItem[] = [
-  { code: 'CAM-MAIN', name: 'Camera Cổng Chính', location: 'Cổng chính', ip: '192.168.1.10', online: true },
-  { code: 'demo_cam', name: 'Demo Camera', location: 'Demo', ip: '192.168.1.11', online: true },
-];
+// Camera data always comes from the API. Keeping this empty avoids showing
+// site-specific demo IPs when the API is unavailable during deployment.
+export const DEMO_CAMERAS: CameraItem[] = [];
 
 const GRID_COLS: Record<number, string> = {
   1: 'grid-cols-1',

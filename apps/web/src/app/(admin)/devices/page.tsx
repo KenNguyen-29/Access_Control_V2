@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -18,6 +18,7 @@ import {
   Loader2,
   Activity,
   Radar,
+  CheckCircle2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -46,6 +47,9 @@ import {
   updateDevice,
   type Device,
   type OnvifDiscoveryHit,
+  type OnvifProfile,
+  fetchOnvifProfiles,
+  testOnvifStream,
 } from '@/lib/api';
 import {
   clearFieldError,
@@ -57,7 +61,7 @@ import {
 } from '@/lib/formValidation';
 import { cn } from '@/lib/utils';
 
-const DEFAULT_RTSP_TEMPLATE = 'rtsp://192.168.1.100:554/Streaming/Channels/101';
+const RTSP_PLACEHOLDER = 'rtsp://<camera-ip>:554/<stream-path>';
 
 type PanelDeviceType = 'AKUVOX' | 'DNAKE' | 'CAMERA';
 
@@ -84,9 +88,15 @@ const EMPTY_FORM = {
   location: '',
   zoneId: '',
   projectId: '',
-  rtspUrl: DEFAULT_RTSP_TEMPLATE,
+  rtspUrl: '',
   username: '',
   password: '',
+  connectionSource: 'MANUAL' as 'ONVIF' | 'MANUAL',
+  onvifServiceUrl: '',
+  onvifProfileToken: '',
+  onvifPort: null as number | null,
+  manufacturer: '',
+  model: '',
 };
 
 const PAGE_SIZE = 10;
@@ -112,11 +122,13 @@ export default function DevicesPage() {
   const [deleteTarget, setDeleteTarget] = useState<Device | null>(null);
   const [testingIds, setTestingIds] = useState<Set<string>>(new Set());
   const [page, setPage] = useState(1);
-  const [onvifOpen, setOnvifOpen] = useState(false);
   const [onvifHits, setOnvifHits] = useState<OnvifDiscoveryHit[]>([]);
-  const [onvifUser, setOnvifUser] = useState('');
-  const [onvifPass, setOnvifPass] = useState('');
   const [onvifScanning, setOnvifScanning] = useState(false);
+  const [selectedOnvifCamera, setSelectedOnvifCamera] = useState<OnvifDiscoveryHit | null>(null);
+  const [onvifProfiles, setOnvifProfiles] = useState<OnvifProfile[]>([]);
+  const [onvifProfilesLoading, setOnvifProfilesLoading] = useState(false);
+  const [onvifStreamTesting, setOnvifStreamTesting] = useState(false);
+  const onvifRequestRef = useRef(0);
 
   useEffect(() => {
     const zoneId = searchParams.get('zoneId');
@@ -195,6 +207,7 @@ export default function DevicesPage() {
   );
 
   const hasActiveFilters = search.trim() !== '' || typeFilter !== 'all' || zoneFilter !== '';
+  const onvifIpLocked = Boolean(selectedOnvifCamera && form.connectionSource === 'ONVIF');
 
   useEffect(() => {
     setPage(1);
@@ -213,13 +226,18 @@ export default function DevicesPage() {
   }, [notice]);
 
   function openCreate() {
+    onvifRequestRef.current += 1;
     setEditing(null);
     setForm(EMPTY_FORM);
     setFieldErrors({});
+    setOnvifHits([]);
+    setSelectedOnvifCamera(null);
+    setOnvifProfiles([]);
     setOpen(true);
   }
 
   function openEdit(device: Device) {
+    onvifRequestRef.current += 1;
     setEditing(device);
     setForm({
       name: device.name,
@@ -228,11 +246,33 @@ export default function DevicesPage() {
       location: device.location || '',
       zoneId: device.zoneId || '',
       projectId: device.projectId || device.project?.id || '',
-      rtspUrl: device.rtspUrl || DEFAULT_RTSP_TEMPLATE,
+      rtspUrl: device.rtspUrl || '',
       username: panelUsername(device),
       password: '',
+      connectionSource: device.connectionSource === 'ONVIF' ? 'ONVIF' : 'MANUAL',
+      onvifServiceUrl: device.onvifServiceUrl || '',
+      onvifProfileToken: device.onvifProfileToken || '',
+      onvifPort: device.onvifPort || null,
+      manufacturer: device.manufacturer || '',
+      model: device.model || '',
     });
     setFieldErrors({});
+    setOnvifHits([]);
+    setSelectedOnvifCamera(
+      device.deviceType === 'CAMERA' && device.connectionSource === 'ONVIF'
+        ? {
+            name: device.name,
+            ip: device.ipAddress || '',
+            xaddrs: device.onvifServiceUrl ? [device.onvifServiceUrl] : [],
+            rtspUrls: device.rtspUrl ? [device.rtspUrl] : [],
+            serviceUrl: device.onvifServiceUrl || '',
+            onvifPort: device.onvifPort || 80,
+            manufacturer: device.manufacturer || undefined,
+            model: device.model || undefined,
+          }
+        : null,
+    );
+    setOnvifProfiles([]);
     setOpen(true);
   }
 
@@ -272,6 +312,7 @@ export default function DevicesPage() {
                     ...d,
                     isOnline: res.online,
                     lastHeartbeat: res.online ? res.checkedAt : d.lastHeartbeat,
+                    lastConnectionError: res.online ? null : res.detail || d.lastConnectionError,
                   }
                 : d,
             ),
@@ -321,6 +362,15 @@ export default function DevicesPage() {
         zoneId: isPanel ? form.zoneId : form.zoneId.trim() || undefined,
         projectId: form.projectId.trim() || undefined,
         rtspUrl: form.rtspUrl.trim() || undefined,
+        connectionSource: form.connectionSource,
+        onvifServiceUrl:
+          form.connectionSource === 'ONVIF' ? form.onvifServiceUrl.trim() || undefined : undefined,
+        onvifProfileToken:
+          form.connectionSource === 'ONVIF' ? form.onvifProfileToken.trim() || undefined : undefined,
+        onvifPort: form.connectionSource === 'ONVIF' ? form.onvifPort || undefined : undefined,
+        manufacturer:
+          form.connectionSource === 'ONVIF' ? form.manufacturer.trim() || undefined : undefined,
+        model: form.connectionSource === 'ONVIF' ? form.model.trim() || undefined : undefined,
         // Credentials mapped by device type; password omitted when blank to keep existing
         ...(isPanel
           ? {
@@ -438,11 +488,7 @@ export default function DevicesPage() {
     setOnvifScanning(true);
     setError(null);
     try {
-      const res = await scanOnvifDevices({
-        timeoutMs: 5000,
-        username: onvifUser.trim() || undefined,
-        password: onvifPass || undefined,
-      });
+      const res = await scanOnvifDevices({ timeoutMs: 5000 });
       setOnvifHits(res.items);
       setNotice(
         res.count > 0
@@ -457,23 +503,155 @@ export default function DevicesPage() {
   }
 
   function applyOnvifHit(hit: OnvifDiscoveryHit) {
-    const rtsp = hit.rtspUrls[0] || `rtsp://${hit.ip}:554/Streaming/Channels/101`;
-    const next = {
-      ...(open ? form : EMPTY_FORM),
-      name: (open ? form.name.trim() : '') || hit.name || hit.ip,
+    const current = form;
+    const next: typeof EMPTY_FORM = {
+      ...(open ? current : EMPTY_FORM),
+      name: (open ? current.name.trim() : '') || hit.name || hit.ip,
       ipAddress: hit.ip,
-      rtspUrl: rtsp,
-      username: onvifUser.trim() || (open ? form.username : ''),
-      password: onvifPass || (open ? form.password : ''),
+      rtspUrl: hit.rtspUrls[0] || '',
+      username: open ? current.username : '',
+      password: open ? current.password : '',
+      connectionSource: 'ONVIF',
+      onvifServiceUrl: hit.serviceUrl,
+      onvifProfileToken: hit.profiles?.[0]?.token || '',
+      onvifPort: hit.onvifPort,
+      manufacturer: hit.manufacturer || '',
+      model: hit.model || '',
     };
     setForm(next);
+    setSelectedOnvifCamera(hit);
+    setOnvifProfiles(hit.profiles || []);
     setFieldErrors({});
     if (!open) {
       setEditing(null);
       setOpen(true);
     }
-    setOnvifOpen(false);
-    setNotice(`Đã điền ${hit.ip} + RTSP từ ONVIF`);
+    setNotice(`Đã chọn thiết bị ONVIF ${hit.ip}. Đang lấy profile RTSP…`);
+    void loadOnvifProfiles(next);
+  }
+
+  function changeOnvifCamera() {
+    onvifRequestRef.current += 1;
+    setOnvifProfilesLoading(false);
+    setSelectedOnvifCamera(null);
+    setOnvifProfiles([]);
+    setForm((current) => ({
+      ...current,
+      connectionSource: 'MANUAL',
+      onvifServiceUrl: '',
+      onvifProfileToken: '',
+      onvifPort: null,
+      manufacturer: '',
+      model: '',
+      rtspUrl: '',
+    }));
+    setNotice('Đã chuyển sang nhập camera thủ công.');
+  }
+
+  function changeDeviceType(type: PanelDeviceType) {
+    if (type === form.deviceType) return;
+    onvifRequestRef.current += 1;
+    setOnvifProfilesLoading(false);
+    setSelectedOnvifCamera(null);
+    setOnvifProfiles([]);
+    patchForm({
+      deviceType: type,
+      rtspUrl: '',
+      connectionSource: 'MANUAL',
+      onvifServiceUrl: '',
+      onvifProfileToken: '',
+      onvifPort: null,
+      manufacturer: '',
+      model: '',
+    });
+    if (
+      form.connectionSource === 'ONVIF' &&
+      (!form.onvifServiceUrl.trim() || !form.onvifProfileToken.trim())
+    ) {
+      setError('Hãy lấy và chọn profile ONVIF trước khi lưu, hoặc chuyển sang nhập RTSP thủ công.');
+      return;
+    }
+  }
+
+  async function loadOnvifProfiles(sourceForm = form) {
+    const requestId = ++onvifRequestRef.current;
+    if (!sourceForm.ipAddress.trim()) {
+      setOnvifProfilesLoading(false);
+      return;
+    }
+    setOnvifProfilesLoading(true);
+    setError(null);
+    try {
+      const result = await fetchOnvifProfiles({
+        ipAddress: sourceForm.ipAddress.trim(),
+        serviceUrl: sourceForm.onvifServiceUrl.trim() || undefined,
+        username: sourceForm.username.trim() || undefined,
+        password: sourceForm.password || undefined,
+      });
+      if (requestId !== onvifRequestRef.current) return;
+      setSelectedOnvifCamera((current) => current || {
+        name: result.name,
+        ip: result.ip,
+        xaddrs: result.serviceUrl ? [result.serviceUrl] : [],
+        rtspUrls: result.profiles.map((profile) => profile.rtspUrl),
+        serviceUrl: result.serviceUrl,
+        onvifPort: result.onvifPort,
+        manufacturer: result.manufacturer,
+        model: result.model,
+        profiles: result.profiles,
+      });
+      setOnvifProfiles(result.profiles);
+      const first = result.profiles[0];
+      setForm((current) =>
+        current.ipAddress.trim() === sourceForm.ipAddress.trim()
+          ? {
+              ...current,
+              name: result.name || current.name,
+              connectionSource: 'ONVIF',
+              onvifServiceUrl: result.serviceUrl || current.onvifServiceUrl,
+              onvifProfileToken: first.token,
+              onvifPort: result.onvifPort,
+              manufacturer: result.manufacturer || current.manufacturer,
+              model: result.model || current.model,
+              rtspUrl: first.rtspUrl,
+            }
+          : current,
+      );
+      setNotice(`Đã lấy ${result.profiles.length} profile ONVIF từ ${result.ip}`);
+    } catch (e) {
+      if (requestId !== onvifRequestRef.current) return;
+      setOnvifProfiles([]);
+      setError(e instanceof ApiError ? e.message : 'Không lấy được profile ONVIF');
+    } finally {
+      if (requestId === onvifRequestRef.current) setOnvifProfilesLoading(false);
+    }
+  }
+
+  function selectOnvifProfile(token: string) {
+    const profile = onvifProfiles.find((item) => item.token === token);
+    if (!profile) return;
+    patchForm({ onvifProfileToken: token, rtspUrl: profile.rtspUrl, connectionSource: 'ONVIF' });
+  }
+
+  async function testSelectedOnvifStream() {
+    if (!form.ipAddress.trim() || !form.rtspUrl.trim()) return;
+    setOnvifStreamTesting(true);
+    setError(null);
+    try {
+      const result = await testOnvifStream({
+        ipAddress: form.ipAddress.trim(),
+        rtspUrl: form.rtspUrl.trim(),
+        username: form.username.trim() || undefined,
+        password: form.password || undefined,
+        timeoutMs: 7000,
+      });
+      if (result.online) setNotice(`${result.message} (${result.latencyMs}ms)`);
+      else setError(result.message);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Kiểm tra luồng RTSP thất bại');
+    } finally {
+      setOnvifStreamTesting(false);
+    }
   }
 
   return (
@@ -495,17 +673,6 @@ export default function DevicesPage() {
           >
             <Activity className={testingIds.size > 0 ? 'h-4 w-4 animate-pulse' : 'h-4 w-4'} />
             Kiểm tra kết nối
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              setOnvifHits([]);
-              setOnvifOpen(true);
-            }}
-          >
-            <Radar className="h-4 w-4" />
-            Quét ONVIF
           </Button>
           <Button variant="outline" size="sm" onClick={openMapDialog}>
             <Link2 className="h-4 w-4" />
@@ -641,6 +808,16 @@ export default function DevicesPage() {
                     <td className="truncate p-3 text-xs text-muted-foreground">
                       <span className="font-mono">{d.ipAddress || '—'}</span>
                       {d.location ? ` · ${d.location}` : ''}
+                      {d.connectionSource === 'ONVIF' && (
+                        <div className="mt-0.5 text-[11px] text-primary/80">
+                          ONVIF{d.manufacturer || d.model ? ` · ${[d.manufacturer, d.model].filter(Boolean).join(' · ')}` : ''}
+                        </div>
+                      )}
+                      {d.lastConnectionError && (
+                        <div className="mt-0.5 truncate text-[11px] text-destructive" title={d.lastConnectionError}>
+                          {d.lastConnectionError}
+                        </div>
+                      )}
                     </td>
                     <td className="p-3">
                       <SyncBadge status={d.syncStatus} />
@@ -763,10 +940,13 @@ export default function DevicesPage() {
         open={open}
         onClose={() => setOpen(false)}
         title={editing ? 'Sửa thiết bị' : 'Thêm thiết bị'}
-        description="Cấu hình thông tin thiết bị Akuvox hoặc camera."
+        description="Cấu hình Akuvox, DNAKE hoặc camera; có thể dùng chung ONVIF để điền nhanh."
+        className="flex max-h-[calc(100vh-1.5rem)] max-w-3xl flex-col overflow-hidden"
       >
-        <div className="space-y-3">
-          <div>
+        <div className="min-h-0 overflow-y-auto pr-1">
+          <div className="space-y-3">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,190px)]">
+            <div>
             <label className="mb-1 block text-xs text-muted-foreground">
               Tên thiết bị
               <RequiredMark />
@@ -779,22 +959,22 @@ export default function DevicesPage() {
               aria-invalid={Boolean(fieldErrors.name)}
             />
             <FieldError message={fieldErrors.name} />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs text-muted-foreground">Loại</label>
+              <Select
+                value={form.deviceType}
+                onChange={(e) => changeDeviceType(e.target.value as PanelDeviceType)}
+                disabled={!!editing}
+              >
+                <option value="AKUVOX">AKUVOX</option>
+                <option value="DNAKE">DNAKE</option>
+                <option value="CAMERA">CAMERA</option>
+              </Select>
+            </div>
           </div>
-          <div>
-            <label className="mb-1 block text-xs text-muted-foreground">Loại</label>
-            <Select
-              value={form.deviceType}
-              onChange={(e) =>
-                patchForm({ deviceType: e.target.value as PanelDeviceType })
-              }
-              disabled={!!editing}
-            >
-              <option value="AKUVOX">AKUVOX</option>
-              <option value="DNAKE">DNAKE</option>
-              <option value="CAMERA">CAMERA</option>
-            </Select>
-          </div>
-          <div>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div>
             <label className="mb-1 block text-xs text-muted-foreground">
               Khu vực
               {isAttendancePanel(form.deviceType) && <RequiredMark />}
@@ -833,44 +1013,55 @@ export default function DevicesPage() {
                 Mỗi máy chấm công chỉ gắn 1 khu vực. Mỗi khu vực chỉ 1 máy {form.deviceType}.
               </p>
             )}
-          </div>
-          <div>
-            <label className="mb-1 block text-xs text-muted-foreground">
-              Dự án
-              {form.deviceType === 'CAMERA' && <RequiredMark />}
-            </label>
-            <Select
-              value={form.projectId}
-              onChange={(e) => patchForm({ projectId: e.target.value })}
-              className={cn(fieldErrors.projectId && 'border-destructive')}
-              aria-invalid={Boolean(fieldErrors.projectId)}
-            >
-              <option value="">
-                {form.deviceType === 'CAMERA' ? '— Chọn dự án —' : '— Không gắn dự án —'}
-              </option>
-              {projects.filter(Boolean).map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name} ({p.code})
+            </div>
+            <div>
+              <label className="mb-1 block text-xs text-muted-foreground">
+                Dự án
+                {form.deviceType === 'CAMERA' && <RequiredMark />}
+              </label>
+              <Select
+                value={form.projectId}
+                onChange={(e) => patchForm({ projectId: e.target.value })}
+                className={cn(fieldErrors.projectId && 'border-destructive')}
+                aria-invalid={Boolean(fieldErrors.projectId)}
+              >
+                <option value="">
+                  {form.deviceType === 'CAMERA' ? '— Chọn dự án —' : '— Không gắn dự án —'}
                 </option>
-              ))}
-            </Select>
-            <FieldError message={fieldErrors.projectId} />
-            {form.deviceType === 'CAMERA' && (
-              <p className="mt-1 text-xs text-muted-foreground">
-                Tài khoản gắn dự án chỉ xem được camera của dự án đó trên Giám sát.
-              </p>
-            )}
+                {projects.filter(Boolean).map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name} ({p.code})
+                  </option>
+                ))}
+              </Select>
+              <FieldError message={fieldErrors.projectId} />
+              {form.deviceType === 'CAMERA' && (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Tài khoản gắn dự án chỉ xem được camera của dự án đó trên Giám sát.
+                </p>
+              )}
+            </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="mb-1 block text-xs text-muted-foreground">
                 Địa chỉ IP
                 <RequiredMark />
+                {onvifIpLocked && (
+                  <button
+                    type="button"
+                    className="ml-2 text-[11px] font-semibold text-primary hover:underline"
+                    onClick={changeOnvifCamera}
+                  >
+                    Đổi camera
+                  </button>
+                )}
               </label>
               <Input
-                placeholder="192.168.1.x"
+                placeholder="Địa chỉ IPv4 của thiết bị"
                 className={cn('input-design h-10', fieldErrors.ipAddress && 'border-destructive')}
                 value={form.ipAddress}
+                readOnly={onvifIpLocked}
                 onChange={(e) => patchForm({ ipAddress: e.target.value })}
                 aria-invalid={Boolean(fieldErrors.ipAddress)}
               />
@@ -892,19 +1083,9 @@ export default function DevicesPage() {
                 RTSP URL
                 {form.deviceType === 'CAMERA' && <RequiredMark />}
               </label>
-              <button
-                type="button"
-                className="text-[11px] font-semibold text-primary hover:underline"
-                onClick={() => {
-                  setOnvifHits([]);
-                  setOnvifOpen(true);
-                }}
-              >
-                Quét ONVIF…
-              </button>
             </div>
             <Input
-              placeholder={DEFAULT_RTSP_TEMPLATE}
+              placeholder={RTSP_PLACEHOLDER}
               className={cn(
                 'input-design h-10 font-mono text-xs',
                 fieldErrors.rtspUrl && 'border-destructive',
@@ -916,140 +1097,178 @@ export default function DevicesPage() {
             <FieldError message={fieldErrors.rtspUrl} />
             <p className="mt-1 text-xs text-muted-foreground">
               {form.deviceType === 'CAMERA'
-                ? 'Mẫu có sẵn — chỉ cần sửa IP (và cổng/đường dẫn nếu khác) cho đúng camera.'
+                ? form.connectionSource === 'ONVIF'
+                  ? 'URL được lấy từ profile ONVIF; có thể chỉnh nếu camera yêu cầu đường dẫn riêng.'
+                  : 'Nhập RTSP thủ công hoặc chọn camera bằng Quét ONVIF.'
                 : 'Dùng để xem live và chụp ảnh lúc chấm. Để trống thì thử RTSP mặc định theo IP; nên điền đúng hoặc Quét ONVIF.'}
             </p>
           </div>
-          <div className="grid grid-cols-2 gap-3 rounded-sm border border-border bg-muted/20 p-3">
-            <div className="col-span-2 -mb-1 text-xs font-semibold text-muted-foreground">
-              {form.deviceType === 'AKUVOX'
-                ? 'Tài khoản HTTP API (Akuvox)'
-                : form.deviceType === 'DNAKE'
-                  ? 'Tài khoản HTTP API (DNAKE)'
-                  : 'Tài khoản đăng nhập camera (RTSP)'}
+          {(
+            <div className="space-y-3 rounded-sm border border-primary/20 bg-primary/5 p-3">
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <p className="text-xs font-semibold text-primary">Tìm thiết bị ONVIF</p>
+                  <p className="mt-1 text-[11px] leading-4 text-muted-foreground">
+                    {selectedOnvifCamera
+                      ? `${selectedOnvifCamera.name || 'Thiết bị'} · ${selectedOnvifCamera.ip}`
+                      : 'Quét WS-Discovery, chọn Akuvox/DNAKE/camera rồi lấy profile RTSP.'}
+                  </p>
+                </div>
+                {form.connectionSource === 'ONVIF' && form.onvifProfileToken ? (
+                  <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />
+                ) : null}
+              </div>
+              <div className="grid grid-cols-2 gap-3 rounded-sm border border-border bg-surface-soft p-3">
+                <div className="col-span-2 -mb-1 text-xs font-semibold text-muted-foreground">
+                  {form.deviceType === 'AKUVOX'
+                    ? 'Tài khoản ONVIF + HTTP API (Akuvox)'
+                    : form.deviceType === 'DNAKE'
+                      ? 'Tài khoản ONVIF + HTTP API (DNAKE)'
+                      : 'Tài khoản ONVIF + RTSP (camera)'}
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-muted-foreground">
+                    Tài khoản
+                    {isAttendancePanel(form.deviceType) && <RequiredMark />}
+                  </label>
+                  <Input
+                    placeholder="admin"
+                    className={cn('input-design h-10', fieldErrors.username && 'border-destructive')}
+                    value={form.username}
+                    onChange={(e) => patchForm({ username: e.target.value })}
+                    aria-invalid={Boolean(fieldErrors.username)}
+                  />
+                  <FieldError message={fieldErrors.username} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-muted-foreground">
+                    Mật khẩu
+                    {isAttendancePanel(form.deviceType) &&
+                      (!editing || !hasPanelPassword(editing, form.deviceType)) && <RequiredMark />}
+                  </label>
+                  <Input
+                    type="password"
+                    placeholder={
+                      editing && hasPanelPassword(editing, form.deviceType)
+                        ? '••••• (giữ nguyên nếu để trống)'
+                        : '••••••'
+                    }
+                    className={cn('input-design h-10', fieldErrors.password && 'border-destructive')}
+                    value={form.password}
+                    onChange={(e) => patchForm({ password: e.target.value })}
+                    aria-invalid={Boolean(fieldErrors.password)}
+                  />
+                  <FieldError message={fieldErrors.password} />
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="flex-1"
+                  disabled={onvifScanning}
+                  onClick={() => void runOnvifScan()}
+                >
+                  {onvifScanning ? <Loader2 className="h-4 w-4 animate-spin" /> : <Radar className="h-4 w-4" />}
+                  {onvifScanning ? 'Đang quét…' : 'Quét ONVIF'}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="flex-1"
+                  disabled={onvifProfilesLoading || !form.ipAddress.trim()}
+                  onClick={() => void loadOnvifProfiles()}
+                >
+                  {onvifProfilesLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                  {onvifProfilesLoading ? 'Đang lấy…' : 'Lấy profile'}
+                </Button>
+              </div>
+              {onvifHits.length > 0 ? (
+                <div className="max-h-32 space-y-2 overflow-y-auto pr-1">
+                  <p className="text-[11px] font-medium text-muted-foreground">Thiết bị tìm thấy — chọn để điền IP/RTSP</p>
+                  {onvifHits.map((hit) => (
+                    <button
+                      key={hit.ip}
+                      type="button"
+                      className={cn(
+                        'flex w-full flex-col gap-0.5 rounded-sm border bg-surface px-3 py-2 text-left hover:border-primary/40 hover:bg-primary/5',
+                        selectedOnvifCamera?.ip === hit.ip ? 'border-primary bg-primary/5' : 'border-border',
+                      )}
+                      onClick={() => applyOnvifHit(hit)}
+                    >
+                      <span className="text-xs font-semibold text-foreground">
+                        {hit.name || hit.ip}
+                        <span className="ml-2 font-mono text-[11px] text-primary">{hit.ip}</span>
+                      </span>
+                      <span className="truncate font-mono text-[10px] text-muted-foreground">
+                        {hit.serviceUrl || 'Device-service URL chưa có'}
+                      </span>
+                      {(hit.manufacturer || hit.model) && (
+                        <span className="text-[10px] text-muted-foreground">
+                          {[hit.manufacturer, hit.model].filter(Boolean).join(' · ')}
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-center text-[11px] text-muted-foreground">
+                  Chưa có kết quả. Hãy nhập credential (nếu camera yêu cầu) rồi bấm Quét ONVIF.
+                </p>
+              )}
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="flex-1"
+                  disabled={onvifStreamTesting || !form.ipAddress.trim() || !form.rtspUrl.trim()}
+                  onClick={() => void testSelectedOnvifStream()}
+                >
+                  {onvifStreamTesting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Activity className="h-4 w-4" />}
+                  {onvifStreamTesting ? 'Đang test…' : 'Test luồng'}
+                </Button>
+              </div>
+              {onvifProfiles.length > 0 && (
+                <div>
+                  <label className="mb-1 block text-xs text-muted-foreground">Profile luồng</label>
+                  <Select
+                    value={form.onvifProfileToken}
+                    onChange={(e) => selectOnvifProfile(e.target.value)}
+                  >
+                    <option value="">— Chọn profile —</option>
+                    {onvifProfiles.map((profile) => (
+                      <option key={profile.token} value={profile.token}>
+                        {profile.name}{profile.width && profile.height ? ` · ${profile.width}×${profile.height}` : ''}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+              )}
+              {form.connectionSource === 'ONVIF' && form.onvifServiceUrl && (
+                <p className="truncate font-mono text-[11px] text-muted-foreground">
+                  {form.onvifServiceUrl} · port {form.onvifPort || 80}
+                </p>
+              )}
+              <p className="text-[11px] leading-4 text-muted-foreground">
+                {isAttendancePanel(form.deviceType)
+                  ? 'Credential này dùng chung cho ONVIF và HTTP API của thiết bị.'
+                  : 'Credential này dùng cho ONVIF và RTSP của camera.'}{' '}
+                Chỉ gửi trong lúc lấy/test; mật khẩu không hiển thị lại.
+              </p>
             </div>
-            <div>
-              <label className="mb-1 block text-xs text-muted-foreground">
-                Tài khoản
-                <RequiredMark />
-              </label>
-              <Input
-                placeholder="admin"
-                className={cn('input-design h-10', fieldErrors.username && 'border-destructive')}
-                value={form.username}
-                onChange={(e) => patchForm({ username: e.target.value })}
-                aria-invalid={Boolean(fieldErrors.username)}
-              />
-              <FieldError message={fieldErrors.username} />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs text-muted-foreground">
-                Mật khẩu
-                {(!editing || !hasPanelPassword(editing, form.deviceType)) && <RequiredMark />}
-              </label>
-              <Input
-                type="password"
-                placeholder={
-                  editing && hasPanelPassword(editing, form.deviceType)
-                    ? '••••• (giữ nguyên nếu để trống)'
-                    : '••••••'
-                }
-                className={cn('input-design h-10', fieldErrors.password && 'border-destructive')}
-                value={form.password}
-                onChange={(e) => patchForm({ password: e.target.value })}
-                aria-invalid={Boolean(fieldErrors.password)}
-              />
-              <FieldError message={fieldErrors.password} />
-            </div>
-          </div>
-          <div className="flex justify-end gap-2 pt-2">
-            <Button variant="outline" size="sm" onClick={() => setOpen(false)}>
-              Hủy
-            </Button>
-            <Button variant="accent" size="sm" disabled={saving} onClick={() => onSave()}>
-              {saving ? 'Đang lưu...' : 'Lưu'}
-            </Button>
+          )}
           </div>
         </div>
-      </Dialog>
-
-      <Dialog
-        open={onvifOpen}
-        onClose={() => setOnvifOpen(false)}
-        title="Quét ONVIF"
-        description="Tìm IP và gợi ý link RTSP trên LAN (WS-Discovery)."
-        className="max-w-lg"
-      >
-        <div className="space-y-3">
-          <p className="text-xs text-muted-foreground">
-            API phải cùng mạng LAN với thiết bị. Nhập user/pass ONVIF (nếu có) để lấy đúng URI stream.
-          </p>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="mb-1 block text-xs text-muted-foreground">User ONVIF (tuỳ chọn)</label>
-              <Input
-                className="input-design h-10"
-                value={onvifUser}
-                onChange={(e) => setOnvifUser(e.target.value)}
-                placeholder="admin"
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs text-muted-foreground">Mật khẩu (tuỳ chọn)</label>
-              <Input
-                type="password"
-                className="input-design h-10"
-                value={onvifPass}
-                onChange={(e) => setOnvifPass(e.target.value)}
-                placeholder="••••••"
-              />
-            </div>
-          </div>
-          <Button
-            variant="accent"
-            size="sm"
-            className="w-full"
-            disabled={onvifScanning}
-            onClick={() => void runOnvifScan()}
-          >
-            {onvifScanning ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Radar className="h-4 w-4" />
-            )}
-            {onvifScanning ? 'Đang quét…' : 'Bắt đầu quét'}
+        <div className="mt-3 flex shrink-0 justify-end gap-2 border-t border-border pt-3">
+          <Button variant="outline" size="sm" onClick={() => setOpen(false)}>
+            Hủy
           </Button>
-          <div className="max-h-64 space-y-2 overflow-y-auto">
-            {onvifHits.length === 0 && !onvifScanning && (
-              <p className="text-center text-sm text-muted-foreground">Chưa có kết quả</p>
-            )}
-            {onvifHits.map((hit) => (
-              <button
-                key={hit.ip}
-                type="button"
-                className="flex w-full flex-col gap-0.5 rounded-sm border border-border bg-surface px-3 py-2 text-left hover:border-primary/40 hover:bg-primary/5"
-                onClick={() => applyOnvifHit(hit)}
-              >
-                <span className="text-sm font-semibold text-foreground">
-                  {hit.name || hit.ip}
-                  <span className="ml-2 font-mono text-xs text-primary">{hit.ip}</span>
-                </span>
-                <span className="truncate font-mono text-[11px] text-muted-foreground">
-                  {hit.rtspUrls[0] || '—'}
-                </span>
-                {(hit.manufacturer || hit.model) && (
-                  <span className="text-[11px] text-muted-foreground">
-                    {[hit.manufacturer, hit.model].filter(Boolean).join(' · ')}
-                  </span>
-                )}
-              </button>
-            ))}
-          </div>
-          <div className="flex justify-end">
-            <Button variant="outline" size="sm" onClick={() => setOnvifOpen(false)}>
-              Đóng
-            </Button>
-          </div>
+          <Button variant="accent" size="sm" disabled={saving} onClick={() => onSave()}>
+            {saving ? 'Đang lưu...' : 'Lưu'}
+          </Button>
         </div>
       </Dialog>
 
