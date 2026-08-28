@@ -4,6 +4,10 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ProjectScopeService } from '../../common/services/project-scope.service';
 import { successResponse } from '../../common/utils/response.util';
 import type { JwtPayload } from '../auth/jwt.strategy';
+import {
+  AttendanceSummaryQueryDto,
+  WeeklyTimesheetQueryDto,
+} from './dto/stats-pagination.dto';
 import { StatsService } from './stats.service';
 
 @ApiTags('stats')
@@ -51,47 +55,43 @@ export class StatsController {
   @ApiQuery({ name: 'departmentId', required: false })
   @ApiQuery({ name: 'contractorId', required: false })
   @ApiQuery({ name: 'projectId', required: false })
-  async attendanceSummary(
-    @Query('from') from?: string,
-    @Query('to') to?: string,
-    @Query('departmentId') departmentId?: string,
-    @Query('contractorId') contractorId?: string,
-    @Query('projectId') projectId?: string,
-  ) {
+  async attendanceSummary(@Query() query: AttendanceSummaryQueryDto) {
     return successResponse(
       await this.service.attendanceSummary({
-        from,
-        to,
-        departmentId,
-        contractorId,
-        projectId,
+        from: query.from,
+        to: query.to,
+        departmentId: query.departmentId,
+        contractorId: query.contractorId,
+        projectId: query.projectId,
+        page: query.page,
+        pageSize: query.pageSize,
+        search: query.search,
+        sort: query.sort,
+        hasLate: query.hasLate,
+        hasEarlyArrival: query.hasEarlyArrival,
+        hasOt: query.hasOt,
       }),
     );
   }
 
   @Get('weekly-timesheet')
-  @ApiQuery({ name: 'weekStart', required: false })
-  @ApiQuery({ name: 'from', required: false })
-  @ApiQuery({ name: 'to', required: false })
-  @ApiQuery({ name: 'departmentId', required: false })
-  @ApiQuery({ name: 'contractorId', required: false })
-  @ApiQuery({ name: 'projectId', required: false })
-  async weeklyTimesheet(
-    @Query('weekStart') weekStart?: string,
-    @Query('from') from?: string,
-    @Query('to') to?: string,
-    @Query('departmentId') departmentId?: string,
-    @Query('contractorId') contractorId?: string,
-    @Query('projectId') projectId?: string,
-  ) {
+  async weeklyTimesheet(@Query() query: WeeklyTimesheetQueryDto) {
     return successResponse(
       await this.service.weeklyTimesheet({
-        weekStart,
-        from,
-        to,
-        departmentId,
-        contractorId,
-        projectId,
+        weekStart: query.weekStart,
+        from: query.from,
+        to: query.to,
+        departmentId: query.departmentId,
+        contractorId: query.contractorId,
+        projectId: query.projectId,
+        page: query.page,
+        pageSize: query.pageSize,
+        search: query.search,
+        sort: query.sort,
+        status: query.status,
+        hasLate: query.hasLate,
+        hasEarlyArrival: query.hasEarlyArrival,
+        hasOt: query.hasOt,
       }),
     );
   }

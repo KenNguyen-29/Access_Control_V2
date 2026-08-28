@@ -224,6 +224,7 @@ model User {
   @@index([contractorId, isDeleted])
   @@index([projectId, isDeleted])
   @@index([isDeleted, createdAt])
+  @@index([isDeleted, isActive, createdAt])
   @@map("users")
 }
 
@@ -457,6 +458,7 @@ model AccessLog {
   @@index([projectId])
   @@index([eventAt, isValid])
   @@index([eventAt, action])
+  @@index([eventAt, action, isValid])
   @@index([zoneId, eventAt])
   @@index([projectId, eventAt])
   @@index([deviceId, eventAt])
@@ -581,6 +583,7 @@ model EmployeeShift {
 
   @@index([userId, startDate])
   @@index([userId, isDeleted])
+  @@index([userId, isDeleted, startDate])
   @@index([workShiftId, isDeleted])
   @@index([isDeleted, endDate])
   @@index([isDeleted, startDate])

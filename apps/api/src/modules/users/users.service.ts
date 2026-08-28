@@ -97,13 +97,16 @@ export class UsersService {
     };
   }
 
-  /** Attach a browser-reachable URL for the face image (skip if file missing on disk). */
+  /** Browser URL for face image; sync path for on-disk face-images. */
   private async withFaceUrl<T extends { faceImagePath: string | null }>(user: T) {
     let faceImageUrl: string | null = null;
     if (user.faceImagePath) {
       const path = user.faceImagePath.replace(/\\/g, '/');
-      if (path.startsWith('face-images/') && !this.storage.existsOnDisk(path)) {
-        return { ...user, faceImageUrl: null };
+      if (path.startsWith('face-images/')) {
+        if (!this.storage.existsOnDisk(path)) {
+          return { ...user, faceImageUrl: null };
+        }
+        return { ...user, faceImageUrl: this.storage.getBrowserFileUrl(path) };
       }
       try {
         faceImageUrl = await this.storage.getAssetUrl(path, { forBrowser: true });
@@ -121,37 +124,73 @@ export class UsersService {
     const page = query.page ?? 1;
     const pageSize = query.pageSize ?? 20;
     const where = this.buildWhere(query, scopeFilter);
+    const orderBy: Prisma.UserOrderByWithRelationInput[] = [
+      { createdAt: 'desc' },
+      { id: 'asc' },
+    ];
+
+    let cursorWhere: Prisma.UserWhereInput = where;
+    if (query.cursor) {
+      const anchor = await this.prisma.user.findFirst({
+        where: { ...where, id: query.cursor },
+        select: { id: true, createdAt: true },
+      });
+      if (anchor) {
+        cursorWhere = {
+          ...where,
+          OR: [
+            { createdAt: { lt: anchor.createdAt } },
+            { createdAt: anchor.createdAt, id: { gt: anchor.id } },
+          ],
+        };
+      }
+    }
+
+    const useKeyset = Boolean(query.cursor);
+    const skip = useKeyset ? 0 : (page - 1) * pageSize;
 
     const [rawItems, total] = await Promise.all([
       this.prisma.user.findMany({
-        where,
+        where: cursorWhere,
         include: { department: true, contractor: true, project: true },
-        skip: (page - 1) * pageSize,
+        skip,
         take: pageSize,
-        // Secondary id keeps offset pagination stable when createdAt ties (bulk seed).
-        orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
+        orderBy,
       }),
       this.prisma.user.count({ where }),
     ]);
 
     const items = await Promise.all(rawItems.map((u) => this.withFaceUrl(u)));
-    return { items, total, page, pageSize };
+    const nextCursor = items.length > 0 ? items[items.length - 1]!.id : null;
+    return { items, total, page, pageSize, nextCursor };
   }
 
   async findIds(
     query: UsersIdsQueryDto,
     scopeFilter?: { projectId?: string | { in: string[] } },
   ) {
+    const page = query.page ?? 1;
+    const pageSize = Math.min(query.pageSize ?? 500, 2000);
     const where = this.buildWhere(query, scopeFilter);
     const [rows, total] = await Promise.all([
       this.prisma.user.findMany({
         where,
         select: { id: true },
         orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
+        skip: (page - 1) * pageSize,
+        take: pageSize,
       }),
       this.prisma.user.count({ where }),
     ]);
-    return { ids: rows.map((r) => r.id), total };
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+    return {
+      ids: rows.map((r) => r.id),
+      total,
+      page,
+      pageSize,
+      totalPages,
+      hasMore: page < totalPages,
+    };
   }
 
   async findOne(id: string) {

@@ -333,13 +333,31 @@ export default function ReportsPage() {
   const departments = departmentsQuery.data ?? [];
 
   // Each tab only fetches when active; results stay cached on revisit.
+  const debouncedTimesheetSearch = useDebouncedValue(timesheetSearch, 300);
+  const debouncedWeeklySearch = useDebouncedValue(weeklySearch, 300);
+
   const summaryQuery = useQuery({
-    queryKey: queryKeys.attendanceSummary(applied),
+    queryKey: queryKeys.attendanceSummary({
+      ...applied,
+      timesheetPage,
+      timesheetSearch: debouncedTimesheetSearch,
+      timesheetSort,
+      timesheetLate,
+      timesheetEarlyArrival,
+      timesheetOt,
+    }),
     queryFn: () =>
       getAttendanceSummary({
         from: applied.from,
         to: applied.to,
         departmentId: applied.departmentId || undefined,
+        page: tab === 'summary' ? timesheetPage : 1,
+        pageSize: tab === 'summary' ? TIMESHEET_PAGE_SIZE : 1,
+        search: tab === 'summary' ? debouncedTimesheetSearch.trim() || undefined : undefined,
+        sort: tab === 'summary' ? timesheetSort : 'name',
+        hasLate: tab === 'summary' ? triToBool(timesheetLate) : undefined,
+        hasEarlyArrival: tab === 'summary' ? triToBool(timesheetEarlyArrival) : undefined,
+        hasOt: tab === 'summary' ? triToBool(timesheetOt) : undefined,
       }),
     enabled: tab === 'stats' || tab === 'summary',
     refetchInterval: tab === 'stats' || tab === 'summary' ? 30_000 : false,
@@ -348,11 +366,27 @@ export default function ReportsPage() {
   const summary = summaryQuery.data ?? null;
 
   const weeklyQuery = useQuery({
-    queryKey: queryKeys.weeklyTimesheet({ weekStart, departmentId: applied.departmentId }),
+    queryKey: queryKeys.weeklyTimesheet({
+      weekStart,
+      departmentId: applied.departmentId,
+      weeklyPage,
+      weeklySearch: debouncedWeeklySearch,
+      weeklyStatus,
+      weeklyLate,
+      weeklyEarlyArrival,
+      weeklyOt,
+    }),
     queryFn: () =>
       getWeeklyTimesheet({
         weekStart,
         departmentId: applied.departmentId || undefined,
+        page: weeklyPage,
+        pageSize: WEEKLY_PAGE_SIZE,
+        search: debouncedWeeklySearch.trim() || undefined,
+        status: weeklyStatus || undefined,
+        hasLate: triToBool(weeklyLate),
+        hasEarlyArrival: triToBool(weeklyEarlyArrival),
+        hasOt: triToBool(weeklyOt),
       }),
     enabled: tab === 'stats',
     refetchInterval: tab === 'stats' ? 30_000 : false,
@@ -390,23 +424,6 @@ export default function ReportsPage() {
   const recordsTotal = recordsQuery.data?.total ?? 0;
   const recordsTotalPages = Math.max(1, recordsQuery.data?.totalPages ?? 1);
   const recordsCurrentPage = Math.min(recordsPage, recordsTotalPages);
-
-  const detailWeeklyQuery = useQuery({
-    queryKey: queryKeys.weeklyTimesheet({
-      from: matrixRange.from,
-      to: matrixRange.to,
-      departmentId: matrixDeptId,
-      scope: 'detail-matrix',
-    }),
-    queryFn: () =>
-      getWeeklyTimesheet({
-        from: matrixRange.from,
-        to: matrixRange.to,
-        departmentId: matrixDeptId || undefined,
-      }),
-    enabled: tab === 'detail',
-  });
-  const detailWeekly = detailWeeklyQuery.data ?? null;
 
   const logsQuery = useQuery({
     queryKey: queryKeys.accessLogs({
@@ -450,14 +467,12 @@ export default function ReportsPage() {
     void queryClient.invalidateQueries({ queryKey: queryKeys.accessLogs() });
   }, [lastEvent, tab, queryClient]);
 
-  const statsLoading = summaryQuery.isLoading;
-  const statsError = errMsg(summaryQuery.error, 'Không tải được thống kê');
+  const statsLoading = summaryQuery.isLoading || weeklyQuery.isLoading;
+  const statsError = errMsg(summaryQuery.error ?? weeklyQuery.error, 'Không tải được thống kê');
   const weeklyLoading = weeklyQuery.isLoading;
   const weeklyError = errMsg(weeklyQuery.error, 'Không tải được bảng tuần');
   const detailLoading = recordsQuery.isLoading;
   const detailError = exportError ?? errMsg(recordsQuery.error, 'Không tải được báo cáo');
-  const matrixLoading = detailWeeklyQuery.isLoading;
-  const matrixError = errMsg(detailWeeklyQuery.error, 'Không tải được bảng 30 ngày');
   const logsLoading = logsQuery.isLoading;
   const logsError = errMsg(logsQuery.error, 'Không tải được log ra vào');
 
@@ -469,9 +484,6 @@ export default function ReportsPage() {
   }
   function loadDetail() {
     void recordsQuery.refetch();
-  }
-  function loadMatrix() {
-    void detailWeeklyQuery.refetch();
   }
   function loadLogs() {
     void logsQuery.refetch();
@@ -592,22 +604,22 @@ export default function ReportsPage() {
     ];
   }, [summary]);
 
-  const weeklyGroups = useMemo(() => {
-    const q = weeklySearch.trim().toLowerCase();
-    const filtered = (weekly?.rows ?? []).filter((row) => {
-      if (q) {
-        const hay = `${row.fullName} ${row.employeeCode} ${row.departmentName ?? ''} ${row.shiftName ?? ''} ${row.shiftCode ?? ''}`.toLowerCase();
-        if (!hay.includes(q)) return false;
-      }
-      if (weeklyStatus && row.status !== weeklyStatus) return false;
-      if (!matchesTri(weeklyLate, row.lateMinutes > 0)) return false;
-      if (!matchesTri(weeklyEarlyArrival, (row.earlyArrivalMinutes ?? 0) > 0)) return false;
-      if (!matchesTri(weeklyOt, row.otMinutes > 0)) return false;
-      return true;
-    });
+  useEffect(() => {
+    setTimesheetPage(1);
+  }, [
+    debouncedTimesheetSearch,
+    timesheetSort,
+    timesheetLate,
+    timesheetEarlyArrival,
+    timesheetOt,
+    applied.from,
+    applied.to,
+    applied.departmentId,
+  ]);
 
+  const weeklyGroups = useMemo(() => {
     const map = new Map<string, { fullName: string; employeeCode: string; rows: WeeklyRow[] }>();
-    for (const row of filtered) {
+    for (const row of weekly?.rows ?? []) {
       let group = map.get(row.userId);
       if (!group) {
         group = { fullName: row.fullName, employeeCode: row.employeeCode, rows: [] };
@@ -616,72 +628,21 @@ export default function ReportsPage() {
       group.rows.push(row);
     }
     return Array.from(map.values());
-  }, [
-    weekly,
-    weeklySearch,
-    weeklyStatus,
-    weeklyLate,
-    weeklyEarlyArrival,
-    weeklyOt,
-  ]);
+  }, [weekly?.rows]);
 
-  const weeklyFilteredCount = useMemo(
-    () => weeklyGroups.reduce((n, g) => n + g.rows.length, 0),
-    [weeklyGroups],
-  );
-
-  const weeklyTotalPages = Math.max(1, Math.ceil(weeklyGroups.length / WEEKLY_PAGE_SIZE));
+  const weeklyFilteredCount = weekly?.rows?.length ?? 0;
+  const weeklyTotalPages = weekly?.totalPages ?? 1;
   const weeklyCurrentPage = Math.min(weeklyPage, weeklyTotalPages);
-  const pagedWeeklyGroups = useMemo(
-    () =>
-      weeklyGroups.slice(
-        (weeklyCurrentPage - 1) * WEEKLY_PAGE_SIZE,
-        weeklyCurrentPage * WEEKLY_PAGE_SIZE,
-      ),
-    [weeklyGroups, weeklyCurrentPage],
-  );
+  const pagedWeeklyGroups = weeklyGroups;
 
   useEffect(() => {
     setWeeklyPage(1);
-  }, [weeklySearch, weeklyStatus, weeklyLate, weeklyEarlyArrival, weeklyOt, weekStart]);
+  }, [debouncedWeeklySearch, weeklyStatus, weeklyLate, weeklyEarlyArrival, weeklyOt, weekStart]);
 
-  const sortedTimesheet = useMemo(() => {
-    const q = timesheetSearch.trim().toLowerCase();
-    let list = [...(summary?.timesheet ?? [])].filter((t) => {
-      if (q) {
-        const hay = `${t.fullName} ${t.employeeCode} ${t.departmentName ?? ''}`.toLowerCase();
-        if (!hay.includes(q)) return false;
-      }
-      if (!matchesTri(timesheetLate, t.lateCount > 0)) return false;
-      if (!matchesTri(timesheetEarlyArrival, (t.earlyArrivalCount ?? 0) > 0)) return false;
-      if (!matchesTri(timesheetOt, t.otMinutes > 0)) return false;
-      return true;
-    });
-    list.sort((a, b) => {
-      if (timesheetSort === 'least') return a.workedMinutes - b.workedMinutes;
-      if (timesheetSort === 'most') return b.workedMinutes - a.workedMinutes;
-      return a.fullName.localeCompare(b.fullName, 'vi');
-    });
-    return list;
-  }, [
-    summary?.timesheet,
-    timesheetSort,
-    timesheetSearch,
-    timesheetLate,
-    timesheetEarlyArrival,
-    timesheetOt,
-  ]);
-
-  const timesheetTotalPages = Math.max(1, Math.ceil(sortedTimesheet.length / TIMESHEET_PAGE_SIZE));
+  const timesheetRows = summary?.timesheet ?? [];
+  const timesheetTotalPages = summary?.timesheetTotalPages ?? 1;
   const timesheetCurrentPage = Math.min(timesheetPage, timesheetTotalPages);
-  const pagedTimesheet = useMemo(
-    () =>
-      sortedTimesheet.slice(
-        (timesheetCurrentPage - 1) * TIMESHEET_PAGE_SIZE,
-        timesheetCurrentPage * TIMESHEET_PAGE_SIZE,
-      ),
-    [sortedTimesheet, timesheetCurrentPage],
-  );
+  const pagedTimesheet = timesheetRows;
 
   useEffect(() => {
     setTimesheetPage(1);
@@ -987,7 +948,7 @@ export default function ReportsPage() {
               <TablePager
                 currentPage={weeklyCurrentPage}
                 totalPages={weeklyTotalPages}
-                total={weeklyGroups.length}
+                total={weekly?.totalUsers ?? weeklyGroups.length}
                 unit="nhân viên"
                 onPageChange={setWeeklyPage}
               />
@@ -998,7 +959,7 @@ export default function ReportsPage() {
         {/* ═══ TAB: TỔNG HỢP ═══ */}
         <TabsContent value="summary" className="space-y-6">
           <DesignCard
-            title={`Bảng tổng hợp công (${sortedTimesheet.length})`}
+            title={`Bảng tổng hợp công (${summary?.timesheetTotal ?? timesheetRows.length})`}
             description="Tổng hợp công theo từng nhân viên trong khoảng thời gian đã chọn. Giờ làm cập nhật liên tục kể cả khi chưa check-out."
             actions={
               <div className="w-[180px]">
@@ -1058,7 +1019,7 @@ export default function ReportsPage() {
             <QueryBoundary
               isLoading={statsLoading}
               error={statsError}
-              isEmpty={sortedTimesheet.length === 0}
+              isEmpty={timesheetRows.length === 0}
               onRetry={() => loadSummary()}
               emptyTitle="Chưa có dữ liệu"
               emptyDescription="Chọn khoảng thời gian khác hoặc nới bộ lọc bảng tổng hợp."
@@ -1113,7 +1074,7 @@ export default function ReportsPage() {
               <TablePager
                 currentPage={timesheetCurrentPage}
                 totalPages={timesheetTotalPages}
-                total={sortedTimesheet.length}
+                total={summary?.timesheetTotal ?? timesheetRows.length}
                 unit="nhân viên"
                 onPageChange={setTimesheetPage}
               />
@@ -1329,15 +1290,11 @@ export default function ReportsPage() {
           </DesignCard>
 
           <EmployeeWeekMatrix
-            rows={detailWeekly?.rows ?? []}
             rangeFrom={matrixRange.from}
             rangeTo={matrixRange.to}
             departments={departments}
             departmentId={matrixDeptId}
             onDepartmentChange={setMatrixDeptId}
-            isLoading={matrixLoading}
-            error={matrixError}
-            onRetry={loadMatrix}
           />
         </TabsContent>
 

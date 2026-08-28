@@ -125,8 +125,17 @@ async function fetchAllUserIds(params: {
   projectId: string;
   contractorId?: string;
 }): Promise<string[]> {
-  const result = await getUserIds(params);
-  return result.ids;
+  const out: string[] = [];
+  let page = 1;
+  const pageSize = 2000;
+  while (true) {
+    const result = await getUserIds({ ...params, page, pageSize });
+    out.push(...result.ids);
+    if (!result.hasMore) break;
+    page += 1;
+    if (page > 100) break;
+  }
+  return out;
 }
 
 function ProjectNode({

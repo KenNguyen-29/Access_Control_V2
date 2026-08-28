@@ -17,6 +17,11 @@ export class PaginationDto {
   @Min(1)
   pageSize?: number = 20;
 
+  @ApiPropertyOptional({ description: 'Keyset cursor (user id) for stable deep pagination' })
+  @IsOptional()
+  @IsString()
+  cursor?: string;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()

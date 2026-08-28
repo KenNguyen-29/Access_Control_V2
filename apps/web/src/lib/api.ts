@@ -583,6 +583,31 @@ export async function deleteProject(id: string) {
 export async function getUsers(params?: {
   page?: number;
   pageSize?: number;
+  cursor?: string;
+  search?: string;
+  departmentId?: string;
+  contractorId?: string;
+  projectId?: string;
+  withoutActiveShift?: boolean;
+}) {
+  const q = new URLSearchParams();
+  if (params?.page) q.set('page', String(params.page));
+  if (params?.pageSize) q.set('pageSize', String(params.pageSize));
+  if (params?.cursor) q.set('cursor', params.cursor);
+  if (params?.search) q.set('search', params.search);
+  if (params?.departmentId) q.set('departmentId', params.departmentId);
+  if (params?.contractorId) q.set('contractorId', params.contractorId);
+  if (params?.projectId) q.set('projectId', params.projectId);
+  if (params?.withoutActiveShift) q.set('withoutActiveShift', 'true');
+  const qs = q.toString();
+  return apiRequest<PaginatedData<User> & { nextCursor?: string | null }>(
+    `/users${qs ? `?${qs}` : ''}`,
+  );
+}
+
+export async function getUserIds(params?: {
+  page?: number;
+  pageSize?: number;
   search?: string;
   departmentId?: string;
   contractorId?: string;
@@ -598,24 +623,14 @@ export async function getUsers(params?: {
   if (params?.projectId) q.set('projectId', params.projectId);
   if (params?.withoutActiveShift) q.set('withoutActiveShift', 'true');
   const qs = q.toString();
-  return apiRequest<PaginatedData<User>>(`/users${qs ? `?${qs}` : ''}`);
-}
-
-export async function getUserIds(params?: {
-  search?: string;
-  departmentId?: string;
-  contractorId?: string;
-  projectId?: string;
-  withoutActiveShift?: boolean;
-}) {
-  const q = new URLSearchParams();
-  if (params?.search) q.set('search', params.search);
-  if (params?.departmentId) q.set('departmentId', params.departmentId);
-  if (params?.contractorId) q.set('contractorId', params.contractorId);
-  if (params?.projectId) q.set('projectId', params.projectId);
-  if (params?.withoutActiveShift) q.set('withoutActiveShift', 'true');
-  const qs = q.toString();
-  return apiRequest<{ ids: string[]; total: number }>(`/users/ids${qs ? `?${qs}` : ''}`);
+  return apiRequest<{
+    ids: string[];
+    total: number;
+    page?: number;
+    pageSize?: number;
+    totalPages?: number;
+    hasMore?: boolean;
+  }>(`/users/ids${qs ? `?${qs}` : ''}`);
 }
 
 export async function createUser(data: Partial<User> & { employeeCode?: string; fullName: string }) {
@@ -1113,11 +1128,6 @@ export type TimesheetRow = {
   otMinutes: number;
 };
 
-export type AttendanceSummary = {
-  summary: AttendanceSummaryTotals;
-  timesheet: TimesheetRow[];
-};
-
 export type WeeklyRow = {
   userId: string;
   fullName: string;
@@ -1142,35 +1152,82 @@ export type WeeklyRow = {
   checkOutSnapshotUrl?: string | null;
 };
 
+export type AttendanceSummary = {
+  summary: AttendanceSummaryTotals;
+  timesheet: TimesheetRow[];
+  timesheetTotal?: number;
+  timesheetPage?: number;
+  timesheetPageSize?: number;
+  timesheetTotalPages?: number;
+};
+
 export type WeeklyTimesheet = {
   weekStart: string;
   weekEnd: string;
   rows: WeeklyRow[];
+  totalUsers?: number;
+  page?: number;
+  pageSize?: number;
+  totalPages?: number;
 };
 
-export async function getAttendanceSummary(params: {
-  from: string;
-  to: string;
-  departmentId?: string;
-}) {
+type TimesheetListParams = {
+  page?: number;
+  pageSize?: number;
+  search?: string;
+  sort?: 'name' | 'least' | 'most';
+  hasLate?: boolean;
+  hasEarlyArrival?: boolean;
+  hasOt?: boolean;
+  status?: string;
+};
+
+export async function getAttendanceSummary(
+  params: {
+    from: string;
+    to: string;
+    departmentId?: string;
+  } & TimesheetListParams,
+) {
   const q = new URLSearchParams();
   q.set('from', params.from);
   q.set('to', params.to);
   if (params.departmentId) q.set('departmentId', params.departmentId);
+  if (params.page) q.set('page', String(params.page));
+  if (params.pageSize) q.set('pageSize', String(params.pageSize));
+  if (params.search) q.set('search', params.search);
+  if (params.sort) q.set('sort', params.sort);
+  if (params.hasLate !== undefined) q.set('hasLate', String(params.hasLate));
+  if (params.hasEarlyArrival !== undefined) {
+    q.set('hasEarlyArrival', String(params.hasEarlyArrival));
+  }
+  if (params.hasOt !== undefined) q.set('hasOt', String(params.hasOt));
   return apiRequest<AttendanceSummary>(`/stats/attendance-summary?${q.toString()}`);
 }
 
-export async function getWeeklyTimesheet(params: {
-  weekStart?: string;
-  from?: string;
-  to?: string;
-  departmentId?: string;
-}) {
+export async function getWeeklyTimesheet(
+  params: {
+    weekStart?: string;
+    from?: string;
+    to?: string;
+    departmentId?: string;
+  } & TimesheetListParams,
+) {
   const q = new URLSearchParams();
   if (params.weekStart) q.set('weekStart', params.weekStart);
   if (params.from) q.set('from', params.from);
   if (params.to) q.set('to', params.to);
   if (params.departmentId) q.set('departmentId', params.departmentId);
+  if (params.page) q.set('page', String(params.page));
+  if (params.pageSize) q.set('pageSize', String(params.pageSize));
+  if (params.search) q.set('search', params.search);
+  if (params.sort) q.set('sort', params.sort);
+  if (params.status) q.set('status', params.status);
+  if (params.hasLate !== undefined) q.set('hasLate', String(params.hasLate));
+  if (params.hasEarlyArrival !== undefined) {
+    q.set('hasEarlyArrival', String(params.hasEarlyArrival));
+  }
+  if (params.hasOt !== undefined) q.set('hasOt', String(params.hasOt));
   return apiRequest<WeeklyTimesheet>(`/stats/weekly-timesheet?${q.toString()}`);
 }
 

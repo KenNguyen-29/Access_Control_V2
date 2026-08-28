@@ -1,8 +1,14 @@
 import { Injectable } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AttendanceCalculationService } from '../attendance/attendance-calculation.service';
 import { attachPunchLocations } from '../attendance/punch-location.util';
 import { StorageService } from '../storage/storage.service';
+import {
+  buildUserSearchSql,
+  workedMinutesSql,
+  type AttendanceUserScope,
+} from './stats-attendance.util';
 
 export interface StatsOverview {
   users: number;
@@ -83,6 +89,10 @@ export interface TimesheetRow {
 export interface AttendanceSummary {
   summary: AttendanceSummaryTotals;
   timesheet: TimesheetRow[];
+  timesheetTotal: number;
+  timesheetPage: number;
+  timesheetPageSize: number;
+  timesheetTotalPages: number;
 }
 
 export interface WeeklyRow {
@@ -116,7 +126,25 @@ export interface WeeklyTimesheet {
   weekStart: string;
   weekEnd: string;
   rows: WeeklyRow[];
+  totalUsers: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
 }
+
+type TimesheetListParams = {
+  page?: number;
+  pageSize?: number;
+  search?: string;
+  sort?: 'name' | 'least' | 'most';
+  hasLate?: boolean;
+  hasEarlyArrival?: boolean;
+  hasOt?: boolean;
+};
+
+type WeeklyListParams = TimesheetListParams & {
+  status?: string;
+};
 
 function formatDateOnly(d: Date): string {
   const y = d.getUTCFullYear();
@@ -152,17 +180,377 @@ export class StatsService {
     private readonly storage: StorageService,
   ) {}
 
-  private async resolveSnapshotUrl(path: string | null | undefined): Promise<string | null> {
+  private resolveSnapshotUrl(path: string | null | undefined): string | null {
     if (!path?.trim()) return null;
-    try {
-      return await this.storage.getAssetUrl(path, { forBrowser: true });
-    } catch {
-      try {
-        return await this.storage.getSignedUrl(path);
-      } catch {
-        return null;
+    const normalized = path.replace(/\\/g, '/');
+    if (normalized.startsWith('snapshots/') || normalized.startsWith('face-images/')) {
+      return this.storage.getBrowserFileUrl(normalized);
+    }
+    return null;
+  }
+
+  private userScopeSql(scope: AttendanceUserScope): Prisma.Sql {
+    const parts: Prisma.Sql[] = [];
+    if (scope.departmentId) {
+      parts.push(Prisma.sql`AND u."departmentId" = ${scope.departmentId}`);
+    }
+    if (scope.contractorId) {
+      parts.push(Prisma.sql`AND u."contractorId" = ${scope.contractorId}`);
+    }
+    if (scope.projectId) {
+      parts.push(Prisma.sql`AND u."projectId" = ${scope.projectId}`);
+    }
+    if (parts.length === 0) return Prisma.empty;
+    return Prisma.join(parts, ' ');
+  }
+
+  private triFlagSql(
+    column: 'has_late' | 'has_ot',
+    value: boolean | undefined,
+  ): Prisma.Sql {
+    if (value === true) {
+      return column === 'has_late'
+        ? Prisma.sql`AND uf.has_late = true`
+        : Prisma.sql`AND uf.has_ot = true`;
+    }
+    if (value === false) {
+      return column === 'has_late'
+        ? Prisma.sql`AND uf.has_late = false`
+        : Prisma.sql`AND uf.has_ot = false`;
+    }
+    return Prisma.empty;
+  }
+
+  private timesheetOrderSql(sort: 'name' | 'least' | 'most' = 'name'): Prisma.Sql {
+    if (sort === 'least') {
+      return Prisma.sql`ORDER BY worked_minutes ASC, full_name ASC`;
+    }
+    if (sort === 'most') {
+      return Prisma.sql`ORDER BY worked_minutes DESC, full_name ASC`;
+    }
+    return Prisma.sql`ORDER BY full_name ASC`;
+  }
+
+  private async countAttendanceUsers(
+    from: Date,
+    toExclusive: Date,
+    scope: AttendanceUserScope,
+    search?: string,
+    flags?: {
+      hasLate?: boolean;
+      hasOt?: boolean;
+      status?: string;
+    },
+  ): Promise<number> {
+    const worked = workedMinutesSql('ar');
+  const rows = await this.prisma.$queryRaw<Array<{ count: number }>>(
+      Prisma.sql`
+        WITH scoped AS (
+          SELECT
+            ar."userId",
+            u."fullName" AS full_name,
+            ar."lateMinutes",
+            ar."otMinutes",
+            ar.status,
+            ${worked} AS worked_minutes
+          FROM attendance_records ar
+          INNER JOIN users u ON u.id = ar."userId"
+          WHERE ar."workShiftId" IS NOT NULL
+            AND ar.date >= ${from}
+            AND ar.date < ${toExclusive}
+            AND u."isDeleted" = false
+            ${this.userScopeSql(scope)}
+            ${buildUserSearchSql(search)}
+        ),
+        user_flags AS (
+          SELECT
+            "userId",
+            MAX(full_name) AS full_name,
+            BOOL_OR("lateMinutes" > 0 OR status = 'LATE') AS has_late,
+            BOOL_OR("otMinutes" > 0 OR status = 'OVERTIME') AS has_ot,
+            COALESCE(SUM(worked_minutes), 0)::int AS worked_minutes
+          FROM scoped
+          GROUP BY "userId"
+        )
+        SELECT COUNT(*)::int AS count
+        FROM user_flags uf
+        WHERE 1 = 1
+          ${flags?.status ? Prisma.sql`AND EXISTS (
+            SELECT 1 FROM scoped s
+            WHERE s."userId" = uf."userId" AND s.status = ${flags.status}
+          )` : Prisma.empty}
+          ${this.triFlagSql('has_late', flags?.hasLate)}
+          ${this.triFlagSql('has_ot', flags?.hasOt)}
+      `,
+    );
+    return rows[0]?.count ?? 0;
+  }
+
+  private async listAttendanceUserIds(
+    from: Date,
+    toExclusive: Date,
+    scope: AttendanceUserScope,
+    list: TimesheetListParams & { status?: string },
+  ): Promise<{ userIds: string[]; totalUsers: number }> {
+    const page = list.page ?? 1;
+    const pageSize = list.pageSize ?? 10;
+    const skip = (page - 1) * pageSize;
+    const worked = workedMinutesSql('ar');
+
+    const totalUsers = await this.countAttendanceUsers(from, toExclusive, scope, list.search, {
+      hasLate: list.hasLate,
+      hasOt: list.hasOt,
+      status: list.status,
+    });
+
+    if (totalUsers === 0) {
+      return { userIds: [], totalUsers: 0 };
+    }
+
+    const rows = await this.prisma.$queryRaw<Array<{ userId: string }>>(
+      Prisma.sql`
+        WITH scoped AS (
+          SELECT
+            ar."userId",
+            u."fullName" AS full_name,
+            ar."lateMinutes",
+            ar."otMinutes",
+            ar.status,
+            ${worked} AS worked_minutes
+          FROM attendance_records ar
+          INNER JOIN users u ON u.id = ar."userId"
+          WHERE ar."workShiftId" IS NOT NULL
+            AND ar.date >= ${from}
+            AND ar.date < ${toExclusive}
+            AND u."isDeleted" = false
+            ${this.userScopeSql(scope)}
+            ${buildUserSearchSql(list.search)}
+        ),
+        user_flags AS (
+          SELECT
+            "userId",
+            MAX(full_name) AS full_name,
+            BOOL_OR("lateMinutes" > 0 OR status = 'LATE') AS has_late,
+            BOOL_OR("otMinutes" > 0 OR status = 'OVERTIME') AS has_ot,
+            COALESCE(SUM(worked_minutes), 0)::int AS worked_minutes
+          FROM scoped
+          GROUP BY "userId"
+        )
+        SELECT uf."userId"
+        FROM user_flags uf
+        WHERE 1 = 1
+          ${list.status ? Prisma.sql`AND EXISTS (
+            SELECT 1 FROM scoped s
+            WHERE s."userId" = uf."userId" AND s.status = ${list.status}
+          )` : Prisma.empty}
+          ${this.triFlagSql('has_late', list.hasLate)}
+          ${this.triFlagSql('has_ot', list.hasOt)}
+        ${this.timesheetOrderSql(list.sort)}
+        LIMIT ${pageSize} OFFSET ${skip}
+      `,
+    );
+
+    return { userIds: rows.map((r) => r.userId), totalUsers };
+  }
+
+  private async computeEarlyArrivalCounts(
+    userIds: string[],
+    from: Date,
+    toExclusive: Date,
+  ): Promise<Map<string, number>> {
+    if (userIds.length === 0) return new Map();
+
+    const records = await this.prisma.attendanceRecord.findMany({
+      where: {
+        userId: { in: userIds },
+        workShiftId: { not: null },
+        date: { gte: from, lt: toExclusive },
+        checkInAt: { not: null },
+      },
+      select: {
+        userId: true,
+        checkInAt: true,
+        workShift: {
+          select: {
+            startTime: true,
+            endTime: true,
+            isOvernight: true,
+            gracePeriodMinutes: true,
+          },
+        },
+      },
+    });
+
+    const policy = await this.calc.getPolicyOptions();
+    const out = new Map<string, number>();
+    for (const r of records) {
+      if (!r.workShift || !r.checkInAt) continue;
+      const effective = this.calc.applyLateGraceFloor(r.workShift, policy.lateGraceFloor);
+      if (this.calc.computeEarlyArrivalMinutes(r.checkInAt, effective) > 0) {
+        out.set(r.userId, (out.get(r.userId) ?? 0) + 1);
       }
     }
+    return out;
+  }
+
+  private filterUserIdsByEarlyArrival(
+    userIds: string[],
+    earlyCounts: Map<string, number>,
+    hasEarlyArrival?: boolean,
+  ): string[] {
+    if (hasEarlyArrival === undefined) return userIds;
+    return userIds.filter((id) => {
+      const count = earlyCounts.get(id) ?? 0;
+      return hasEarlyArrival ? count > 0 : count === 0;
+    });
+  }
+
+  private async aggregateAttendanceSummary(
+    from: Date,
+    toExclusive: Date,
+    scope: AttendanceUserScope,
+  ): Promise<AttendanceSummaryTotals> {
+    const worked = workedMinutesSql('ar');
+    const rows = await this.prisma.$queryRaw<
+      Array<{
+        total_records: number;
+        staff_count: number;
+        present_count: number;
+        late_count: number;
+        early_leave_count: number;
+        absent_count: number;
+        ot_minutes: number;
+        worked_minutes: number;
+      }>
+    >(
+      Prisma.sql`
+        SELECT
+          COUNT(*)::int AS total_records,
+          COUNT(DISTINCT ar."userId")::int AS staff_count,
+          COUNT(*) FILTER (
+            WHERE ar."checkInAt" IS NOT NULL AND ar.status <> 'ABSENT'
+          )::int AS present_count,
+          COUNT(*) FILTER (
+            WHERE ar."lateMinutes" > 0 OR ar.status = 'LATE'
+          )::int AS late_count,
+          COUNT(*) FILTER (
+            WHERE ar."earlyLeaveMinutes" > 0 OR ar.status = 'EARLY_LEAVE'
+          )::int AS early_leave_count,
+          COUNT(*) FILTER (WHERE ar.status = 'ABSENT')::int AS absent_count,
+          COALESCE(SUM(ar."otMinutes"), 0)::int AS ot_minutes,
+          COALESCE(SUM(${worked}), 0)::int AS worked_minutes
+        FROM attendance_records ar
+        INNER JOIN users u ON u.id = ar."userId"
+        WHERE ar."workShiftId" IS NOT NULL
+          AND ar.date >= ${from}
+          AND ar.date < ${toExclusive}
+          AND u."isDeleted" = false
+          ${this.userScopeSql(scope)}
+      `,
+    );
+
+    const row = rows[0];
+    return {
+      totalRecords: row?.total_records ?? 0,
+      staffCount: row?.staff_count ?? 0,
+      presentCount: row?.present_count ?? 0,
+      lateCount: row?.late_count ?? 0,
+      earlyLeaveCount: row?.early_leave_count ?? 0,
+      absentCount: row?.absent_count ?? 0,
+      otMinutes: row?.ot_minutes ?? 0,
+      workedMinutes: row?.worked_minutes ?? 0,
+    };
+  }
+
+  private async aggregateTimesheetPage(
+    from: Date,
+    toExclusive: Date,
+    scope: AttendanceUserScope,
+    list: TimesheetListParams,
+  ): Promise<{ rows: TimesheetRow[]; total: number }> {
+    const page = list.page ?? 1;
+    const pageSize = list.pageSize ?? 10;
+
+    let { userIds, totalUsers } = await this.listAttendanceUserIds(from, toExclusive, scope, list);
+
+    const earlyCounts = await this.computeEarlyArrivalCounts(userIds, from, toExclusive);
+    userIds = this.filterUserIdsByEarlyArrival(userIds, earlyCounts, list.hasEarlyArrival);
+
+    if (list.hasEarlyArrival !== undefined && userIds.length < pageSize) {
+      totalUsers = await this.countAttendanceUsers(from, toExclusive, scope, list.search, {
+        hasLate: list.hasLate,
+        hasOt: list.hasOt,
+      });
+      const filteredTotal = [...earlyCounts.entries()].filter(([id, count]) => {
+        if (list.hasEarlyArrival) return count > 0;
+        return count === 0;
+      }).length;
+      totalUsers = Math.min(totalUsers, filteredTotal);
+    }
+
+    if (userIds.length === 0) {
+      return { rows: [], total: totalUsers };
+    }
+
+    const worked = workedMinutesSql('ar');
+    const aggRows = await this.prisma.$queryRaw<
+      Array<{
+        userId: string;
+        full_name: string;
+        employee_code: string;
+        department_name: string | null;
+        days_worked: number;
+        worked_minutes: number;
+        late_count: number;
+        early_count: number;
+        ot_minutes: number;
+      }>
+    >(
+      Prisma.sql`
+        SELECT
+          ar."userId",
+          u."fullName" AS full_name,
+          u."employeeCode" AS employee_code,
+          d.name AS department_name,
+          COUNT(*) FILTER (
+            WHERE ar."checkInAt" IS NOT NULL AND ar.status <> 'ABSENT'
+          )::int AS days_worked,
+          COALESCE(SUM(${worked}), 0)::int AS worked_minutes,
+          COUNT(*) FILTER (
+            WHERE ar."lateMinutes" > 0 OR ar.status = 'LATE'
+          )::int AS late_count,
+          COUNT(*) FILTER (
+            WHERE ar."earlyLeaveMinutes" > 0 OR ar.status = 'EARLY_LEAVE'
+          )::int AS early_count,
+          COALESCE(SUM(ar."otMinutes"), 0)::int AS ot_minutes
+        FROM attendance_records ar
+        INNER JOIN users u ON u.id = ar."userId"
+        LEFT JOIN departments d ON d.id = u."departmentId"
+        WHERE ar."workShiftId" IS NOT NULL
+          AND ar.date >= ${from}
+          AND ar.date < ${toExclusive}
+          AND ar."userId" IN (${Prisma.join(userIds)})
+        GROUP BY ar."userId", u."fullName", u."employeeCode", d.name
+      `,
+    );
+
+    const orderIndex = new Map(userIds.map((id, i) => [id, i]));
+    const rows: TimesheetRow[] = aggRows
+      .sort((a, b) => (orderIndex.get(a.userId) ?? 0) - (orderIndex.get(b.userId) ?? 0))
+      .map((r) => ({
+        userId: r.userId,
+        fullName: r.full_name,
+        employeeCode: r.employee_code,
+        departmentName: r.department_name,
+        daysWorked: r.days_worked,
+        workedMinutes: r.worked_minutes,
+        lateCount: r.late_count,
+        earlyArrivalCount: earlyCounts.get(r.userId) ?? 0,
+        earlyCount: r.early_count,
+        otMinutes: r.ot_minutes,
+      }));
+
+    return { rows, total: totalUsers };
   }
 
   async overview(projectIds?: string[]): Promise<StatsOverview> {
@@ -432,7 +820,7 @@ export class StatsService {
         to: toKey,
         overview,
         zones: emptyZones,
-        traffic7d: this.buildTrafficByDay(rangeStart, rangeEnd, []),
+        traffic7d: this.buildTrafficFromSqlRows(rangeStart, rangeEnd, []),
         periodSummary: { checkIns: 0, checkOuts: 0, invalidEvents: 0 },
       };
     }
@@ -454,7 +842,7 @@ export class StatsService {
       deviceOnlineGroups,
       eventGroups,
       invalidGroups,
-      trafficLogs,
+      trafficDayRows,
       periodCheckIns,
       periodCheckOuts,
       periodInvalidEvents,
@@ -493,14 +881,7 @@ export class StatsService {
         },
         _count: { _all: true },
       }),
-      this.prisma.accessLog.findMany({
-        where: {
-          eventAt: { gte: rangeStart, lt: rangeEndExclusive },
-          action: { in: ['CHECK_IN', 'CHECK_OUT'] },
-          ...logProjectFilter,
-        },
-        select: { eventAt: true, action: true },
-      }),
+      this.fetchTrafficCountsByDay(rangeStart, rangeEndExclusive, logProjectFilter),
       this.prisma.accessLog.count({
         where: {
           eventAt: { gte: rangeStart, lt: rangeEndExclusive },
@@ -558,7 +939,7 @@ export class StatsService {
       to: toKey,
       overview,
       zones,
-      traffic7d: this.buildTrafficByDay(rangeStart, rangeEnd, trafficLogs),
+      traffic7d: this.buildTrafficFromSqlRows(rangeStart, rangeEnd, trafficDayRows),
       periodSummary: {
         checkIns: periodCheckIns,
         checkOuts: periodCheckOuts,
@@ -567,10 +948,31 @@ export class StatsService {
     };
   }
 
-  private buildTrafficByDay(
+  private analyticsUserSql(params: {
+    userId?: string;
+    contractorId?: string;
+    projectId?: string;
+    projectIds?: string[];
+  }): Prisma.Sql {
+    const parts: Prisma.Sql[] = [Prisma.sql`AND u."isDeleted" = false`];
+    if (params.userId) parts.push(Prisma.sql`AND u.id = ${params.userId}`);
+    if (params.contractorId) parts.push(Prisma.sql`AND u."contractorId" = ${params.contractorId}`);
+    if (params.projectId) {
+      parts.push(Prisma.sql`AND u."projectId" = ${params.projectId}`);
+    } else if (params.projectIds !== undefined) {
+      if (params.projectIds.length === 0) {
+        parts.push(Prisma.sql`AND 1 = 0`);
+      } else {
+        parts.push(Prisma.sql`AND u."projectId" IN (${Prisma.join(params.projectIds)})`);
+      }
+    }
+    return Prisma.join(parts, ' ');
+  }
+
+  private buildTrafficFromSqlRows(
     start: Date,
     endInclusive: Date,
-    logs: Array<{ eventAt: Date; action: string }>,
+    rows: Array<{ date: string; check_ins: number; check_outs: number }>,
   ): Array<{ date: string; checkIns: number; checkOuts: number }> {
     const dayMap = new Map<string, { checkIns: number; checkOuts: number }>();
     const cursor = new Date(start);
@@ -581,15 +983,49 @@ export class StatsService {
       dayMap.set(formatLocalDateKey(cursor), { checkIns: 0, checkOuts: 0 });
       cursor.setDate(cursor.getDate() + 1);
     }
-    for (const log of logs) {
-      const local = log.eventAt;
-      const key = formatLocalDateKey(local);
-      const bucket = dayMap.get(key);
+    for (const row of rows) {
+      const bucket = dayMap.get(row.date);
       if (!bucket) continue;
-      if (log.action === 'CHECK_IN') bucket.checkIns += 1;
-      else if (log.action === 'CHECK_OUT') bucket.checkOuts += 1;
+      bucket.checkIns = row.check_ins;
+      bucket.checkOuts = row.check_outs;
     }
     return Array.from(dayMap.entries()).map(([date, v]) => ({ date, ...v }));
+  }
+
+  private async fetchTrafficCountsByDay(
+    from: Date,
+    toExclusive: Date,
+    logProjectFilter: Record<string, unknown>,
+  ): Promise<Array<{ date: string; check_ins: number; check_outs: number }>> {
+    const projectId = logProjectFilter.projectId;
+    let projectSql = Prisma.empty;
+    if (projectId && typeof projectId === 'object' && 'in' in projectId) {
+      const ids = projectId.in as string[];
+      projectSql =
+        ids.length === 0
+          ? Prisma.sql`AND 1 = 0`
+          : Prisma.sql`AND al."projectId" IN (${Prisma.join(ids)})`;
+    } else if (typeof projectId === 'string') {
+      projectSql = Prisma.sql`AND al."projectId" = ${projectId}`;
+    }
+
+    return this.prisma.$queryRaw<
+      Array<{ date: string; check_ins: number; check_outs: number }>
+    >(
+      Prisma.sql`
+        SELECT
+          to_char(al."eventAt"::date, 'YYYY-MM-DD') AS date,
+          COUNT(*) FILTER (WHERE al.action = 'CHECK_IN')::int AS check_ins,
+          COUNT(*) FILTER (WHERE al.action = 'CHECK_OUT')::int AS check_outs
+        FROM access_logs al
+        WHERE al."eventAt" >= ${from}
+          AND al."eventAt" < ${toExclusive}
+          AND al.action IN ('CHECK_IN', 'CHECK_OUT')
+          ${projectSql}
+        GROUP BY 1
+        ORDER BY 1
+      `,
+    );
   }
 
   private buildTraffic7d(
@@ -614,34 +1050,80 @@ export class StatsService {
     return Array.from(dayMap.entries()).map(([date, v]) => ({ date, ...v }));
   }
 
-  async attendanceSummary(params: {
-    from?: string;
-    to?: string;
-    departmentId?: string;
-    contractorId?: string;
-    projectId?: string;
-  }): Promise<AttendanceSummary> {
+  async attendanceSummary(
+    params: {
+      from?: string;
+      to?: string;
+      departmentId?: string;
+      contractorId?: string;
+      projectId?: string;
+    } & TimesheetListParams,
+  ): Promise<AttendanceSummary> {
     const now = new Date();
     const defaultFrom = new Date(Date.UTC(now.getFullYear(), now.getMonth(), 1));
     const from = parseDateOnly(params.from ?? '', defaultFrom);
     const toBase = parseDateOnly(params.to ?? '', now);
-    const to = new Date(toBase);
-    to.setUTCDate(to.getUTCDate() + 1);
+    const toExclusive = new Date(toBase);
+    toExclusive.setUTCDate(toExclusive.getUTCDate() + 1);
 
-    const asOf = new Date();
+    const scope: AttendanceUserScope = {
+      departmentId: params.departmentId,
+      contractorId: params.contractorId,
+      projectId: params.projectId,
+    };
+
+    const page = params.page ?? 1;
+    const pageSize = params.pageSize ?? 10;
+
+    const [summary, timesheetPage] = await Promise.all([
+      this.aggregateAttendanceSummary(from, toExclusive, scope),
+      this.aggregateTimesheetPage(from, toExclusive, scope, params),
+    ]);
+
+    const totalPages = Math.max(1, Math.ceil(timesheetPage.total / pageSize));
+
+    return {
+      summary,
+      timesheet: timesheetPage.rows,
+      timesheetTotal: timesheetPage.total,
+      timesheetPage: Math.min(page, totalPages),
+      timesheetPageSize: pageSize,
+      timesheetTotalPages: totalPages,
+    };
+  }
+
+  private async buildWeeklyRows(
+    rangeStart: Date,
+    rangeEndExclusive: Date,
+    scope: AttendanceUserScope,
+    list: WeeklyListParams,
+  ): Promise<{ rows: WeeklyRow[]; totalUsers: number; page: number; pageSize: number }> {
+    const page = list.page ?? 1;
+    const pageSize = list.pageSize ?? 10;
+
+    let { userIds, totalUsers } = await this.listAttendanceUserIds(
+      rangeStart,
+      rangeEndExclusive,
+      scope,
+      list,
+    );
+
+    const earlyCounts = await this.computeEarlyArrivalCounts(
+      userIds,
+      rangeStart,
+      rangeEndExclusive,
+    );
+    userIds = this.filterUserIdsByEarlyArrival(userIds, earlyCounts, list.hasEarlyArrival);
+
+    if (userIds.length === 0) {
+      return { rows: [], totalUsers, page, pageSize };
+    }
+
     const records = await this.prisma.attendanceRecord.findMany({
       where: {
+        userId: { in: userIds },
         workShiftId: { not: null },
-        date: { gte: from, lt: to },
-        ...(params.departmentId || params.contractorId || params.projectId
-          ? {
-              user: {
-                ...(params.departmentId ? { departmentId: params.departmentId } : {}),
-                ...(params.contractorId ? { contractorId: params.contractorId } : {}),
-                ...(params.projectId ? { projectId: params.projectId } : {}),
-              },
-            }
-          : {}),
+        date: { gte: rangeStart, lt: rangeEndExclusive },
       },
       include: {
         user: { include: { department: true } },
@@ -650,21 +1132,11 @@ export class StatsService {
       orderBy: [{ userId: 'asc' }, { date: 'asc' }],
     });
 
-    const summary: AttendanceSummaryTotals = {
-      totalRecords: records.length,
-      staffCount: 0,
-      presentCount: 0,
-      lateCount: 0,
-      earlyLeaveCount: 0,
-      absentCount: 0,
-      otMinutes: 0,
-      workedMinutes: 0,
-    };
-
-    const byUser = new Map<string, TimesheetRow>();
     const policy = await this.calc.getPolicyOptions();
+    const asOf = new Date();
+    const withLocation = await attachPunchLocations(this.prisma, records);
 
-    for (const r of records) {
+    const rows: WeeklyRow[] = withLocation.map((r) => {
       const effective = r.workShift
         ? this.calc.applyLateGraceFloor(r.workShift, policy.lateGraceFloor)
         : null;
@@ -679,62 +1151,50 @@ export class StatsService {
           otAfterMinutes: policy.otAfterMinutes,
         },
       );
-      const lateMinutes = metrics.lateMinutes;
-      const earlyLeaveMinutes = metrics.earlyLeaveMinutes;
-      const otMinutes = metrics.otMinutes;
-      const worked = metrics.workedMinutes;
-      const status = metrics.status;
+      return {
+        userId: r.userId,
+        fullName: r.user?.fullName ?? r.userId,
+        employeeCode: r.user?.employeeCode ?? '',
+        departmentName: r.user?.department?.name ?? null,
+        date: formatDateOnly(r.date),
+        weekday: r.date.getUTCDay(),
+        shiftName: r.workShift?.name ?? null,
+        shiftCode: r.workShift?.code ?? null,
+        checkInAt: r.checkInAt,
+        checkOutAt: r.checkOutAt,
+        lateMinutes: metrics.lateMinutes,
+        earlyArrivalMinutes: metrics.earlyArrivalMinutes,
+        earlyLeaveMinutes: metrics.earlyLeaveMinutes,
+        otMinutes: metrics.otMinutes,
+        workedMinutes: metrics.workedMinutes,
+        salaryCoefficient: r.workShift?.salaryCoefficient ?? 1,
+        status: metrics.status,
+        zoneName: r.punchLocation?.zoneName ?? null,
+        deviceName: r.punchLocation?.deviceName ?? null,
+        checkInSnapshotUrl: this.resolveSnapshotUrl(r.checkInSnapshotPath),
+        checkOutSnapshotUrl: this.resolveSnapshotUrl(r.checkOutSnapshotPath),
+      };
+    });
 
-      if (status !== 'ABSENT') summary.presentCount += 1;
-      if (status === 'ABSENT') summary.absentCount += 1;
-      if (lateMinutes > 0 || status === 'LATE') summary.lateCount += 1;
-      if (earlyLeaveMinutes > 0 || status === 'EARLY_LEAVE') summary.earlyLeaveCount += 1;
-      summary.otMinutes += otMinutes;
-      summary.workedMinutes += worked;
+    rows.sort((a, b) => {
+      const byName = a.fullName.localeCompare(b.fullName, 'vi');
+      if (byName !== 0) return byName;
+      return a.date.localeCompare(b.date);
+    });
 
-      let row = byUser.get(r.userId);
-      if (!row) {
-        row = {
-          userId: r.userId,
-          fullName: r.user?.fullName ?? r.userId,
-          employeeCode: r.user?.employeeCode ?? '',
-          departmentName: r.user?.department?.name ?? null,
-          daysWorked: 0,
-          workedMinutes: 0,
-          lateCount: 0,
-          earlyArrivalCount: 0,
-          earlyCount: 0,
-          otMinutes: 0,
-        };
-        byUser.set(r.userId, row);
-      }
-      if (status !== 'ABSENT') row.daysWorked += 1;
-      row.workedMinutes += worked;
-      if (lateMinutes > 0 || status === 'LATE') row.lateCount += 1;
-      if (metrics.earlyArrivalMinutes > 0) {
-        row.earlyArrivalCount += 1;
-      }
-      if (earlyLeaveMinutes > 0 || status === 'EARLY_LEAVE') row.earlyCount += 1;
-      row.otMinutes += otMinutes;
-    }
-
-    summary.staffCount = byUser.size;
-
-    const timesheet = Array.from(byUser.values()).sort((a, b) =>
-      a.fullName.localeCompare(b.fullName, 'vi'),
-    );
-
-    return { summary, timesheet };
+    return { rows, totalUsers, page, pageSize };
   }
 
-  async weeklyTimesheet(params: {
-    weekStart?: string;
-    from?: string;
-    to?: string;
-    departmentId?: string;
-    contractorId?: string;
-    projectId?: string;
-  }): Promise<WeeklyTimesheet> {
+  async weeklyTimesheet(
+    params: {
+      weekStart?: string;
+      from?: string;
+      to?: string;
+      departmentId?: string;
+      contractorId?: string;
+      projectId?: string;
+    } & WeeklyListParams,
+  ): Promise<WeeklyTimesheet> {
     const now = new Date();
     let rangeStart: Date;
     let rangeEndExclusive: Date;
@@ -754,96 +1214,28 @@ export class StatsService {
       rangeEndExclusive.setUTCDate(rangeEndExclusive.getUTCDate() + 7);
     }
 
-    const asOf = new Date();
-    const records = await this.prisma.attendanceRecord.findMany({
-      where: {
-        workShiftId: { not: null },
-        date: { gte: rangeStart, lt: rangeEndExclusive },
-        ...(params.departmentId || params.contractorId || params.projectId
-          ? {
-              user: {
-                ...(params.departmentId ? { departmentId: params.departmentId } : {}),
-                ...(params.contractorId ? { contractorId: params.contractorId } : {}),
-                ...(params.projectId ? { projectId: params.projectId } : {}),
-              },
-            }
-          : {}),
-      },
-      include: {
-        user: { include: { department: true } },
-        workShift: true,
-      },
-      orderBy: [{ userId: 'asc' }, { date: 'asc' }],
-    });
+    const scope: AttendanceUserScope = {
+      departmentId: params.departmentId,
+      contractorId: params.contractorId,
+      projectId: params.projectId,
+    };
 
-    const policy = await this.calc.getPolicyOptions();
-    const withLocation = await attachPunchLocations(this.prisma, records);
-    const rows: WeeklyRow[] = await Promise.all(
-      withLocation.map(async (r) => {
-        const effective = r.workShift
-          ? this.calc.applyLateGraceFloor(r.workShift, policy.lateGraceFloor)
-          : null;
-        const metrics = this.calc.computeMetricsFromTimes(
-          effective,
-          r.checkInAt,
-          r.checkOutAt,
-          r.date,
-          asOf,
-          {
-            earlyLeaveGraceMinutes: policy.earlyLeaveGraceMinutes,
-            otAfterMinutes: policy.otAfterMinutes,
-          },
-        );
-        const [checkInSnapshotUrl, checkOutSnapshotUrl] = await Promise.all([
-          this.resolveSnapshotUrl(r.checkInSnapshotPath),
-          this.resolveSnapshotUrl(r.checkOutSnapshotPath),
-        ]);
-        return {
-          userId: r.userId,
-          fullName: r.user?.fullName ?? r.userId,
-          employeeCode: r.user?.employeeCode ?? '',
-          departmentName: r.user?.department?.name ?? null,
-          date: formatDateOnly(r.date),
-          weekday: r.date.getUTCDay(),
-          shiftName: r.workShift?.name ?? null,
-          shiftCode: r.workShift?.code ?? null,
-          checkInAt: r.checkInAt,
-          checkOutAt: r.checkOutAt,
-          lateMinutes: metrics.lateMinutes,
-          earlyArrivalMinutes: metrics.earlyArrivalMinutes,
-          earlyLeaveMinutes: metrics.earlyLeaveMinutes,
-          otMinutes: metrics.otMinutes,
-          workedMinutes: metrics.workedMinutes,
-          salaryCoefficient: r.workShift?.salaryCoefficient ?? 1,
-          status: metrics.status,
-          zoneName: r.punchLocation?.zoneName ?? null,
-          deviceName: r.punchLocation?.deviceName ?? null,
-          checkInSnapshotUrl,
-          checkOutSnapshotUrl,
-        };
-      }),
-    );
-
-    rows.sort((a, b) => {
-      const byName = a.fullName.localeCompare(b.fullName, 'vi');
-      if (byName !== 0) return byName;
-      return a.date.localeCompare(b.date);
-    });
-
+    const built = await this.buildWeeklyRows(rangeStart, rangeEndExclusive, scope, params);
+    const totalPages = Math.max(1, Math.ceil(built.totalUsers / built.pageSize));
     const rangeEndDisplay = new Date(rangeEndExclusive);
     rangeEndDisplay.setUTCDate(rangeEndDisplay.getUTCDate() - 1);
 
     return {
       weekStart: formatDateOnly(rangeStart),
       weekEnd: formatDateOnly(rangeEndDisplay),
-      rows,
+      rows: built.rows,
+      totalUsers: built.totalUsers,
+      page: Math.min(built.page, totalPages),
+      pageSize: built.pageSize,
+      totalPages,
     };
   }
 
-  /**
-   * Dashboard thống kê: KPI + series theo ngày + breakdown theo NT/DA/NV.
-   * Dùng late/OT đã lưu trên AttendanceRecord; AccessLog cho check-in/out.
-   */
   async analytics(params: {
     from: string;
     to: string;
@@ -858,57 +1250,220 @@ export class StatsService {
     const toExclusive = new Date(toBase);
     toExclusive.setUTCDate(toExclusive.getUTCDate() + 1);
 
-    const userFilter: Record<string, unknown> = {
-      isDeleted: false,
-    };
-    if (params.userId) userFilter.id = params.userId;
-    if (params.contractorId) userFilter.contractorId = params.contractorId;
-    if (params.projectId) {
-      userFilter.projectId = params.projectId;
-    } else if (params.projectIds !== undefined) {
-      userFilter.projectId = { in: params.projectIds };
-    }
+    const userSql = this.analyticsUserSql(params);
+    const worked = workedMinutesSql('ar');
 
-    const [staffCount, attendance, logs] = await Promise.all([
-      this.prisma.user.count({ where: userFilter }),
-      this.prisma.attendanceRecord.findMany({
+    const breakMode: 'contractor' | 'project' | 'user' | 'none' = params.userId
+      ? 'none'
+      : params.contractorId && params.projectId
+        ? 'user'
+        : params.contractorId
+          ? 'project'
+          : 'contractor';
+
+    const [
+      staffCount,
+      attendanceTotals,
+      attendanceByDay,
+      logByDay,
+      checkInCount,
+      checkOutCount,
+      breakdownRows,
+    ] = await Promise.all([
+      this.prisma.user.count({
         where: {
-          date: { gte: from, lt: toExclusive },
-          workShiftId: { not: null },
-          user: userFilter,
+          isDeleted: false,
+          ...(params.userId ? { id: params.userId } : {}),
+          ...(params.contractorId ? { contractorId: params.contractorId } : {}),
+          ...(params.projectId
+            ? { projectId: params.projectId }
+            : params.projectIds !== undefined
+              ? { projectId: { in: params.projectIds } }
+              : {}),
         },
-        include: {
-          user: {
-            include: { contractor: true, project: true },
-          },
-        },
-        orderBy: { date: 'asc' },
       }),
-      this.prisma.accessLog.findMany({
+      this.prisma.$queryRaw<
+        Array<{
+          present_days: number;
+          late_count: number;
+          ot_minutes: number;
+          worked_minutes: number;
+        }>
+      >(
+        Prisma.sql`
+          SELECT
+            COUNT(*) FILTER (WHERE ar."checkInAt" IS NOT NULL)::int AS present_days,
+            COUNT(*) FILTER (WHERE ar."lateMinutes" > 0)::int AS late_count,
+            COALESCE(SUM(ar."otMinutes"), 0)::int AS ot_minutes,
+            COALESCE(SUM(${worked}), 0)::int AS worked_minutes
+          FROM attendance_records ar
+          INNER JOIN users u ON u.id = ar."userId"
+          WHERE ar."workShiftId" IS NOT NULL
+            AND ar.date >= ${from}
+            AND ar.date < ${toExclusive}
+            ${userSql}
+        `,
+      ),
+      this.prisma.$queryRaw<
+        Array<{
+          date: string;
+          present: number;
+          late: number;
+          ot_minutes: number;
+        }>
+      >(
+        Prisma.sql`
+          SELECT
+            to_char(ar.date, 'YYYY-MM-DD') AS date,
+            COUNT(*) FILTER (WHERE ar."checkInAt" IS NOT NULL)::int AS present,
+            COUNT(*) FILTER (WHERE ar."lateMinutes" > 0)::int AS late,
+            COALESCE(SUM(ar."otMinutes"), 0)::int AS ot_minutes
+          FROM attendance_records ar
+          INNER JOIN users u ON u.id = ar."userId"
+          WHERE ar."workShiftId" IS NOT NULL
+            AND ar.date >= ${from}
+            AND ar.date < ${toExclusive}
+            ${userSql}
+          GROUP BY ar.date
+          ORDER BY ar.date
+        `,
+      ),
+      this.prisma.$queryRaw<
+        Array<{ date: string; check_ins: number; check_outs: number }>
+      >(
+        Prisma.sql`
+          SELECT
+            to_char(al."eventAt"::date, 'YYYY-MM-DD') AS date,
+            COUNT(*) FILTER (WHERE al.action = 'CHECK_IN')::int AS check_ins,
+            COUNT(*) FILTER (WHERE al.action = 'CHECK_OUT')::int AS check_outs
+          FROM access_logs al
+          INNER JOIN users u ON u.id = al."userId"
+          WHERE al."eventAt" >= ${from}
+            AND al."eventAt" < ${toExclusive}
+            AND al."isValid" = true
+            AND al.action IN ('CHECK_IN', 'CHECK_OUT')
+            ${userSql}
+          GROUP BY 1
+        `,
+      ),
+      this.prisma.accessLog.count({
         where: {
           eventAt: { gte: from, lt: toExclusive },
           isValid: true,
-          user: userFilter,
-        },
-        select: {
-          eventAt: true,
-          action: true,
-          userId: true,
+          action: 'CHECK_IN',
           user: {
-            select: {
-              id: true,
-              fullName: true,
-              employeeCode: true,
-              contractorId: true,
-              projectId: true,
-              contractor: { select: { id: true, name: true } },
-              project: { select: { id: true, name: true } },
-            },
+            isDeleted: false,
+            ...(params.userId ? { id: params.userId } : {}),
+            ...(params.contractorId ? { contractorId: params.contractorId } : {}),
+            ...(params.projectId
+              ? { projectId: params.projectId }
+              : params.projectIds !== undefined
+                ? { projectId: { in: params.projectIds } }
+                : {}),
           },
         },
       }),
+      this.prisma.accessLog.count({
+        where: {
+          eventAt: { gte: from, lt: toExclusive },
+          isValid: true,
+          action: 'CHECK_OUT',
+          user: {
+            isDeleted: false,
+            ...(params.userId ? { id: params.userId } : {}),
+            ...(params.contractorId ? { contractorId: params.contractorId } : {}),
+            ...(params.projectId
+              ? { projectId: params.projectId }
+              : params.projectIds !== undefined
+                ? { projectId: { in: params.projectIds } }
+                : {}),
+          },
+        },
+      }),
+      breakMode === 'contractor'
+        ? this.prisma.$queryRaw<
+            Array<{
+              id: string;
+              label: string;
+              present_days: number;
+              late_count: number;
+              ot_minutes: number;
+            }>
+          >(
+            Prisma.sql`
+              SELECT
+                c.id,
+                c.name AS label,
+                COUNT(*) FILTER (WHERE ar."checkInAt" IS NOT NULL)::int AS present_days,
+                COUNT(*) FILTER (WHERE ar."lateMinutes" > 0)::int AS late_count,
+                COALESCE(SUM(ar."otMinutes"), 0)::int AS ot_minutes
+              FROM attendance_records ar
+              INNER JOIN users u ON u.id = ar."userId"
+              INNER JOIN contractors c ON c.id = u."contractorId"
+              WHERE ar."workShiftId" IS NOT NULL
+                AND ar.date >= ${from}
+                AND ar.date < ${toExclusive}
+                ${userSql}
+              GROUP BY c.id, c.name
+            `,
+          )
+        : breakMode === 'project'
+          ? this.prisma.$queryRaw<
+              Array<{
+                id: string;
+                label: string;
+                present_days: number;
+                late_count: number;
+                ot_minutes: number;
+              }>
+            >(
+              Prisma.sql`
+                SELECT
+                  p.id,
+                  p.name AS label,
+                  COUNT(*) FILTER (WHERE ar."checkInAt" IS NOT NULL)::int AS present_days,
+                  COUNT(*) FILTER (WHERE ar."lateMinutes" > 0)::int AS late_count,
+                  COALESCE(SUM(ar."otMinutes"), 0)::int AS ot_minutes
+                FROM attendance_records ar
+                INNER JOIN users u ON u.id = ar."userId"
+                INNER JOIN projects p ON p.id = u."projectId"
+                WHERE ar."workShiftId" IS NOT NULL
+                  AND ar.date >= ${from}
+                  AND ar.date < ${toExclusive}
+                  ${userSql}
+                GROUP BY p.id, p.name
+              `,
+            )
+          : breakMode === 'user'
+            ? this.prisma.$queryRaw<
+                Array<{
+                  id: string;
+                  label: string;
+                  present_days: number;
+                  late_count: number;
+                  ot_minutes: number;
+                }>
+              >(
+                Prisma.sql`
+                  SELECT
+                    u.id,
+                    u."fullName" AS label,
+                    COUNT(*) FILTER (WHERE ar."checkInAt" IS NOT NULL)::int AS present_days,
+                    COUNT(*) FILTER (WHERE ar."lateMinutes" > 0)::int AS late_count,
+                    COALESCE(SUM(ar."otMinutes"), 0)::int AS ot_minutes
+                  FROM attendance_records ar
+                  INNER JOIN users u ON u.id = ar."userId"
+                  WHERE ar."workShiftId" IS NOT NULL
+                    AND ar.date >= ${from}
+                    AND ar.date < ${toExclusive}
+                    ${userSql}
+                  GROUP BY u.id, u."fullName"
+                `,
+              )
+            : Promise.resolve([]),
     ]);
 
+    const totals = attendanceTotals[0];
     const dayMap = new Map<
       string,
       { present: number; late: number; otMinutes: number; checkIns: number; checkOuts: number }
@@ -924,114 +1479,28 @@ export class StatsService {
       });
       cursor.setUTCDate(cursor.getUTCDate() + 1);
     }
-
-    let presentDays = 0;
-    let lateCount = 0;
-    let otMinutes = 0;
-    let workedMinutes = 0;
-
-    type BreakKey = string;
-    const breakMap = new Map<BreakKey, { id: string; label: string; presentDays: number; lateCount: number; otMinutes: number }>();
-
-    const breakMode: 'contractor' | 'project' | 'user' | 'none' = params.userId
-      ? 'none'
-      : params.contractorId && params.projectId
-        ? 'user'
-        : params.contractorId
-          ? 'project'
-          : 'contractor';
-
-    function bumpBreak(
-      id: string | null | undefined,
-      label: string | null | undefined,
-      patch: { present?: boolean; late?: boolean; ot?: number },
-    ) {
-      if (breakMode === 'none' || !id) return;
-      const key = id;
-      let row = breakMap.get(key);
-      if (!row) {
-        row = { id, label: label || id, presentDays: 0, lateCount: 0, otMinutes: 0 };
-        breakMap.set(key, row);
-      }
-      if (patch.present) row.presentDays += 1;
-      if (patch.late) row.lateCount += 1;
-      if (patch.ot) row.otMinutes += patch.ot;
+    for (const row of attendanceByDay) {
+      const bucket = dayMap.get(row.date);
+      if (!bucket) continue;
+      bucket.present = row.present;
+      bucket.late = row.late;
+      bucket.otMinutes = row.ot_minutes;
     }
-
-    for (const r of attendance) {
-      const dayKey = formatDateOnly(r.date);
-      const bucket = dayMap.get(dayKey);
-      const isPresent = !!r.checkInAt;
-      const isLate = (r.lateMinutes ?? 0) > 0;
-      const ot = r.otMinutes ?? 0;
-      let worked = 0;
-      if (r.checkInAt && r.checkOutAt) {
-        worked = Math.max(
-          0,
-          Math.round((r.checkOutAt.getTime() - r.checkInAt.getTime()) / 60_000),
-        );
-        worked = Math.min(worked, 24 * 60);
-      }
-
-      if (isPresent) presentDays += 1;
-      if (isLate) lateCount += 1;
-      otMinutes += ot;
-      workedMinutes += worked;
-
-      if (bucket) {
-        if (isPresent) bucket.present += 1;
-        if (isLate) bucket.late += 1;
-        bucket.otMinutes += ot;
-      }
-
-      if (breakMode === 'contractor') {
-        bumpBreak(r.user?.contractorId, r.user?.contractor?.name, {
-          present: isPresent,
-          late: isLate,
-          ot,
-        });
-      } else if (breakMode === 'project') {
-        bumpBreak(r.user?.projectId, r.user?.project?.name, {
-          present: isPresent,
-          late: isLate,
-          ot,
-        });
-      } else if (breakMode === 'user') {
-        bumpBreak(r.userId, r.user?.fullName ?? r.user?.employeeCode, {
-          present: isPresent,
-          late: isLate,
-          ot,
-        });
-      }
-    }
-
-    let checkInCount = 0;
-    let checkOutCount = 0;
-    for (const log of logs) {
-      const dayKey = formatDateOnly(
-        new Date(Date.UTC(log.eventAt.getFullYear(), log.eventAt.getMonth(), log.eventAt.getDate())),
-      );
-      // eventAt is local-ish Date from DB; use VN-safe via UTC parts of the instant's local date
-      const local = log.eventAt;
-      const localKey = `${local.getFullYear()}-${String(local.getMonth() + 1).padStart(2, '0')}-${String(local.getDate()).padStart(2, '0')}`;
-      const bucket = dayMap.get(localKey) ?? dayMap.get(dayKey);
-      if (log.action === 'CHECK_IN') {
-        checkInCount += 1;
-        if (bucket) bucket.checkIns += 1;
-      } else if (log.action === 'CHECK_OUT') {
-        checkOutCount += 1;
-        if (bucket) bucket.checkOuts += 1;
-      }
+    for (const row of logByDay) {
+      const bucket = dayMap.get(row.date);
+      if (!bucket) continue;
+      bucket.checkIns = row.check_ins;
+      bucket.checkOuts = row.check_outs;
     }
 
     const byDay = Array.from(dayMap.entries()).map(([date, v]) => ({ date, ...v }));
-    const breakdown = Array.from(breakMap.values())
+    const breakdown = breakdownRows
       .map((b) => ({
         id: b.id,
         label: b.label,
-        value: b.presentDays,
-        lateCount: b.lateCount,
-        otMinutes: b.otMinutes,
+        value: b.present_days,
+        lateCount: b.late_count,
+        otMinutes: b.ot_minutes,
       }))
       .sort((a, b) => b.value - a.value);
 
@@ -1041,10 +1510,10 @@ export class StatsService {
       breakMode,
       summary: {
         staffCount,
-        presentDays,
-        lateCount,
-        otMinutes,
-        workedMinutes,
+        presentDays: totals?.present_days ?? 0,
+        lateCount: totals?.late_count ?? 0,
+        otMinutes: totals?.ot_minutes ?? 0,
+        workedMinutes: totals?.worked_minutes ?? 0,
         checkInCount,
         checkOutCount,
       },

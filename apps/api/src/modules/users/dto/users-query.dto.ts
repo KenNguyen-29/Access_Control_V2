@@ -32,12 +32,7 @@ export class UsersQueryDto extends PaginationDto {
   withoutActiveShift?: boolean;
 }
 
-export class UsersIdsQueryDto {
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsString()
-  search?: string;
-
+export class UsersIdsQueryDto extends PaginationDto {
   @ApiPropertyOptional({ description: 'Filter by department id' })
   @IsOptional()
   @IsString()

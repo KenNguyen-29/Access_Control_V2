@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Search } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
@@ -10,6 +11,7 @@ import { DesignCard } from '@/components/design/PageShell';
 import { cn } from '@/lib/utils';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import type { Department, WeeklyRow } from '@/lib/api';
+import { getWeeklyTimesheet } from '@/lib/api';
 
 const PAGE_SIZE = 5;
 const DAY_COUNT = 30;
@@ -137,6 +139,12 @@ function dayTooltip(day: DayCell | undefined): string {
   return parts.join(' · ');
 }
 
+function triToBool(filter: TriFilter): boolean | undefined {
+  if (filter === 'yes') return true;
+  if (filter === 'no') return false;
+  return undefined;
+}
+
 function groupEmployees(rows: WeeklyRow[]): EmployeeWeek[] {
   const map = new Map<string, EmployeeWeek>();
   for (const row of rows) {
@@ -187,15 +195,11 @@ function DayCellView({ day }: { day: DayCell | undefined }) {
 }
 
 type Props = {
-  rows: WeeklyRow[];
   rangeFrom: string;
   rangeTo: string;
   departments: Department[];
   departmentId: string;
   onDepartmentChange: (id: string) => void;
-  isLoading: boolean;
-  error: string | null;
-  onRetry: () => void;
 };
 
 const COL = {
@@ -213,15 +217,11 @@ const ROW_H = 40;
 const HEAD_H = 44;
 
 export default function EmployeeWeekMatrix({
-  rows,
   rangeFrom,
   rangeTo,
   departments,
   departmentId,
   onDepartmentChange,
-  isLoading,
-  error,
-  onRetry,
 }: Props) {
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState<MatrixSort>('name');
@@ -232,47 +232,50 @@ export default function EmployeeWeekMatrix({
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const debouncedSearch = useDebouncedValue(search, 250);
 
+  const matrixQuery = useQuery({
+    queryKey: [
+      'weeklyTimesheet',
+      'matrix',
+      rangeFrom,
+      rangeTo,
+      departmentId,
+      page,
+      debouncedSearch,
+      sort,
+      earlyArrival,
+      hasOt,
+      hasLate,
+    ],
+    queryFn: () =>
+      getWeeklyTimesheet({
+        from: rangeFrom,
+        to: rangeTo,
+        departmentId: departmentId || undefined,
+        page,
+        pageSize: PAGE_SIZE,
+        search: debouncedSearch.trim() || undefined,
+        sort,
+        hasLate: triToBool(hasLate),
+        hasEarlyArrival: triToBool(earlyArrival),
+        hasOt: triToBool(hasOt),
+      }),
+  });
+
+  const rows = matrixQuery.data?.rows ?? [];
+  const isLoading = matrixQuery.isLoading;
+  const error = matrixQuery.error
+    ? matrixQuery.error instanceof Error
+      ? matrixQuery.error.message
+      : 'Không tải được bảng 30 ngày'
+    : null;
+  const onRetry = () => void matrixQuery.refetch();
+  const totalPages = matrixQuery.data?.totalPages ?? 1;
+  const totalUsers = matrixQuery.data?.totalUsers ?? 0;
+  const currentPage = Math.min(page, totalPages);
+
   const dates = useMemo(() => rangeDates(rangeFrom, DAY_COUNT), [rangeFrom]);
 
-  const employees = useMemo(() => {
-    let list = groupEmployees(rows);
-    const q = debouncedSearch.trim().toLowerCase();
-    if (q) {
-      list = list.filter(
-        (e) =>
-          e.fullName.toLowerCase().includes(q) ||
-          e.employeeCode.toLowerCase().includes(q) ||
-          (e.departmentName ?? '').toLowerCase().includes(q),
-      );
-    }
-    list = list.filter((e) => {
-      if (!matchesTri(hasLate, employeeHasFlag(e, (d) => d.lateMinutes > 0 || d.status === 'LATE'))) {
-        return false;
-      }
-      if (!matchesTri(earlyArrival, employeeHasFlag(e, (d) => d.earlyArrivalMinutes > 0))) {
-        return false;
-      }
-      if (
-        !matchesTri(
-          hasOt,
-          employeeHasFlag(e, (d) => d.otMinutes > 0 || d.status === 'OVERTIME'),
-        )
-      ) {
-        return false;
-      }
-      return true;
-    });
-    list = [...list].sort((a, b) => {
-      if (sort === 'least') return a.totalCong - b.totalCong;
-      if (sort === 'most') return b.totalCong - a.totalCong;
-      return a.fullName.localeCompare(b.fullName, 'vi');
-    });
-    return list;
-  }, [rows, debouncedSearch, sort, earlyArrival, hasOt, hasLate]);
-
-  const totalPages = Math.max(1, Math.ceil(employees.length / PAGE_SIZE));
-  const currentPage = Math.min(page, totalPages);
-  const pageItems = employees.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+  const employees = useMemo(() => groupEmployees(rows), [rows]);
 
   useEffect(() => {
     setPage(1);
@@ -288,7 +291,7 @@ export default function EmployeeWeekMatrix({
   ]);
 
   return (
-    <DesignCard title={`Bảng chấm công 30 ngày gần nhất (${employees.length})`}>
+    <DesignCard title={`Bảng chấm công 30 ngày gần nhất (${totalUsers})`}>
       <div className="mb-4 space-y-3">
       <div className="grid grid-cols-1 items-end gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
         <div className="sm:col-span-2">
@@ -416,7 +419,7 @@ export default function EmployeeWeekMatrix({
                 </tr>
               </thead>
               <tbody>
-                {pageItems.map((emp, idx) => {
+                {employees.map((emp, idx) => {
                   const stt = (currentPage - 1) * PAGE_SIZE + idx + 1;
                   const hovered = hoveredId === emp.userId;
                   return (
@@ -494,7 +497,7 @@ export default function EmployeeWeekMatrix({
                 </tr>
               </thead>
               <tbody>
-                {pageItems.map((emp) => {
+                {employees.map((emp) => {
                   const hovered = hoveredId === emp.userId;
                   return (
                     <tr
@@ -536,7 +539,7 @@ export default function EmployeeWeekMatrix({
           className="mt-4 pt-4"
           currentPage={currentPage}
           totalPages={totalPages}
-          total={employees.length}
+          total={totalUsers}
           unit="nhân viên"
           onPageChange={setPage}
         />
