@@ -161,6 +161,7 @@ export class AkuvoxEventService {
     accessLogId: string,
     deviceId: string,
     baseEvent: CheckinEvent,
+    eventAt: Date,
     pendingSnapshot?: { path: string; buffer: Buffer },
   ) {
     if (pendingSnapshot) {
@@ -173,7 +174,7 @@ export class AkuvoxEventService {
       return;
     }
     void (async () => {
-      const captured = await this.snapshots.captureForReaderDevice(deviceId);
+      const captured = await this.snapshots.captureForReaderDevice(deviceId, eventAt);
       if (!captured) return;
       this.finalizeSnapshotAsync(accessLogId, captured.path, captured.buffer, baseEvent);
     })();
@@ -495,7 +496,7 @@ export class AkuvoxEventService {
       `Processed event accessLogId=${accessLog.id} action=${action} attendanceId=${attendanceId ?? '—'} valid=${isValid}`,
     );
 
-    this.scheduleSnapshot(accessLog.id, device.id, checkinEvent, snapshotFromPayload);
+    this.scheduleSnapshot(accessLog.id, device.id, checkinEvent, eventAt, snapshotFromPayload);
 
     return { processed: true, accessLogId: accessLog.id, attendanceId };
   }

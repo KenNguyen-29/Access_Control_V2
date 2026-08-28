@@ -9,3 +9,6 @@ webrtc:
   candidates:
     - __HOST_LAN_IP__:8555
     - stun:8555
+
+ffmpeg:
+  mjpeg_fps: "-r 5"

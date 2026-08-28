@@ -6,6 +6,8 @@ import { Device, DeviceType } from '@prisma/client';
 import { firstValueFrom } from 'rxjs';
 import { PrismaService } from '../../prisma/prisma.service';
 import { buildRtspUrlWithCredentials } from '../devices/utils/rtsp-url.util';
+import { resolveMockCameraSource } from '../devices/utils/mock-camera.util';
+import { RtspFrameBufferService } from './rtsp-frame-buffer.service';
 
 const MINI_JPEG = Buffer.from(
   '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAn/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAX/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAGf/9k=',
@@ -29,14 +31,20 @@ export class SnapshotCaptureService {
   private readonly go2rtcEnabled: boolean;
   private readonly timeoutMs: number;
   private readonly dnakeMock: boolean;
-  /** Blank/placeholder go2rtc frames are often ~5–15KB; real panel frames are larger. */
+  /** Blank/placeholder go2rtc frames are often ~5â15KB; real panel frames are larger. */
   private readonly minJpegBytes: number;
   private readonly frameRetries: number;
   private readonly frameRetryDelayMs: number;
+  private readonly mockCameraEnabled: boolean;
+  private readonly mockCameraIp: string;
+  private readonly mockCameraSource: string;
+  private readonly mockCameraUsername: string;
+  private readonly mockCameraPassword: string;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly http: HttpService,
+    private readonly warmFrames: RtspFrameBufferService,
     config: ConfigService,
   ) {
     this.go2rtcBase = config
@@ -48,10 +56,18 @@ export class SnapshotCaptureService {
     this.minJpegBytes = Number(config.get<string>('SNAPSHOT_MIN_JPEG_BYTES', '20000'));
     this.frameRetries = Math.max(1, Number(config.get<string>('SNAPSHOT_FRAME_RETRIES', '5')));
     this.frameRetryDelayMs = Number(config.get<string>('SNAPSHOT_FRAME_RETRY_MS', '400'));
+    this.mockCameraEnabled = config.get<string>('MOCK_CAMERA_ENABLED', 'false') === 'true';
+    this.mockCameraIp = config.get<string>('MOCK_CAMERA_IP', '192.168.1.4').trim();
+    this.mockCameraSource = config
+      .get<string>('MOCK_CAMERA_SOURCE', 'http://127.0.0.1:19084/stream.mjpeg')
+      .trim();
+    this.mockCameraUsername = config.get<string>('MOCK_CAMERA_USERNAME', '').trim();
+    this.mockCameraPassword = config.get<string>('MOCK_CAMERA_PASSWORD', '');
   }
 
   async captureForReaderDevice(
     readerDeviceId: string,
+    eventAt?: Date,
   ): Promise<{ path: string; buffer: Buffer } | null> {
     const device = await this.prisma.device.findFirst({
       where: { id: readerDeviceId, isDeleted: false },
@@ -63,6 +79,17 @@ export class SnapshotCaptureService {
     if (device.deviceType !== DeviceType.AKUVOX && device.deviceType !== DeviceType.DNAKE) {
       this.logger.warn(`Snapshot skipped: ${device.code} is not a face panel`);
       return null;
+    }
+
+    const buffered = this.warmFrames.getClosestFrame(device.id, eventAt);
+    if (buffered) {
+      this.logger.log(
+        `Buffered RTSP snapshot OK panel=${device.code} delta=${buffered.deltaMs}ms bytes=${buffered.buffer.length}`,
+      );
+      return {
+        path: `snapshots/${device.id}/${Date.now()}.jpg`,
+        buffer: buffered.buffer,
+      };
     }
 
     let buffer: Buffer | null = null;
@@ -77,7 +104,7 @@ export class SnapshotCaptureService {
     }
     if (!buffer || !this.isJpeg(buffer)) {
       this.logger.warn(
-        `No live snapshot from panel ${device.code} (ip=${device.ipAddress ?? '—'} rtsp=${
+        `No live snapshot from panel ${device.code} (ip=${device.ipAddress ?? 'â'} rtsp=${
           device.rtspUrl?.trim() ? 'set' : 'unset'
         } go2rtc=${this.go2rtcEnabled ? 'on' : 'off'})`,
       );
@@ -101,7 +128,7 @@ export class SnapshotCaptureService {
     return buf.length > 80 && buf[0] === 0xff && buf[1] === 0xd8;
   }
 
-  /** Reject tiny placeholder frames (go2rtc often returns blank ~10–15KB JPEGs). */
+  /** Reject tiny placeholder frames (go2rtc often returns blank ~10â15KB JPEGs). */
   private isUsefulJpeg(buf: Buffer | null): boolean {
     return !!buf && this.isJpeg(buf) && buf.length >= this.minJpegBytes;
   }
@@ -314,7 +341,16 @@ export class SnapshotCaptureService {
     const errors: string[] = [];
     let bestWeak: Buffer | null = null;
     for (const src of candidates) {
-      const rtspUrl = buildRtspUrlWithCredentials(src, username, password);
+      const rtspUrl = resolveMockCameraSource(
+        buildRtspUrlWithCredentials(src, username, password),
+        {
+          enabled: this.mockCameraEnabled,
+          virtualIp: this.mockCameraIp,
+          source: this.mockCameraSource,
+          username: this.mockCameraUsername,
+          password: this.mockCameraPassword,
+        },
+      );
       const streamName = `panel_${device.id}`;
       try {
         await this.upsertStream(streamName, rtspUrl);
@@ -339,7 +375,7 @@ export class SnapshotCaptureService {
         this.logger.warn(`RTSP snapshot failed ${device.code}: ${msg}`);
       }
     }
-    // Never persist blank placeholders — better no image than white square.
+    // Never persist blank placeholders â better no image than white square.
     this.logger.warn(
       `RTSP snapshot exhausted ${device.code}: ${errors.join(' | ')}${
         bestWeak ? ` (best weak=${bestWeak.length}B discarded)` : ''
@@ -350,7 +386,7 @@ export class SnapshotCaptureService {
 
   /**
    * Prefer Akuvox native `live/ch00_0`. Explicit URL (e.g. ONVIF Hikvision-style
-   * `/Streaming/Channels/101`) is tried too, but natives always remain candidates —
+   * `/Streaming/Channels/101`) is tried too, but natives always remain candidates â
    * that path often returns a blank-but-valid JPEG on Akuvox.
    */
   private rtspCandidates(device: Device): string[] {
@@ -377,7 +413,7 @@ export class SnapshotCaptureService {
 
     push(`rtsp://${ip}:554/live/ch00_1`);
     push(`rtsp://${ip}:554/stream1`);
-    // Hikvision-style last — can "succeed" with blank frames on Akuvox.
+    // Hikvision-style last â can "succeed" with blank frames on Akuvox.
     push(`rtsp://${ip}:554/Streaming/Channels/101`);
     return list;
   }
