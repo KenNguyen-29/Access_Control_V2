@@ -455,11 +455,7 @@ export function validateRetentionDays(value: string): string | undefined {
   return undefined;
 }
 
-/** Attendance history retention: clamp 60–90 days per Module 5. */
+/** Attendance history retention (same bounds as access-log retention). */
 export function validateAttendanceRetentionDays(value: string): string | undefined {
-  const n = Number(value);
-  if (!value.trim() || !Number.isFinite(n)) return 'Vui lòng nhập số ngày';
-  if (!Number.isInteger(n)) return 'Số ngày phải là số nguyên';
-  if (n < 60 || n > 90) return 'Giữ lịch sử chấm công trong khoảng 60–90 ngày';
-  return undefined;
+  return validateRetentionDays(value);
 }

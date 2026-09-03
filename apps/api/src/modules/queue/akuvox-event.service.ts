@@ -14,9 +14,15 @@ import {
   normalizedDoorLogUserId,
 } from '../webhooks/akuvox-door-log.util';
 import { SnapshotCaptureService } from './snapshot-capture.service';
+import {
+  parseVietnamWallClock,
+  vietnamDateOnlyString,
+} from '../../common/utils/vn-time.util';
 
 /** Suppress repeat face scans for the same person+device (no AccessLog / socket / punch). */
 const FACE_SCAN_COOLDOWN_MS = 5 * 60 * 1000;
+
+const MOVEMENT_WARNING = 'Lượt ra vào — không tính thêm chấm công';
 
 @Injectable()
 export class AkuvoxEventService {
@@ -61,6 +67,39 @@ export class AkuvoxEventService {
     if (punch.outcome === 'CHECK_OUT') return PrismaAccessAction.CHECK_OUT;
     if (punch.outcome === 'CHECK_IN') return PrismaAccessAction.CHECK_IN;
     return PrismaAccessAction.UNKNOWN;
+  }
+
+  /**
+   * After attendance day is complete, still log each scan as CHECK_IN / CHECK_OUT
+   * alternating from the last valid movement that day (does not touch attendance).
+   */
+  private async nextMovementAction(
+    userId: string,
+    eventAt: Date,
+    excludeSourceEventId: string,
+  ): Promise<PrismaAccessAction> {
+    const dayKey = vietnamDateOnlyString(eventAt);
+    const dayStart = parseVietnamWallClock(dayKey, '00:00:00');
+    if (!dayStart) return PrismaAccessAction.CHECK_IN;
+    // VN has no DST — next calendar midnight is +24h.
+    const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
+
+    const last = await this.prisma.accessLog.findFirst({
+      where: {
+        userId,
+        isValid: true,
+        action: { in: [PrismaAccessAction.CHECK_IN, PrismaAccessAction.CHECK_OUT] },
+        eventAt: { gte: dayStart, lt: dayEnd },
+        NOT: { sourceEventId: excludeSourceEventId },
+      },
+      orderBy: { eventAt: 'desc' },
+      select: { action: true },
+    });
+
+    if (last?.action === PrismaAccessAction.CHECK_IN) {
+      return PrismaAccessAction.CHECK_OUT;
+    }
+    return PrismaAccessAction.CHECK_IN;
   }
 
   private toSocketAction(action: PrismaAccessAction): AccessAction {
@@ -407,13 +446,18 @@ export class AkuvoxEventService {
         const punch = await this.attendance.processPunch(user.id, eventAt);
         attendanceId = punch.record?.id;
         if (punch.outcome === 'IGNORED') {
-          action = PrismaAccessAction.UNKNOWN;
-          punchWarning =
-            punch.reason === 'NO_SHIFT'
-              ? 'Chưa gán ca — không tính chấm công'
-              : 'Sự kiện ra vào — không tính thêm chấm công';
+          if (punch.reason === 'ALREADY_COMPLETE') {
+            action = await this.nextMovementAction(user.id, eventAt, sourceEventId);
+            punchWarning = MOVEMENT_WARNING;
+          } else if (punch.reason === 'NO_SHIFT') {
+            action = PrismaAccessAction.UNKNOWN;
+            punchWarning = 'Chưa gán ca — không tính chấm công';
+          } else {
+            action = PrismaAccessAction.UNKNOWN;
+            punchWarning = punch.message || 'Sự kiện ra vào — không tính thêm chấm công';
+          }
           this.logger.log(
-            `Notify without punch reason=${punch.reason ?? '—'} user=${user.employeeCode} device=${device.name}`,
+            `Notify without punch reason=${punch.reason ?? '—'} action=${action} user=${user.employeeCode} device=${device.name}`,
           );
         } else {
           punchWarning = punch.message;

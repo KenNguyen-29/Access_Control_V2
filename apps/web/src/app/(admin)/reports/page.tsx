@@ -55,6 +55,7 @@ import {
 import { AccessLogDetailDialog } from '@/components/attendance/AccessLogDetailDialog';
 import { ReportsLogsConfigPanel } from '@/components/reports/ReportsLogsConfigPanel';
 import EmployeeWeekMatrix from './EmployeeWeekMatrix';
+import { accessLogActionLabel, isMovementOnlyWarning } from '@/lib/accessLogLabels';
 
 function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
@@ -1399,13 +1400,7 @@ export default function ReportsPage() {
                         </td>
                         <td className="p-2">
                           <Badge variant="outline" className="text-xs font-normal">
-                            {log.action === 'CHECK_IN'
-                              ? 'Check-in'
-                              : log.action === 'CHECK_OUT'
-                                ? 'Check-out'
-                                : log.action === 'UNKNOWN'
-                                  ? 'Người lạ'
-                                  : log.action || '—'}
+                            {accessLogActionLabel(log.action, { hasUser: Boolean(log.user) })}
                           </Badge>
                         </td>
                         <td className="p-2 text-xs text-muted-foreground">
@@ -1418,6 +1413,10 @@ export default function ReportsPage() {
                           {log.isValid === false ? (
                             <Badge className="border-transparent bg-destructive/15 text-xs text-destructive">
                               Cảnh báo
+                            </Badge>
+                          ) : isMovementOnlyWarning(log.warningMessage) ? (
+                            <Badge className="border-transparent bg-sky-100 text-xs text-sky-800">
+                              Ra vào
                             </Badge>
                           ) : log.warningMessage ? (
                             <Badge className="border-transparent bg-amber-100 text-xs text-amber-800">

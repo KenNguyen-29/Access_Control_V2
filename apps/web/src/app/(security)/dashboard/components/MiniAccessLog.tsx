@@ -14,6 +14,7 @@ import {
 import { Select } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { accessLogActionLabel, isMovementOnlyWarning } from '@/lib/accessLogLabels';
 
 const ACTION_OPTIONS = [
   { value: '', label: 'Tất cả loại' },
@@ -279,8 +280,9 @@ export default function MiniAccessLog({ lastEvent }: Props) {
                 {log.zone?.name ? `${log.zone.name} · ` : ''}
                 {log.device?.name ?? '—'}
                 {log.action
-                  ? ` · ${log.action === 'CHECK_IN' ? 'Check-in' : log.action === 'CHECK_OUT' ? 'Check-out' : log.action}`
+                  ? ` · ${accessLogActionLabel(log.action, { hasUser: Boolean(log.user) })}`
                   : ''}
+                {isMovementOnlyWarning(log.warningMessage) ? ' · Ra vào' : ''}
               </p>
               <p className="mt-0.5 text-[10px] text-muted-foreground">{formatEventAt(log.eventAt)}</p>
             </div>

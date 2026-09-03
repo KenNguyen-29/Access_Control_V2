@@ -5,20 +5,13 @@ import { Dialog } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import type { AccessLog } from '@/lib/api';
+import { accessLogActionLabel, isMovementOnlyWarning } from '@/lib/accessLogLabels';
 
 export type AccessLogDetailExtras = {
   snapshotUrl?: string;
   faceImageUrl?: string;
   departmentName?: string;
 };
-
-function actionLabel(action?: string): string {
-  if (action === 'CHECK_IN') return 'Check-in';
-  if (action === 'CHECK_OUT') return 'Check-out';
-  if (action === 'UNKNOWN') return 'Người lạ';
-  if (action === 'DENIED') return 'Từ chối';
-  return action || '—';
-}
 
 function formatEventAt(iso: string): string {
   const d = new Date(iso);
@@ -75,6 +68,7 @@ export function AccessLogDetailDialog({
 
   const name = log.user?.fullName ?? 'Không xác định';
   const hasWarning = !!log.warningMessage;
+  const movementOnly = isMovementOnlyWarning(log.warningMessage);
   const invalid = log.isValid === false;
   const dept =
     extras?.departmentName ||
@@ -104,11 +98,15 @@ export function AccessLogDetailDialog({
             </p>
             <div className="flex flex-wrap gap-1.5 pt-1">
               <Badge variant="outline" className="text-xs font-medium">
-                {actionLabel(log.action)}
+                {accessLogActionLabel(log.action, { hasUser: Boolean(log.user) })}
               </Badge>
               {invalid ? (
                 <Badge className="border-transparent bg-destructive/15 text-xs text-destructive">
                   Cảnh báo
+                </Badge>
+              ) : movementOnly ? (
+                <Badge className="border-transparent bg-sky-100 text-xs text-sky-800">
+                  Ra vào
                 </Badge>
               ) : hasWarning ? (
                 <Badge className="border-transparent bg-amber-100 text-xs text-amber-800">

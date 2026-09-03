@@ -54,15 +54,21 @@ export default function EventPopup({ event }: { event: CheckinEvent | null }) {
   const isCheckIn = event.action === AccessAction.CHECK_IN;
   const isCheckOut = event.action === AccessAction.CHECK_OUT;
   const hasWarning = !!event.warningMessage;
+  const movementOnly =
+    !!event.warningMessage &&
+    (event.warningMessage.toLowerCase().includes('không tính thêm') ||
+      event.warningMessage.toLowerCase().includes('lượt ra vào'));
   const statusLabel = !event.isValid
     ? 'Cảnh báo'
-    : hasWarning
-      ? 'Chưa tính'
-      : isCheckIn
-        ? 'Check-in hợp lệ'
-        : isCheckOut
-          ? 'Check-out'
-          : 'Sự kiện';
+    : movementOnly
+      ? 'Ra vào'
+      : hasWarning
+        ? 'Chưa tính'
+        : isCheckIn
+          ? 'Check-in hợp lệ'
+          : isCheckOut
+            ? 'Check-out'
+            : 'Sự kiện';
 
   return (
     <div
@@ -93,11 +99,13 @@ export default function EventPopup({ event }: { event: CheckinEvent | null }) {
             'rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide',
             !event.isValid
               ? 'bg-destructive text-white'
-              : hasWarning
-                ? 'bg-amber-500 text-white'
-                : isCheckOut
-                  ? 'bg-amber-600 text-white'
-                  : 'bg-primary text-white',
+              : movementOnly
+                ? 'bg-sky-600 text-white'
+                : hasWarning
+                  ? 'bg-amber-500 text-white'
+                  : isCheckOut
+                    ? 'bg-amber-600 text-white'
+                    : 'bg-primary text-white',
           )}
         >
           {statusLabel}

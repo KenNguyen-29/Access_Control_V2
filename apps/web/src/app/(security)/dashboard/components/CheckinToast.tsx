@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { AccessAction, CheckinEvent } from '@acv2/shared';
 import { AlertTriangle, LogOut, UserCheck, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { isMovementOnlyWarning } from '@/lib/accessLogLabels';
 
 export default function CheckinToast({
   event,
@@ -30,17 +31,24 @@ export default function CheckinToast({
 
   const isCheckOut = shown.action === AccessAction.CHECK_OUT;
   const isCheckIn = shown.action === AccessAction.CHECK_IN;
-  const isWarning = Boolean(shown.warningMessage) || !shown.isValid || (!isCheckIn && !isCheckOut);
+  const movementOnly = isMovementOnlyWarning(shown.warningMessage);
+  const isWarning =
+    !movementOnly &&
+    (Boolean(shown.warningMessage) || !shown.isValid || (!isCheckIn && !isCheckOut));
   const photo = shown.snapshotUrl;
   const initial = (shown.fullName?.trim()?.[0] || '?').toUpperCase();
 
-  const title = isWarning
-    ? shown.isValid === false
-      ? 'Quét không hợp lệ'
-      : 'Quét đã ghi nhận'
-    : isCheckOut
-      ? 'Check-out thành công'
-      : 'Check-in thành công';
+  const title = movementOnly
+    ? isCheckOut
+      ? 'Ra — đã ghi log'
+      : 'Vào — đã ghi log'
+    : isWarning
+      ? shown.isValid === false
+        ? 'Quét không hợp lệ'
+        : 'Quét đã ghi nhận'
+      : isCheckOut
+        ? 'Check-out thành công'
+        : 'Check-in thành công';
 
   return (
     <div

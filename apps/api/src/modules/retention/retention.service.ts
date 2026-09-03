@@ -25,6 +25,13 @@ export class RetentionService {
     if (this.running) {
       return { skipped: true as const, reason: 'already_running' };
     }
+
+    const enabled = await this.settings.getBoolean(SETTING_KEY.RETENTION_ENABLED, true);
+    if (!enabled) {
+      this.logger.log(`Retention purge (${trigger}) skipped: RETENTION_ENABLED=false`);
+      return { skipped: true as const, reason: 'disabled' as const };
+    }
+
     this.running = true;
     try {
       const [attendanceDays, logDays, storageDays] = await Promise.all([
@@ -33,10 +40,13 @@ export class RetentionService {
         this.settings.getNumber(SETTING_KEY.STORAGE_RETENTION_DAYS, 30),
       ]);
 
-      const clampedAttendance = Math.min(90, Math.max(60, attendanceDays));
-      const attendanceCutoff = this.utcDaysAgo(clampedAttendance);
-      const logCutoff = this.utcDaysAgo(Math.max(1, logDays));
-      const storageCutoff = new Date(Date.now() - Math.max(1, storageDays) * 86400000);
+      const attendanceRetentionDays = Math.min(3650, Math.max(1, attendanceDays));
+      const logRetentionDays = Math.min(3650, Math.max(1, logDays));
+      const storageRetentionDays = Math.min(3650, Math.max(1, storageDays));
+
+      const attendanceCutoff = this.utcDaysAgo(attendanceRetentionDays);
+      const logCutoff = this.utcDaysAgo(logRetentionDays);
+      const storageCutoff = new Date(Date.now() - storageRetentionDays * 86400000);
 
       const [attendanceDeleted, accessLogDeleted, auditDeleted] = await Promise.all([
         this.prisma.attendanceRecord.deleteMany({
@@ -57,9 +67,9 @@ export class RetentionService {
 
       const result = {
         trigger,
-        attendanceRetentionDays: clampedAttendance,
-        logRetentionDays: logDays,
-        storageRetentionDays: storageDays,
+        attendanceRetentionDays,
+        logRetentionDays,
+        storageRetentionDays,
         attendanceDeleted: attendanceDeleted.count,
         accessLogDeleted: accessLogDeleted.count,
         auditLogDeleted: auditDeleted.count,
