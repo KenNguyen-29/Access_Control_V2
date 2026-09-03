@@ -31,7 +31,6 @@ import EventPopup from './components/EventPopup';
 import CheckinToast from './components/CheckinToast';
 import MiniAccessLog from './components/MiniAccessLog';
 import AttendanceBoard from './components/AttendanceBoard';
-import RealtimeStatusPanel from './components/RealtimeStatusPanel';
 import type { EmergencyOverlayPerson } from './components/EmergencyOverlay';
 import { DEMO_CAMERAS, type CameraItem } from './components/CameraGrid';
 
@@ -490,7 +489,6 @@ export default function DashboardPage() {
 
       {/* Right panel */}
       <aside className="flex w-80 shrink-0 flex-col border-l border-border bg-surface lg:w-96">
-        <RealtimeStatusPanel connected={connected} onReconnect={reconnect} />
         <Tabs value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col">
           <div className="shrink-0 border-b border-border p-2">
             <TabsList className="w-full">
