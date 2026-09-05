@@ -13,6 +13,7 @@ import {
   Download,
   Upload,
   ArrowLeftRight,
+  History,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { TablePager } from '@/components/ui/table-pager';
@@ -23,6 +24,10 @@ import { Badge } from '@/components/ui/badge';
 import { Avatar } from '@/components/ui/avatar';
 import { QueryBoundary } from '@/components/ui/query-states';
 import { DesignCard, PageShell } from '@/components/design/PageShell';
+import {
+  PersonHistoryDialog,
+  type PersonHistoryTarget,
+} from '@/components/attendance/PersonHistoryDialog';
 import { queryKeys } from '@/lib/queryKeys';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import {
@@ -181,6 +186,7 @@ export default function UsersPage() {
   const [fieldErrors, setFieldErrors] = useState<UserFormFieldErrors>({});
   const [deleteTarget, setDeleteTarget] = useState<User | null>(null);
   const [transferTarget, setTransferTarget] = useState<User | null>(null);
+  const [historyPerson, setHistoryPerson] = useState<PersonHistoryTarget | null>(null);
   const [transferForm, setTransferForm] = useState({
     toProjectId: '',
     zoneId: '',
@@ -930,48 +936,63 @@ export default function UsersPage() {
                       {u.phone || '—'}
                     </td>
                     <td className="overflow-hidden p-3">
-                      {writeEnabled ? (
-                        <div className="flex items-center justify-end gap-1">
-                          {u.userType === 'CONTRACTOR' && (
+                      <div className="flex items-center justify-end gap-1">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 shrink-0"
+                          title="Lịch sử chấm công / ra vào"
+                          onClick={() =>
+                            setHistoryPerson({
+                              userId: u.id,
+                              fullName: u.fullName,
+                              employeeCode: u.employeeCode,
+                            })
+                          }
+                        >
+                          <History className="h-4 w-4" />
+                        </Button>
+                        {writeEnabled ? (
+                          <>
+                            {u.userType === 'CONTRACTOR' && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 shrink-0"
+                                title="Điều chuyển dự án"
+                                onClick={() => {
+                                  setTransferTarget(u);
+                                  setTransferForm({
+                                    toProjectId: '',
+                                    zoneId: '',
+                                    workShiftId: '',
+                                    note: '',
+                                  });
+                                  setError(null);
+                                }}
+                              >
+                                <ArrowLeftRight className="h-4 w-4" />
+                              </Button>
+                            )}
                             <Button
                               variant="ghost"
                               size="icon"
                               className="h-8 w-8 shrink-0"
-                              title="Điều chuyển dự án"
-                              onClick={() => {
-                                setTransferTarget(u);
-                                setTransferForm({
-                                  toProjectId: '',
-                                  zoneId: '',
-                                  workShiftId: '',
-                                  note: '',
-                                });
-                                setError(null);
-                              }}
+                              onClick={() => openEdit(u)}
                             >
-                              <ArrowLeftRight className="h-4 w-4" />
+                              <Pencil className="h-4 w-4" />
                             </Button>
-                          )}
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 shrink-0"
-                            onClick={() => openEdit(u)}
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 shrink-0"
-                            onClick={() => setDeleteTarget(u)}
-                          >
-                            <Trash2 className="h-4 w-4 text-destructive" />
-                          </Button>
-                        </div>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">—</span>
-                      )}
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 shrink-0"
+                              onClick={() => setDeleteTarget(u)}
+                            >
+                              <Trash2 className="h-4 w-4 text-destructive" />
+                            </Button>
+                          </>
+                        ) : null}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -1407,6 +1428,12 @@ export default function UsersPage() {
         message={`Ẩn nhân sự ${deleteTarget?.fullName ?? ''} khỏi danh sách và gỡ Face trên thiết bị? Dữ liệu chấm công / nhật ký được giữ lại.`}
         confirmLabel="Ẩn nhân sự"
         loading={deleting}
+      />
+
+      <PersonHistoryDialog
+        open={!!historyPerson}
+        person={historyPerson}
+        onClose={() => setHistoryPerson(null)}
       />
     </PageShell>
   );

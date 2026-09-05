@@ -1,8 +1,10 @@
 'use client';
 
+import { useState } from 'react';
 import { Building2, Clock, MonitorSmartphone, MapPin } from 'lucide-react';
 import { Dialog } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
+import { ImagePreviewDialog } from '@/components/ui/image-preview-dialog';
 import { cn } from '@/lib/utils';
 import type { AccessLog } from '@/lib/api';
 import { accessLogActionLabel, isMovementOnlyWarning } from '@/lib/accessLogLabels';
@@ -26,18 +28,26 @@ function FaceThumb({
   name,
   snapshotUrl,
   invalid,
+  onOpen,
 }: {
   name?: string;
   snapshotUrl?: string;
   invalid?: boolean;
+  onOpen?: () => void;
 }) {
   const initial = (name?.trim()?.[0] || '?').toUpperCase();
 
   return (
-    <div
+    <button
+      type="button"
+      disabled={!snapshotUrl}
+      onClick={() => snapshotUrl && onOpen?.()}
+      title={snapshotUrl ? 'Bấm xem ảnh lớn' : undefined}
       className={cn(
-        'relative h-28 w-28 shrink-0 overflow-hidden rounded-md border-2 bg-muted',
+        'relative h-28 w-28 shrink-0 overflow-hidden rounded-md border-2 bg-muted text-left',
         invalid ? 'border-destructive/40' : 'border-primary/40',
+        snapshotUrl && 'cursor-zoom-in hover:opacity-95',
+        !snapshotUrl && 'cursor-default',
       )}
     >
       {snapshotUrl ? (
@@ -49,7 +59,7 @@ function FaceThumb({
           <span className="text-[10px] leading-tight text-slate-500">Không có ảnh chụp</span>
         </div>
       )}
-    </div>
+    </button>
   );
 }
 
@@ -64,6 +74,7 @@ export function AccessLogDetailDialog({
   extras?: AccessLogDetailExtras | null;
   onClose: () => void;
 }) {
+  const [previewOpen, setPreviewOpen] = useState(false);
   if (!log) return null;
 
   const name = log.user?.fullName ?? 'Không xác định';
@@ -77,80 +88,93 @@ export function AccessLogDetailDialog({
   const snapshotUrl = extras?.snapshotUrl || log.snapshotUrl || undefined;
 
   return (
-    <Dialog
-      open={open}
-      onClose={onClose}
-      title="Chi tiết log ra vào"
-      description="Thông tin sự kiện check-in / check-out"
-      className="max-w-md"
-    >
-      <div className="space-y-4">
-        <div className="flex gap-4">
-          <FaceThumb
-            name={name}
-            snapshotUrl={snapshotUrl}
-            invalid={invalid || hasWarning}
-          />
-          <div className="min-w-0 flex-1 space-y-1.5">
-            <p className="text-base font-bold text-foreground">{name}</p>
-            <p className="font-mono text-sm text-primary">
-              {log.user?.employeeCode || '—'}
-            </p>
-            <div className="flex flex-wrap gap-1.5 pt-1">
-              <Badge variant="outline" className="text-xs font-medium">
-                {accessLogActionLabel(log.action, { hasUser: Boolean(log.user) })}
-              </Badge>
-              {invalid ? (
-                <Badge className="border-transparent bg-destructive/15 text-xs text-destructive">
-                  Cảnh báo
+    <>
+      <Dialog
+        open={open}
+        onClose={onClose}
+        title="Chi tiết log ra vào"
+        description="Thông tin sự kiện check-in / check-out"
+        className="max-w-md"
+      >
+        <div className="space-y-4">
+          <div className="flex gap-4">
+            <FaceThumb
+              name={name}
+              snapshotUrl={snapshotUrl}
+              invalid={invalid || hasWarning}
+              onOpen={() => setPreviewOpen(true)}
+            />
+            <div className="min-w-0 flex-1 space-y-1.5">
+              <p className="text-base font-bold text-foreground">{name}</p>
+              <p className="font-mono text-sm text-primary">
+                {log.user?.employeeCode || '—'}
+              </p>
+              <div className="flex flex-wrap gap-1.5 pt-1">
+                <Badge variant="outline" className="text-xs font-medium">
+                  {accessLogActionLabel(log.action, {
+                    hasUser: Boolean(log.user || log.userId),
+                    warningMessage: log.warningMessage,
+                  })}
                 </Badge>
-              ) : movementOnly ? (
-                <Badge className="border-transparent bg-sky-100 text-xs text-sky-800">
-                  Ra vào
-                </Badge>
-              ) : hasWarning ? (
-                <Badge className="border-transparent bg-amber-100 text-xs text-amber-800">
-                  Chưa tính
-                </Badge>
-              ) : (
-                <Badge className="border-transparent bg-emerald-100 text-xs text-emerald-700">
-                  Hợp lệ
-                </Badge>
-              )}
+                {invalid ? (
+                  <Badge className="border-transparent bg-destructive/15 text-xs text-destructive">
+                    Cảnh báo
+                  </Badge>
+                ) : movementOnly ? (
+                  <Badge className="border-transparent bg-sky-100 text-xs text-sky-800">
+                    Ra vào
+                  </Badge>
+                ) : hasWarning ? (
+                  <Badge className="border-transparent bg-amber-100 text-xs text-amber-800">
+                    Chưa tính
+                  </Badge>
+                ) : (
+                  <Badge className="border-transparent bg-emerald-100 text-xs text-emerald-700">
+                    Chấm công
+                  </Badge>
+                )}
+              </div>
             </div>
           </div>
-        </div>
 
-        <div className="space-y-2.5 rounded-sm border border-border bg-muted/20 px-3 py-3 text-sm">
-          <DetailRow
-            icon={<Building2 className="h-3.5 w-3.5" />}
-            label="Phòng ban"
-            value={dept}
-          />
-          <DetailRow
-            icon={<MapPin className="h-3.5 w-3.5" />}
-            label="Khu vực"
-            value={log.zone?.name || '—'}
-          />
-          <DetailRow
-            icon={<MonitorSmartphone className="h-3.5 w-3.5" />}
-            label="Thiết bị"
-            value={log.device?.name || '—'}
-          />
-          <DetailRow
-            icon={<Clock className="h-3.5 w-3.5" />}
-            label="Thời gian"
-            value={formatEventAt(log.eventAt)}
-          />
-        </div>
+          <div className="space-y-2.5 rounded-sm border border-border bg-muted/20 px-3 py-3 text-sm">
+            <DetailRow
+              icon={<Building2 className="h-3.5 w-3.5" />}
+              label="Phòng ban"
+              value={dept}
+            />
+            <DetailRow
+              icon={<MapPin className="h-3.5 w-3.5" />}
+              label="Khu vực"
+              value={log.zone?.name || '—'}
+            />
+            <DetailRow
+              icon={<MonitorSmartphone className="h-3.5 w-3.5" />}
+              label="Thiết bị"
+              value={log.device?.name || '—'}
+            />
+            <DetailRow
+              icon={<Clock className="h-3.5 w-3.5" />}
+              label="Thời gian"
+              value={formatEventAt(log.eventAt)}
+            />
+          </div>
 
-        {log.warningMessage && (
-          <p className="rounded-sm border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-            {log.warningMessage}
-          </p>
-        )}
-      </div>
-    </Dialog>
+          {log.warningMessage && (
+            <p className="rounded-sm border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              {log.warningMessage}
+            </p>
+          )}
+        </div>
+      </Dialog>
+
+      <ImagePreviewDialog
+        open={previewOpen && !!snapshotUrl}
+        src={snapshotUrl ?? null}
+        title={`${name} · Ảnh quét`}
+        onClose={() => setPreviewOpen(false)}
+      />
+    </>
   );
 }
 

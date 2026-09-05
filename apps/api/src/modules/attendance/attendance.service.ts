@@ -335,16 +335,41 @@ export class AttendanceService {
     departmentId?: string;
     deviceId?: string;
     zoneId?: string;
+    userId?: string;
+    kind?: 'movement' | 'attendance';
     action?: AccessAction;
     isValid?: boolean;
     unknownOnly?: boolean;
     projectIds?: string[];
   } = {}) {
     const search = query.search?.trim();
+    const movementContains = 'không tính thêm';
+
+    const andFilters: object[] = [];
+    if (query.kind === 'movement') {
+      andFilters.push({
+        warningMessage: { contains: movementContains, mode: 'insensitive' as const },
+      });
+    }
+    if (query.kind === 'attendance') {
+      andFilters.push({
+        OR: [
+          { warningMessage: null },
+          { NOT: { warningMessage: { contains: movementContains, mode: 'insensitive' as const } } },
+        ],
+      });
+      if (!query.action) {
+        andFilters.push({
+          action: { in: [AccessAction.CHECK_IN, AccessAction.CHECK_OUT] },
+        });
+      }
+    }
+
     const where = {
       ...(query.projectIds !== undefined ? { projectId: { in: query.projectIds } } : {}),
       ...(query.deviceId ? { deviceId: query.deviceId } : {}),
       ...(query.zoneId ? { zoneId: query.zoneId } : {}),
+      ...(query.userId ? { userId: query.userId } : {}),
       ...(query.action ? { action: query.action } : {}),
       ...(query.isValid !== undefined ? { isValid: query.isValid } : {}),
       ...(query.unknownOnly ? { userId: null } : {}),
@@ -371,6 +396,7 @@ export class AttendanceService {
             },
           }
         : {}),
+      ...(andFilters.length > 0 ? { AND: andFilters } : {}),
     };
 
     const include = {

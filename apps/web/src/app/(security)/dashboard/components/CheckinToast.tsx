@@ -40,15 +40,15 @@ export default function CheckinToast({
 
   const title = movementOnly
     ? isCheckOut
-      ? 'Ra — đã ghi log'
-      : 'Vào — đã ghi log'
+      ? 'Lượt ra — đã ghi log'
+      : 'Lượt vào — đã ghi log'
     : isWarning
       ? shown.isValid === false
         ? 'Quét không hợp lệ'
         : 'Quét đã ghi nhận'
       : isCheckOut
-        ? 'Check-out thành công'
-        : 'Check-in thành công';
+        ? 'Chấm ra thành công'
+        : 'Chấm vào thành công';
 
   return (
     <div

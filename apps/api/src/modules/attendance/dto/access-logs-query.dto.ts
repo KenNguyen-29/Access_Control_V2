@@ -57,6 +57,19 @@ export class AccessLogsQueryDto {
   @IsString()
   zoneId?: string;
 
+  @ApiPropertyOptional({ description: 'Filter by matched user id' })
+  @IsOptional()
+  @IsString()
+  userId?: string;
+
+  @ApiPropertyOptional({
+    description: 'movement = ra/vào only after day complete; attendance = official punches',
+    enum: ['movement', 'attendance'],
+  })
+  @IsOptional()
+  @IsString()
+  kind?: 'movement' | 'attendance';
+
   @ApiPropertyOptional({
     enum: AccessAction,
     description: 'CHECK_IN | CHECK_OUT | DENIED | UNKNOWN. Use UNKNOWN for strangers if needed.',

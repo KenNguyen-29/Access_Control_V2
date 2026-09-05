@@ -65,9 +65,9 @@ export default function EventPopup({ event }: { event: CheckinEvent | null }) {
       : hasWarning
         ? 'Chưa tính'
         : isCheckIn
-          ? 'Check-in hợp lệ'
+          ? 'Chấm vào'
           : isCheckOut
-            ? 'Check-out'
+            ? 'Chấm ra'
             : 'Sự kiện';
 
   return (

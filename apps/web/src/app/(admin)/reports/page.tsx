@@ -31,6 +31,7 @@ import { QueryBoundary } from '@/components/ui/query-states';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { cn } from '@/lib/utils';
 import { DesignCard, PageShell } from '@/components/design/PageShell';
+import { ImagePreviewDialog } from '@/components/ui/image-preview-dialog';
 import { FieldError, RequiredMark } from '@/components/ui/field-error';
 import {
   hasFormErrors,
@@ -53,9 +54,16 @@ import {
   type WeeklyRow,
 } from '@/lib/api';
 import { AccessLogDetailDialog } from '@/components/attendance/AccessLogDetailDialog';
+import {
+  PersonHistoryDialog,
+  type PersonHistoryTarget,
+} from '@/components/attendance/PersonHistoryDialog';
 import { ReportsLogsConfigPanel } from '@/components/reports/ReportsLogsConfigPanel';
 import EmployeeWeekMatrix from './EmployeeWeekMatrix';
-import { accessLogActionLabel, isMovementOnlyWarning } from '@/lib/accessLogLabels';
+import {
+  accessLogActionLabel,
+  accessLogKindLabel,
+} from '@/lib/accessLogLabels';
 
 function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
@@ -83,7 +91,7 @@ function formatMinutes(minutes: number) {
   return h > 0 ? `${h}h ${m}p` : `${m}p`;
 }
 
-/** Thumbnail pair: check-in / check-out live snapshots. */
+/** Thumbnail pair: check-in / check-out live snapshots — click opens modal (not new tab). */
 function PunchSnapshotCell({
   checkInUrl,
   checkOutUrl,
@@ -93,6 +101,8 @@ function PunchSnapshotCell({
   checkOutUrl?: string | null;
   name?: string;
 }) {
+  const [preview, setPreview] = useState<{ src: string; title: string } | null>(null);
+
   const thumb = (url: string | null | undefined, label: string) => {
     if (!url) {
       return (
@@ -105,12 +115,16 @@ function PunchSnapshotCell({
       );
     }
     return (
-      <a
-        href={url}
-        target="_blank"
-        rel="noreferrer"
+      <button
+        type="button"
         className="group relative block h-11 w-11 overflow-hidden rounded border border-border bg-muted"
         title={`Ảnh ${label.toLowerCase()} — bấm xem lớn`}
+        onClick={() =>
+          setPreview({
+            src: url,
+            title: `${name ? `${name} · ` : ''}Ảnh ${label.toLowerCase()}`,
+          })
+        }
       >
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
@@ -121,15 +135,23 @@ function PunchSnapshotCell({
         <span className="absolute inset-x-0 bottom-0 bg-black/55 py-px text-center text-[8px] font-semibold uppercase tracking-wide text-white">
           {label}
         </span>
-      </a>
+      </button>
     );
   };
 
   return (
-    <div className="flex items-center gap-1.5">
-      {thumb(checkInUrl, 'Vào')}
-      {thumb(checkOutUrl, 'Ra')}
-    </div>
+    <>
+      <div className="flex items-center gap-1.5">
+        {thumb(checkInUrl, 'Vào')}
+        {thumb(checkOutUrl, 'Ra')}
+      </div>
+      <ImagePreviewDialog
+        open={!!preview}
+        src={preview?.src ?? null}
+        title={preview?.title}
+        onClose={() => setPreview(null)}
+      />
+    </>
   );
 }
 
@@ -270,9 +292,11 @@ export default function ReportsPage() {
   const [logsPage, setLogsPage] = useState(1);
   const [logsSearch, setLogsSearch] = useState('');
   const [logsAction, setLogsAction] = useState('');
+  const [logsKind, setLogsKind] = useState<'attendance' | 'movement' | ''>('');
   const [logsValidity, setLogsValidity] = useState('');
   const debouncedLogsSearch = useDebouncedValue(logsSearch, 300);
   const [selectedAccessLog, setSelectedAccessLog] = useState<AccessLog | null>(null);
+  const [historyPerson, setHistoryPerson] = useState<PersonHistoryTarget | null>(null);
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
@@ -435,6 +459,7 @@ export default function ReportsPage() {
       pageSize: LOGS_PAGE_SIZE,
       search: debouncedLogsSearch.trim() || undefined,
       action: logsAction || undefined,
+      kind: logsKind || undefined,
       isValid: logsValidity === '' ? undefined : logsValidity === 'true',
     }),
     queryFn: () =>
@@ -447,6 +472,7 @@ export default function ReportsPage() {
         search: debouncedLogsSearch.trim() || undefined,
         action: logsAction === 'UNKNOWN' ? undefined : logsAction || undefined,
         unknownOnly: logsAction === 'UNKNOWN' || undefined,
+        kind: logsKind || undefined,
         isValid: logsValidity === '' ? undefined : logsValidity === 'true',
       }),
     enabled: tab === 'logs',
@@ -660,7 +686,7 @@ export default function ReportsPage() {
           <TabsTrigger value="stats">Thống kê</TabsTrigger>
           <TabsTrigger value="summary">Tổng hợp</TabsTrigger>
           <TabsTrigger value="detail">Chi tiết</TabsTrigger>
-          <TabsTrigger value="logs">Log ra vào</TabsTrigger>
+          <TabsTrigger value="logs">Log thô</TabsTrigger>
         </TabsList>
 
         {/* ── Filter card (shared) ── */}
@@ -873,7 +899,20 @@ export default function ReportsPage() {
                           <td className="p-2">
                             {idx === 0 ? (
                               <div>
-                                <p className="font-semibold">{group.fullName}</p>
+                                <button
+                                  type="button"
+                                  className="text-left font-semibold text-primary underline-offset-2 hover:underline"
+                                  title="Xem lịch sử chấm công & ra vào"
+                                  onClick={() =>
+                                    setHistoryPerson({
+                                      userId: r.userId,
+                                      fullName: group.fullName,
+                                      employeeCode: group.employeeCode,
+                                    })
+                                  }
+                                >
+                                  {group.fullName}
+                                </button>
                                 <p className="font-mono text-xs text-muted-foreground">
                                   {group.employeeCode}
                                 </p>
@@ -1045,7 +1084,20 @@ export default function ReportsPage() {
                           <div className="flex items-center gap-2.5">
                             <Avatar name={t.fullName} />
                             <div>
-                              <p className="font-semibold">{t.fullName}</p>
+                              <button
+                                type="button"
+                                className="text-left font-semibold text-primary underline-offset-2 hover:underline"
+                                title="Xem lịch sử chấm công & ra vào"
+                                onClick={() =>
+                                  setHistoryPerson({
+                                    userId: t.userId,
+                                    fullName: t.fullName,
+                                    employeeCode: t.employeeCode,
+                                  })
+                                }
+                              >
+                                {t.fullName}
+                              </button>
                               <p className="font-mono text-xs text-muted-foreground">{t.employeeCode}</p>
                             </div>
                           </div>
@@ -1221,8 +1273,8 @@ export default function ReportsPage() {
                       <th className="p-2 font-semibold">Ca</th>
                       <th className="p-2 font-semibold">Khu vực</th>
                       <th className="p-2 font-semibold">Máy</th>
-                      <th className="p-2 font-semibold">Vào</th>
-                      <th className="p-2 font-semibold">Ra</th>
+                      <th className="p-2 font-semibold">Chấm vào</th>
+                      <th className="p-2 font-semibold">Chấm ra</th>
                       <th className="p-2 font-semibold">Trạng thái</th>
                       <th className="p-2 text-right font-semibold">Muộn</th>
                       <th className="p-2 text-right font-semibold">OT</th>
@@ -1235,7 +1287,20 @@ export default function ReportsPage() {
                           {String(r.date).slice(0, 10)}
                         </td>
                         <td className="p-2">
-                          <span className="font-semibold">{r.user?.fullName || r.userId}</span>
+                          <button
+                            type="button"
+                            className="text-left font-semibold text-primary underline-offset-2 hover:underline"
+                            title="Xem lịch sử chấm công & ra vào"
+                            onClick={() =>
+                              setHistoryPerson({
+                                userId: r.userId,
+                                fullName: r.user?.fullName || r.userId,
+                                employeeCode: r.user?.employeeCode,
+                              })
+                            }
+                          >
+                            {r.user?.fullName || r.userId}
+                          </button>
                           {r.user?.employeeCode && (
                             <span className="ml-1 font-mono text-xs text-muted-foreground">
                               ({r.user.employeeCode})
@@ -1302,8 +1367,8 @@ export default function ReportsPage() {
         {/* ═══ TAB: LOG RA VÀO ═══ */}
         <TabsContent value="logs" className="space-y-6">
           <DesignCard
-            title="Log ra vào"
-            description="Danh sách sự kiện check-in / check-out theo khoảng ngày đã lọc."
+            title="Log thô (chấm công + ra vào)"
+            description="Chấm vào/ra = lần tính công. Lượt vào/ra = quét sau khi đã chấm xong ngày (chỉ lưu log). Bấm tên NV để xem cả hai lịch sử."
             actions={
               <div className="flex flex-wrap items-center gap-2">
                 <ReportsLogsConfigPanel />
@@ -1328,6 +1393,18 @@ export default function ReportsPage() {
                 />
               </div>
               <Select
+                value={logsKind}
+                onChange={(e) => {
+                  setLogsKind(e.target.value as '' | 'attendance' | 'movement');
+                  setLogsPage(1);
+                }}
+                className="h-10 w-full sm:w-44"
+              >
+                <option value="">Tất cả loại</option>
+                <option value="attendance">Chỉ chấm công</option>
+                <option value="movement">Chỉ lượt ra vào</option>
+              </Select>
+              <Select
                 value={logsAction}
                 onChange={(e) => {
                   setLogsAction(e.target.value);
@@ -1335,9 +1412,9 @@ export default function ReportsPage() {
                 }}
                 className="h-10 w-full sm:w-40"
               >
-                <option value="">Tất cả loại</option>
-                <option value="CHECK_IN">Check-in</option>
-                <option value="CHECK_OUT">Check-out</option>
+                <option value="">Mọi hướng</option>
+                <option value="CHECK_IN">Vào</option>
+                <option value="CHECK_OUT">Ra</option>
                 <option value="UNKNOWN">Người lạ</option>
               </Select>
               <Select
@@ -1390,7 +1467,26 @@ export default function ReportsPage() {
                           {formatDt(log.eventAt)}
                         </td>
                         <td className="p-2 font-semibold">
-                          {log.user?.fullName ?? 'Không xác định'}
+                          {log.user?.fullName || log.userId ? (
+                            <button
+                              type="button"
+                              className="text-left font-semibold text-primary underline-offset-2 hover:underline"
+                              title="Xem lịch sử chấm công & ra vào"
+                              onClick={() => {
+                                const userId = log.userId || log.user?.id;
+                                if (!userId) return;
+                                setHistoryPerson({
+                                  userId,
+                                  fullName: log.user?.fullName ?? 'Nhân viên',
+                                  employeeCode: log.user?.employeeCode,
+                                });
+                              }}
+                            >
+                              {log.user?.fullName ?? 'Không xác định'}
+                            </button>
+                          ) : (
+                            'Không xác định'
+                          )}
                         </td>
                         <td className="p-2 font-mono text-xs text-muted-foreground">
                           {log.user?.employeeCode || '—'}
@@ -1400,7 +1496,10 @@ export default function ReportsPage() {
                         </td>
                         <td className="p-2">
                           <Badge variant="outline" className="text-xs font-normal">
-                            {accessLogActionLabel(log.action, { hasUser: Boolean(log.user) })}
+                            {accessLogActionLabel(log.action, {
+                              hasUser: Boolean(log.user || log.userId),
+                              warningMessage: log.warningMessage,
+                            })}
                           </Badge>
                         </td>
                         <td className="p-2 text-xs text-muted-foreground">
@@ -1410,23 +1509,28 @@ export default function ReportsPage() {
                           {log.device?.name || '—'}
                         </td>
                         <td className="p-2">
-                          {log.isValid === false ? (
-                            <Badge className="border-transparent bg-destructive/15 text-xs text-destructive">
-                              Cảnh báo
-                            </Badge>
-                          ) : isMovementOnlyWarning(log.warningMessage) ? (
-                            <Badge className="border-transparent bg-sky-100 text-xs text-sky-800">
-                              Ra vào
-                            </Badge>
-                          ) : log.warningMessage ? (
-                            <Badge className="border-transparent bg-amber-100 text-xs text-amber-800">
-                              Chưa tính
-                            </Badge>
-                          ) : (
-                            <Badge className="border-transparent bg-emerald-100 text-xs text-emerald-700">
-                              Hợp lệ
-                            </Badge>
-                          )}
+                          {(() => {
+                            const kind = accessLogKindLabel({
+                              action: log.action,
+                              isValid: log.isValid,
+                              warningMessage: log.warningMessage,
+                              hasUser: Boolean(log.user || log.userId),
+                            });
+                            return (
+                              <Badge
+                                className={cn(
+                                  'border-transparent text-xs',
+                                  kind.kind === 'movement' && 'bg-sky-100 text-sky-800',
+                                  kind.kind === 'attendance' && 'bg-emerald-100 text-emerald-700',
+                                  kind.kind === 'warning' && 'bg-destructive/15 text-destructive',
+                                  kind.kind === 'stranger' && 'bg-amber-100 text-amber-800',
+                                  kind.kind === 'other' && 'bg-muted text-muted-foreground',
+                                )}
+                              >
+                                {kind.label}
+                              </Badge>
+                            );
+                          })()}
                         </td>
                         <td className="p-2 text-right">
                           <Button
@@ -1462,6 +1566,13 @@ export default function ReportsPage() {
         open={!!selectedAccessLog}
         log={selectedAccessLog}
         onClose={() => setSelectedAccessLog(null)}
+      />
+      <PersonHistoryDialog
+        open={!!historyPerson}
+        person={historyPerson}
+        from={applied.from || undefined}
+        to={applied.to || undefined}
+        onClose={() => setHistoryPerson(null)}
       />
     </PageShell>
   );

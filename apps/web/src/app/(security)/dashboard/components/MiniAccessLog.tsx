@@ -18,8 +18,8 @@ import { accessLogActionLabel, isMovementOnlyWarning } from '@/lib/accessLogLabe
 
 const ACTION_OPTIONS = [
   { value: '', label: 'Tất cả loại' },
-  { value: 'CHECK_IN', label: 'Check-in' },
-  { value: 'CHECK_OUT', label: 'Check-out' },
+  { value: 'CHECK_IN', label: 'Vào' },
+  { value: 'CHECK_OUT', label: 'Ra' },
   { value: 'UNKNOWN', label: 'Người lạ' },
 ];
 
@@ -280,7 +280,10 @@ export default function MiniAccessLog({ lastEvent }: Props) {
                 {log.zone?.name ? `${log.zone.name} · ` : ''}
                 {log.device?.name ?? '—'}
                 {log.action
-                  ? ` · ${accessLogActionLabel(log.action, { hasUser: Boolean(log.user) })}`
+                  ? ` · ${accessLogActionLabel(log.action, {
+                      hasUser: Boolean(log.user),
+                      warningMessage: log.warningMessage,
+                    })}`
                   : ''}
                 {isMovementOnlyWarning(log.warningMessage) ? ' · Ra vào' : ''}
               </p>

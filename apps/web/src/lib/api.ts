@@ -415,6 +415,7 @@ export type AttendanceRecord = {
 
 export type AccessLog = {
   id: string;
+  userId?: string | null;
   eventAt: string;
   action?: string;
   isValid?: boolean;
@@ -423,6 +424,7 @@ export type AccessLog = {
   snapshotPath?: string | null;
   snapshotUrl?: string | null;
   user?: {
+    id?: string;
     fullName: string;
     employeeCode: string;
     faceImagePath?: string | null;
@@ -1010,6 +1012,8 @@ export async function getAccessLogs(
         limit?: number;
         deviceId?: string;
         zoneId?: string;
+        userId?: string;
+        kind?: 'movement' | 'attendance';
         action?: string;
         isValid?: boolean;
         unknownOnly?: boolean;
@@ -1024,6 +1028,8 @@ export async function getAccessLogs(params: {
   pageSize?: number;
   deviceId?: string;
   zoneId?: string;
+  userId?: string;
+  kind?: 'movement' | 'attendance';
   action?: string;
   isValid?: boolean;
   unknownOnly?: boolean;
@@ -1041,6 +1047,8 @@ export async function getAccessLogs(
         pageSize?: number;
         deviceId?: string;
         zoneId?: string;
+        userId?: string;
+        kind?: 'movement' | 'attendance';
         action?: string;
         isValid?: boolean;
         unknownOnly?: boolean;
@@ -1060,6 +1068,8 @@ export async function getAccessLogs(
   }
   if (opts.deviceId) q.set('deviceId', opts.deviceId);
   if (opts.zoneId) q.set('zoneId', opts.zoneId);
+  if (opts.userId) q.set('userId', opts.userId);
+  if (opts.kind) q.set('kind', opts.kind);
   if (opts.action) q.set('action', opts.action);
   if (opts.isValid !== undefined) q.set('isValid', String(opts.isValid));
   if (opts.unknownOnly) q.set('unknownOnly', 'true');
